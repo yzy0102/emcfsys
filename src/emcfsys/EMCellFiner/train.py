@@ -97,7 +97,7 @@ def train_loop(images_dir, masks_dir, save_path,
                 
         avg = tot_loss / len(loader) if len(loader)>0 else 0.0
         if callback:
-            callback(epoch, 0, len(loader), avg, finished_epoch=True,  epoch_time=epoch_time)
+            callback(epoch, 0, len(loader), avg, finished_epoch=True,  epoch_time=epoch_time, model_dict=model.state_dict())
             
     # save final model state_dict
     torch.save(model.state_dict(), os.path.join(save_path, "best_model.pth") )
