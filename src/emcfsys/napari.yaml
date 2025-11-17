@@ -1,0 +1,57 @@
+name: emcfsys
+display_name: EMCFsys
+# use 'hidden' to remove plugin from napari hub search results
+visibility: public
+# see https://napari.org/stable/plugins/technical_references/manifest.html#fields for valid categories
+# categories: []
+contributions:
+  commands:
+    - id: emcfsys.get_reader
+      python_name: emcfsys._reader:napari_get_reader
+      title: Open data with EMCFsys
+    - id: emcfsys.write_multiple
+      python_name: emcfsys._writer:write_multiple
+      title: Save multi-layer data with EMCFsys
+    - id: emcfsys.write_single_image
+      python_name: emcfsys._writer:write_single_image
+      title: Save image data with EMCFsys
+    - id: emcfsys.make_sample_data
+      python_name: emcfsys._sample_data:make_sample_data
+      title: Load sample data from EMCFsys
+    - id: emcfsys.make_container_widget
+      python_name: emcfsys:ImageThreshold
+      title: Make threshold Container widget
+    - id: emcfsys.make_magic_widget
+      python_name: emcfsys:threshold_magic_widget
+      title: Make threshold magic widget
+    - id: emcfsys.make_function_widget
+      python_name: emcfsys:threshold_autogenerate_widget
+      title: Make threshold function widget
+    - id: emcfsys.make_qwidget
+      python_name: emcfsys:ExampleQWidget
+      title: Make example QWidget
+  readers:
+    - command: emcfsys.get_reader
+      accepts_directories: false
+      filename_patterns: ['*.npy']
+  writers:
+    - command: emcfsys.write_multiple
+      layer_types: ['image*','labels*']
+      filename_extensions: []
+    - command: emcfsys.write_single_image
+      layer_types: ['image']
+      filename_extensions: ['.npy']
+  sample_data:
+    - command: emcfsys.make_sample_data
+      display_name: EMCFsys
+      key: unique_id.1
+  widgets:
+    - command: emcfsys.make_container_widget
+      display_name: Container Threshold
+    - command: emcfsys.make_magic_widget
+      display_name: Magic Threshold
+    - command: emcfsys.make_function_widget
+      autogenerate: true
+      display_name: Autogenerate Threshold
+    - command: emcfsys.make_qwidget
+      display_name: Example QWidget
