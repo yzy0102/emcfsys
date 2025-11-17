@@ -1,93 +1,40 @@
-# metrics.py
 import torch
 
-def _binarize(pred: torch.Tensor, threshold=0.5):
-    """Sigmoid + threshold for binary prediction"""
-    return (torch.sigmoid(pred) > threshold).float()
-
-
-def iou_score(pred: torch.Tensor, target: torch.Tensor, threshold=0.5, eps=1e-6, multiclass=False):
+def compute_metrics(pred, target, num_classes=2, ignore_index=None):
     """
-    Compute Intersection over Union (IoU)
-    Args:
-        pred: logits or probabilities, shape (B, C, H, W) or (B, H, W)
-        target: ground truth, same shape as pred
-        multiclass: if True, pred is one-hot encoded C channels
-    Returns:
-        scalar for binary, dict for multiclass
+    计算 IoU, Accuracy, F1-score
+    - pred: torch.Tensor, shape (B, H, W), 每个元素是类别索引
+    - target: torch.Tensor, shape (B, H, W), 每个元素是类别索引
+    - num_classes: 类别数
+    返回 dict: {"IoU": float, "Accuracy": float, "F1": float}
     """
-    if not multiclass:
-        if pred.ndim == 4 and pred.shape[1] == 1:
-            pred = pred.squeeze(1)
-        pred_bin = _binarize(pred, threshold)
-        target_bin = target.float()
-        intersection = (pred_bin * target_bin).sum(dim=(1,2))
-        union = (pred_bin + target_bin - pred_bin * target_bin).sum(dim=(1,2))
-        return ((intersection + eps) / (union + eps)).mean().item()
-    else:
-        # multiclass: C channels
-        B, C, H, W = pred.shape
-        pred_bin = torch.argmax(pred, dim=1)  # B,H,W
-        target = target.long()
-        iou_dict = {}
-        for c in range(C):
-            pred_c = (pred_bin == c).float()
-            target_c = (target == c).float()
-            intersection = (pred_c * target_c).sum(dim=(1,2))
-            union = (pred_c + target_c - pred_c*target_c).sum(dim=(1,2))
-            iou_dict[c] = ((intersection + eps) / (union + eps)).mean().item()
-        iou_dict["mean"] = sum(iou_dict.values()) / C
-        return iou_dict
+    eps = 1e-6
+    metrics = {"IoU": 0.0, "Accuracy": 0.0, "F1": 0.0}
 
+    pred = pred.flatten()
+    target = target.flatten()
 
-def accuracy_score(pred: torch.Tensor, target: torch.Tensor, threshold=0.5, multiclass=False):
-    if not multiclass:
-        if pred.ndim == 4 and pred.shape[1] == 1:
-            pred = pred.squeeze(1)
-        pred_bin = _binarize(pred, threshold)
-        target_bin = target.float()
-        correct = (pred_bin == target_bin).float().sum()
-        total = torch.numel(target_bin)
-        return (correct / total).item()
-    else:
-        pred_cls = torch.argmax(pred, dim=1)
-        correct = (pred_cls == target).float().sum()
-        total = torch.numel(target)
-        return (correct / total).item()
+    metrics["Accuracy"] = (pred == target).float().mean().item()
 
+    iou_list = []
+    f1_list = []
 
-def f1_score(pred: torch.Tensor, target: torch.Tensor, threshold=0.5, eps=1e-6, multiclass=False):
-    if not multiclass:
-        if pred.ndim == 4 and pred.shape[1] == 1:
-            pred = pred.squeeze(1)
-        pred_bin = _binarize(pred, threshold)
-        target_bin = target.float()
-        tp = (pred_bin * target_bin).sum(dim=(1,2))
-        fp = (pred_bin * (1 - target_bin)).sum(dim=(1,2))
-        fn = ((1 - pred_bin) * target_bin).sum(dim=(1,2))
-        f1 = (2*tp + eps) / (2*tp + fp + fn + eps)
-        return f1.mean().item()
-    else:
-        B, C, H, W = pred.shape
-        pred_cls = torch.argmax(pred, dim=1)
-        f1_dict = {}
-        for c in range(C):
-            pred_c = (pred_cls == c).float()
-            target_c = (target == c).float()
-            tp = (pred_c * target_c).sum(dim=(1,2))
-            fp = (pred_c * (1 - target_c)).sum(dim=(1,2))
-            fn = ((1 - pred_c) * target_c).sum(dim=(1,2))
-            f1_dict[c] = ((2*tp + eps) / (2*tp + fp + fn + eps)).mean().item()
-        f1_dict["mean"] = sum(f1_dict.values()) / C
-        return f1_dict
+    for cls in range(num_classes):
+        if cls == ignore_index:
+            continue  # 忽略背景
+        pred_cls = (pred == cls).float()
+        target_cls = (target == cls).float()
 
+        intersection = (pred_cls * target_cls).sum()
+        union = (pred_cls + target_cls - pred_cls * target_cls).sum() + eps
+        iou = intersection / union
+        iou_list.append(iou.item())
 
-def compute_metrics(pred: torch.Tensor, target: torch.Tensor, threshold=0.5, multiclass=False):
-    """
-    Returns a dict of metrics
-    """
-    return {
-        "IoU": iou_score(pred, target, threshold, multiclass=multiclass),
-        "Accuracy": accuracy_score(pred, target, threshold, multiclass=multiclass),
-        "F1": f1_score(pred, target, threshold, multiclass=multiclass)
-    }
+        precision = intersection / (pred_cls.sum() + eps)
+        recall = intersection / (target_cls.sum() + eps)
+        f1 = 2 * precision * recall / (precision + recall + eps)
+        f1_list.append(f1.item())
+
+    metrics["IoU"] = sum(iou_list) / num_classes
+    metrics["F1"] = sum(f1_list) / num_classes
+    return metrics

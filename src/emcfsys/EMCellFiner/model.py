@@ -52,6 +52,7 @@ class UNet(nn.Module):
         c2 = self.down1(c1)
         c3 = self.down2(c2)
         c4 = self.down3(c3)
+        
         u1 = self.up1(c4, c3)
         u2 = self.up2(u1, c2)
         u3 = self.up3(u2, c1)

@@ -429,108 +429,6 @@ class DLInferenceContainer(Container):
         worker.returned.connect(on_result)
         worker.start()
 
-# -----------------------------
-# DL Training Container
-# -----------------------------
-# class DLTrainingContainer(Container):
-
-#     def __init__(self, viewer: "napari.viewer.Viewer"):
-#         super().__init__()
-#         self._viewer = viewer
-#         # widgets
-#         self.images_dir = FileEdit(label="Images folder", mode="d")
-#         self.masks_dir = FileEdit(label="Masks folder", mode="d")
-#         self.save_path = FileEdit(label="Save model as (.pth)", mode="d")  # 如果是保存文件，可以用 "w"
-                
-#         self.lr = FloatSpinBox(label="Learning rate", min=1e-6, max=1.0, step=1e-4, value=1e-3)
-#         self.batch_size = SpinBox(label="Batch size", min=1, max=64, step=1, value=4)
-#         self.epochs = SpinBox(label="Epochs", min=1, max=1000, step=1, value=10)
-#         self.device = ComboBox(label="Device", choices=["auto", "cpu", "cuda"], value="auto")
-        
-#         self.classes_num = SpinBox(label="classes num", min=1, max=1000, step=1, value=1)
-#         self.in_channels = SpinBox(label="image channels", min=1, max=3, step=1, value=1)
-        
-#         self._train_button = PushButton(text="Start Training")
-#         self._log_label = Label(value="Training log:")
-#         # 创建 TextEdit
-#         self._log_widget = TextEdit()  # 不能在这里加 read_only 或 min_height
-
-#         # 设置只读
-#         self._log_widget.read_only = True
-
-#         # 设置最小高度
-#         self._log_widget.native.setMinimumHeight(180)  # native 是底层 QWidget
-        
-        
-#         self._stop_button = PushButton(text="Stop Training")
-#         self.extend([self._stop_button])
-#         self._stop_button.clicked.connect(self._stop_training)
-#         self._stop_flag = False
-        
-#         # add widgets
-#         self.extend([self.images_dir, self.masks_dir, self.save_path,
-#                      self.lr, self.batch_size, self.epochs, self.device,
-#                      self.classes_num, self.in_channels,
-#                      self._train_button, self._log_label, self._log_widget])
-
-#         # connect
-#         self._train_button.clicked.connect(self._start_training)
-
-
-#     def _stop_training(self):
-#         self._stop_flag = True
-        
-#     def _log(self, s):
-#         try:
-#             self._log_widget.append(s)
-#         except Exception:
-#             print(s)
-
-#     def _start_training(self):
-#         if self._viewer is None:
-#             return
-#         images_dir = self.images_dir.value
-#         masks_dir = self.masks_dir.value
-#         save_path = self.save_path.value
-#         lr = self.lr.value
-#         batch_size = self.batch_size.value
-#         epochs = self.epochs.value
-#         device = self.device.value
-#         in_channels = self.in_channels.value
-#         classes_num = self.classes_num.value
-#         dev = torch.device(device) if device != "auto" else None
-
-#         from napari.qt.threading import thread_worker
-#         from .EMCellFiner.train import train_loop
-
-#         @thread_worker
-#         def _worker():
-#             logs = []
-
-#             def cb(epoch, batch, n_batches, loss, finished_epoch=False):
-#                 logs.append((epoch, batch, n_batches, loss, finished_epoch))
-
-#             train_loop(images_dir, masks_dir, save_path,
-#                        lr=lr, batch_size=batch_size, epochs=epochs,
-#                        device=dev, callback=cb, target_size=(256,256), 
-#                        in_channels = in_channels, 
-#                        classes_num = classes_num)
-#             return logs
-
-#         worker = _worker()
-
-#         def on_returned(logs):
-#             for t in logs:
-#                 epoch, batch, n_batches, loss, finished = t
-#                 if batch == 0:
-#                     self._log(f"Epoch {epoch} finished, avg loss {loss:.4f}")
-#                 else:
-#                     self._log(f"Epoch {epoch} batch {batch}/{n_batches} loss {loss:.4f}")
-#             self._log(f"Training finished. Model saved to: {save_path}")
-
-#         worker.returned.connect(on_returned)
-#         worker.start()
-
 from magicgui.widgets import FileEdit, FloatSpinBox, SpinBox, ComboBox, PushButton, Label, TextEdit, Widget
 # from magicgui import Container
 from pathlib import Path
@@ -554,11 +452,11 @@ class DLTrainingContainer(Container):
         self.save_path = FileEdit(label="Save model as (.pth)", mode="d")
 
         self.lr = FloatSpinBox(label="Learning rate", min=1e-6, max=1.0, step=1e-4, value=1e-3)
-        self.batch_size = SpinBox(label="Batch size", min=1, max=64, step=1, value=4)
-        self.epochs = SpinBox(label="Epochs", min=1, max=1000, step=1, value=10)
+        self.batch_size = SpinBox(label="Batch size", min=1, max=512, step=1, value=8)
+        self.epochs = SpinBox(label="Epochs", min=1, max=1000, step=10, value=100)
         self.device = ComboBox(label="Device", choices=["auto", "cpu", "cuda"], value="auto")
 
-        self.classes_num = SpinBox(label="Classes num", min=1, max=1000, step=1, value=1)
+        self.classes_num = SpinBox(label="Classes num", min=1, max=1000, step=1, value=2)
         self.in_channels = SpinBox(label="Image channels", min=1, max=3, step=1, value=1)
         self.target_size = SpinBox(label="Target size", min=1, max=10**8, value=512)
 
@@ -604,7 +502,6 @@ class DLTrainingContainer(Container):
         # 用于绘制曲线
         self._x_values = []
         self._y_values = []
-
 
 
     def _log(self, s):
@@ -663,8 +560,8 @@ class DLTrainingContainer(Container):
         def _worker():
             logs = []
             epoch_times = []
-
-            def cb(epoch, batch, n_batches, loss, finished_epoch=False, epoch_time=None, model_dict=None):
+            metrics_all = []
+            def cb(epoch, batch, n_batches, loss, finished_epoch=False, epoch_time=None, model_dict=None, metrics=None):
                 # 更新 loss 曲线
                 if finished_epoch:
                     self._update_loss_curve(loss, epoch=epoch)
@@ -678,13 +575,16 @@ class DLTrainingContainer(Container):
                         estimated_total = epoch_times[0] * epochs
                         self._log(f"Estimated total training time: {estimated_total:.2f}s (~{estimated_total/60:.1f} min)")
 
+                if metrics is not None:
+                    metrics_all.append(metrics)
+                    
                 # 保存 batch/epoch 日志
-                logs.append((epoch, batch, n_batches, loss, finished_epoch, epoch_time))
+                logs.append((epoch, batch, n_batches, loss, finished_epoch, epoch_time, metrics))
 
                 # 输出日志
                 if batch == 0 and finished_epoch:
                     if epoch_time is not None:
-                        self._log(f"Epoch {epoch} finished, avg loss {loss:.4f}, time {epoch_time:.2f}s")
+                        self._log(f"Epoch {epoch} finished, avg loss {loss:.4f}, time {epoch_time:.2f}s, metric {metrics}" )
                     else:
                         self._log(f"Epoch {epoch} finished, avg loss {loss:.4f}")
                 else:
@@ -693,7 +593,7 @@ class DLTrainingContainer(Container):
                 # 停止训练
                 if self._stop_flag and model_dict is not None:
                     interrupted_path = os.path.join(save_path, "interrupted_model.pth")
-                    torch.save(model_dict.state_dict(), interrupted_path)
+                    torch.save(model_dict, interrupted_path)
                     self._log(f"Training stopped. Model saved to {interrupted_path}")
                     raise StopIteration()
 
@@ -705,6 +605,7 @@ class DLTrainingContainer(Container):
                     target_size=(target_size, target_size),
                     in_channels=in_channels,
                     classes_num=classes_num,
+                    ignore_index = None,
                 )
             except StopIteration:
                 self._log("Training stopped by user.")
@@ -714,10 +615,10 @@ class DLTrainingContainer(Container):
 
         def on_returned(logs):
             for t in logs:
-                epoch, batch, n_batches, loss, finished, epoch_time = t
+                epoch, batch, n_batches, loss, finished, epoch_time, metrics_info = t
                 if batch == 0:
                     if epoch_time is not None:
-                        self._log(f"Epoch {epoch} finished, avg loss {loss:.4f}, time {epoch_time:.2f}s")
+                        self._log(f"Epoch {epoch} finished, avg loss {loss:.4f}, time {epoch_time:.2f}s, metric {metrics_info}")
                     else:
                         self._log(f"Epoch {epoch} finished, avg loss {loss:.4f}")
                 else:
