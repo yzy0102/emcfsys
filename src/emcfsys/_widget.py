@@ -31,9 +31,14 @@ Replace code below according to your needs.
 
 from typing import TYPE_CHECKING
 
+import numpy as np
 from magicgui import magic_factory
-from magicgui.widgets import CheckBox, Container, create_widget
-from qtpy.QtWidgets import QHBoxLayout, QPushButton, QWidget
+from magicgui.widgets import CheckBox, ComboBox, Container, create_widget, PushButton
+from qtpy.QtWidgets import QHBoxLayout, QPushButton, QWidget, QVBoxLayout
+
+
+from scipy import ndimage
+from skimage.transform import resize
 from skimage.util import img_as_float
 
 if TYPE_CHECKING:
@@ -111,6 +116,742 @@ class ImageThreshold(Container):
         else:
             self._viewer.add_labels(thresholded, name=name)
 
+# class ImageResize(QWidget):
+    """Widget for resizing images with different interpolation algorithms."""
+
+    def __init__(self, viewer: "napari.viewer.Viewer"):
+        super().__init__()
+        self._viewer = viewer
+
+        # -------------------
+        # Magicgui Container for input widgets
+        # -------------------
+        self._container = Container()
+
+        # Image selection
+        self._image_layer_combo = create_widget(
+            label="Image", annotation="napari.layers.Image"
+        )
+
+        # Output size widgets
+        self._width_spinbox = create_widget(
+            label="Width", annotation=int, widget_type="SpinBox"
+        )
+        self._width_spinbox.min = 1
+        self._width_spinbox.max = 10000
+        self._width_spinbox.value = 512
+
+        self._height_spinbox = create_widget(
+            label="Height", annotation=int, widget_type="SpinBox"
+        )
+        self._height_spinbox.min = 1
+        self._height_spinbox.max = 10000
+        self._height_spinbox.value = 512
+
+        # Scale factor widgets
+        self._scale_x_spinbox = create_widget(
+            label="Scale X", annotation=float, widget_type="FloatSpinBox"
+        )
+        self._scale_x_spinbox.min = 0.01
+        self._scale_x_spinbox.max = 100.0
+        self._scale_x_spinbox.value = 1.0
+        self._scale_x_spinbox.step = 0.1
+
+        self._scale_y_spinbox = create_widget(
+            label="Scale Y", annotation=float, widget_type="FloatSpinBox"
+        )
+        self._scale_y_spinbox.min = 0.01
+        self._scale_y_spinbox.max = 100.0
+        self._scale_y_spinbox.value = 1.0
+        self._scale_y_spinbox.step = 0.1
+
+        # Resize mode selection
+        self._mode_combo = ComboBox(
+            label="Resize Mode",
+            choices=["Absolute Size", "Scale Factor"],
+            value="Absolute Size",
+        )
+
+        # Interpolation algorithm selection
+        self._algorithm_combo = ComboBox(
+            label="Algorithm",
+            choices=[
+                "Nearest Neighbor",
+                "Bilinear",
+                "Bicubic",
+                "Lanczos",
+            ],
+            value="Bilinear",
+        )
+
+        # Maintain aspect ratio checkbox
+        self._maintain_aspect_checkbox = CheckBox(text="Maintain Aspect Ratio")
+
+        # Add widgets to container
+        self._container.extend(
+            [
+                self._image_layer_combo,
+                self._mode_combo,
+                self._width_spinbox,
+                self._height_spinbox,
+                self._scale_x_spinbox,
+                self._scale_y_spinbox,
+                self._maintain_aspect_checkbox,
+                self._algorithm_combo,
+            ]
+        )
+
+        # -------------------
+        # QPushButton separate from magicgui Container
+        # -------------------
+        self._apply_button = QPushButton("Apply Resize!")
+        self._apply_button.clicked.connect(self._resize_image)
+
+        # -------------------
+        # Layout
+        # -------------------
+        layout = QVBoxLayout()
+        layout.addWidget(self._container.native)  # Container 的原生 QWidget
+        layout.addWidget(self._apply_button)
+        self.setLayout(layout)
+
+        # -------------------
+        # Connect callbacks
+        # -------------------
+        self._image_layer_combo.changed.connect(self._on_image_changed)
+        self._mode_combo.changed.connect(self._on_mode_changed)
+        self._width_spinbox.changed.connect(self._on_size_changed)
+        self._height_spinbox.changed.connect(self._on_size_changed)
+
+        # Initialize visibility
+        self._on_mode_changed()
+
+    # -------------------
+    # Callback methods
+    # -------------------
+    def _on_image_changed(self):
+        """Update size spinboxes when image is selected."""
+        image_layer = self._image_layer_combo.value
+        if image_layer is not None and hasattr(image_layer, "data"):
+            shape = image_layer.data.shape
+            if len(shape) >= 2:
+                self._height_spinbox.value = shape[-2]
+                self._width_spinbox.value = shape[-1]
+
+    def _on_mode_changed(self):
+        """Toggle visibility of size/scale widgets based on mode."""
+        mode = self._mode_combo.value
+        if mode == "Absolute Size":
+            self._width_spinbox.show()
+            self._height_spinbox.show()
+            self._scale_x_spinbox.hide()
+            self._scale_y_spinbox.hide()
+        else:  # Scale Factor
+            self._width_spinbox.hide()
+            self._height_spinbox.hide()
+            self._scale_x_spinbox.show()
+            self._scale_y_spinbox.show()
+
+    def _on_size_changed(self):
+        """Maintain aspect ratio in absolute size mode."""
+        if not self._maintain_aspect_checkbox.value:
+            return
+
+        image_layer = self._image_layer_combo.value
+        if image_layer is None or not hasattr(image_layer, "data"):
+            return
+
+        shape = image_layer.data.shape
+        if len(shape) < 2:
+            return
+
+        original_height, original_width = shape[-2], shape[-1]
+        aspect_ratio = original_width / original_height
+
+        sender = self.sender()
+        if sender == self._width_spinbox:
+            new_width = self._width_spinbox.value
+            new_height = int(new_width / aspect_ratio)
+            self._height_spinbox.value = new_height
+        elif sender == self._height_spinbox:
+            new_height = self._height_spinbox.value
+            new_width = int(new_height * aspect_ratio)
+            self._width_spinbox.value = new_width
+
+    # -------------------
+    # Resize operation
+    # -------------------
+    def _resize_image(self):
+        image_layer = self._image_layer_combo.value
+        if image_layer is None:
+            return
+
+        image = image_layer.data
+        mode = self._mode_combo.value
+        algorithm = self._algorithm_combo.value
+
+        # Determine output shape
+        if mode == "Absolute Size":
+            output_height = self._height_spinbox.value
+            output_width = self._width_spinbox.value
+        else:  # Scale Factor
+            scale_y = self._scale_y_spinbox.value
+            scale_x = self._scale_x_spinbox.value
+            original_shape = image.shape
+            output_height = int(original_shape[-2] * scale_y)
+            output_width = int(original_shape[-1] * scale_x)
+
+        # Map algorithm names to scipy / skimage
+        algorithm_map = {
+            "Nearest Neighbor": 0,
+            "Bilinear": 1,
+            "Bicubic": 3,
+            "Lanczos": None,
+        }
+
+        try:
+            # Determine output shape for different dimensions
+            if len(image.shape) == 2:
+                output_shape = (output_height, output_width)
+            elif len(image.shape) == 3:
+                if image.shape[-1] in [3, 4]:  # RGB / RGBA
+                    output_shape = (output_height, output_width, image.shape[-1])
+                else:  # 3D grayscale
+                    output_shape = (
+                        int(image.shape[0] * (output_height / image.shape[-2])),
+                        output_height,
+                        output_width,
+                    )
+            else:
+                # Higher dimensional
+                scale_factors = [1.0] * len(image.shape)
+                scale_factors[-2] = output_height / image.shape[-2]
+                scale_factors[-1] = output_width / image.shape[-1]
+                output_shape = tuple(
+                    int(s * f) for s, f in zip(image.shape, scale_factors)
+                )
+
+            # Perform resize
+            if algorithm == "Lanczos":
+                resized = resize(
+                    image, output_shape, order=3, mode="reflect", anti_aliasing=True
+                )
+            else:
+                order = algorithm_map[algorithm]
+                if len(image.shape) == 2:
+                    resized = ndimage.zoom(
+                        image,
+                        (output_height / image.shape[0], output_width / image.shape[1]),
+                        order=order,
+                    )
+                elif len(image.shape) == 3 and image.shape[-1] in [3, 4]:
+                    resized = np.zeros(output_shape, dtype=image.dtype)
+                    for i in range(image.shape[-1]):
+                        resized[..., i] = ndimage.zoom(
+                            image[..., i],
+                            (
+                                output_height / image.shape[0],
+                                output_width / image.shape[1],
+                            ),
+                            order=order,
+                        )
+                else:
+                    zoom_factors = [
+                        out_s / in_s for out_s, in_s in zip(output_shape, image.shape)
+                    ]
+                    resized = ndimage.zoom(image, zoom_factors, order=order)
+
+            # Add resized image as new layer
+            name = image_layer.name + "_resized"
+            if name in self._viewer.layers:
+                self._viewer.layers[name].data = resized
+            else:
+                self._viewer.add_image(resized, name=name)
+
+        except Exception as e:
+            print(f"Error resizing image: {e}")
+# class ImageResize(QWidget):
+#     """Widget for resizing images with different interpolation algorithms."""
+
+#     def __init__(self, viewer: "napari.viewer.Viewer"):
+#         super().__init__()
+#         self._viewer = viewer
+#         self._container = Container()
+
+#         # Create widgets
+#         self._image_layer_combo = create_widget(
+#             label="Image", annotation="napari.layers.Image"
+#         )
+
+#         # Output size widgets
+#         self._width_spinbox = create_widget(
+#             label="Width", annotation=int, widget_type="SpinBox"
+#         )
+#         self._width_spinbox.min = 1
+#         self._width_spinbox.max = 10000
+#         self._width_spinbox.value = 512
+
+#         self._height_spinbox = create_widget(
+#             label="Height", annotation=int, widget_type="SpinBox"
+#         )
+#         self._height_spinbox.min = 1
+#         self._height_spinbox.max = 10000
+#         self._height_spinbox.value = 512
+
+#         # Scale factor widgets
+#         self._scale_x_spinbox = create_widget(
+#             label="Scale X", annotation=float, widget_type="FloatSpinBox"
+#         )
+#         self._scale_x_spinbox.min = 0.01
+#         self._scale_x_spinbox.max = 100.0
+#         self._scale_x_spinbox.value = 1.0
+#         self._scale_x_spinbox.step = 0.1
+
+#         self._scale_y_spinbox = create_widget(
+#             label="Scale Y", annotation=float, widget_type="FloatSpinBox"
+#         )
+#         self._scale_y_spinbox.min = 0.01
+#         self._scale_y_spinbox.max = 100.0
+#         self._scale_y_spinbox.value = 1.0
+#         self._scale_y_spinbox.step = 0.1
+
+#         # Resize mode selection
+#         self._mode_combo = ComboBox(
+#             label="Resize Mode",
+#             choices=["Absolute Size", "Scale Factor"],
+#             value="Absolute Size",
+#         )
+
+#         # Interpolation algorithm selection
+#         self._algorithm_combo = ComboBox(
+#             label="Algorithm",
+#             choices=[
+#                 "Nearest Neighbor",
+#                 "Bilinear",
+#                 "Bicubic",
+#                 "Lanczos",
+#             ],
+#             value="Bilinear",
+#         )
+
+#         # Maintain aspect ratio checkbox
+#         self._maintain_aspect_checkbox = CheckBox(text="Maintain Aspect Ratio")
+
+#         self.apply_button = QPushButton("Apply Resize!")
+#         self.apply_button.clicked.connect(self._resize_image)
+        
+
+#         # Connect callbacks
+#         self._image_layer_combo.changed.connect(self._on_image_changed)
+#         self._mode_combo.changed.connect(self._on_mode_changed)
+#         self._width_spinbox.changed.connect(self._on_size_changed)
+#         self._height_spinbox.changed.connect(self._on_size_changed)
+
+#         # Add widgets to container
+#         self._container.extend(
+#             [
+#                 self._image_layer_combo,
+#                 self._mode_combo,
+#                 self._width_spinbox,
+#                 self._height_spinbox,
+#                 self._scale_x_spinbox,
+#                 self._scale_y_spinbox,
+#                 self._maintain_aspect_checkbox,
+#                 self._algorithm_combo,
+#             ]
+#         )
+#         # self.layout.append(self.apply_button)
+#         self.append(self.apply_button)
+        
+#         self.setLayout(QHBoxLayout())
+#         # layout = QVBoxLayout()
+#         layout.addWidget(self._container.native)  # Container 的 Qt widget
+#         layout.addWidget(self._apply_button)
+#         self.setLayout(layout)
+        
+#         # Initialize visibility
+#         self._on_mode_changed()
+        
+        
+
+#     def _on_image_changed(self):
+#         """Update size spinboxes when image is selected."""
+#         image_layer = self._image_layer_combo.value
+#         if image_layer is not None and hasattr(image_layer, "data"):
+#             shape = image_layer.data.shape
+#             if len(shape) >= 2:
+#                 self._height_spinbox.value = shape[-2]
+#                 self._width_spinbox.value = shape[-1]
+
+#     def _on_mode_changed(self):
+#         """Toggle visibility of size/scale widgets based on mode."""
+#         mode = self._mode_combo.value
+#         if mode == "Absolute Size":
+#             self._width_spinbox.show()
+#             self._height_spinbox.show()
+#             self._scale_x_spinbox.hide()
+#             self._scale_y_spinbox.hide()
+#         else:  # Scale Factor
+#             self._width_spinbox.hide()
+#             self._height_spinbox.hide()
+#             self._scale_x_spinbox.show()
+#             self._scale_y_spinbox.show()
+
+#     def _on_size_changed(self):
+#         """Handle aspect ratio maintenance for absolute size mode."""
+#         if not self._maintain_aspect_checkbox.value:
+#             return
+
+#         image_layer = self._image_layer_combo.value
+#         if image_layer is None or not hasattr(image_layer, "data"):
+#             return
+
+#         shape = image_layer.data.shape
+#         if len(shape) < 2:
+#             return
+
+#         original_height, original_width = shape[-2], shape[-1]
+#         aspect_ratio = original_width / original_height
+
+#         # Determine which dimension changed and update the other
+#         sender = self.sender()
+#         if sender == self._width_spinbox:
+#             new_width = self._width_spinbox.value
+#             new_height = int(new_width / aspect_ratio)
+#             self._height_spinbox.value = new_height
+#         elif sender == self._height_spinbox:
+#             new_height = self._height_spinbox.value
+#             new_width = int(new_height * aspect_ratio)
+#             self._width_spinbox.value = new_width
+
+#     def _resize_image(self):
+#         """Perform the image resize operation."""
+#         image_layer = self._image_layer_combo.value
+#         if image_layer is None:
+#             return
+
+#         image = image_layer.data
+#         mode = self._mode_combo.value
+#         algorithm = self._algorithm_combo.value
+
+#         # Determine output shape
+#         if mode == "Absolute Size":
+#             output_height = self._height_spinbox.value
+#             output_width = self._width_spinbox.value
+#         else:  # Scale Factor
+#             scale_y = self._scale_y_spinbox.value
+#             scale_x = self._scale_x_spinbox.value
+#             original_shape = image.shape
+#             output_height = int(original_shape[-2] * scale_y)
+#             output_width = int(original_shape[-1] * scale_x)
+
+#         # Map algorithm names to scipy/skimage parameters
+#         algorithm_map = {
+#             "Nearest Neighbor": 0,
+#             "Bilinear": 1,
+#             "Bicubic": 3,
+#             "Lanczos": None,  # Will use skimage.transform.resize
+#         }
+
+#         try:
+#             # Handle different image dimensions
+#             if len(image.shape) == 2:
+#                 # 2D grayscale image
+#                 output_shape = (output_height, output_width)
+#             elif len(image.shape) == 3:
+#                 # 3D image or RGB image
+#                 if image.shape[-1] in [3, 4]:  # RGB or RGBA
+#                     output_shape = (output_height, output_width, image.shape[-1])
+#                 else:  # 3D grayscale
+#                     output_shape = (
+#                         int(image.shape[0] * (output_height / image.shape[-2])),
+#                         output_height,
+#                         output_width,
+#                     )
+#             else:
+#                 # Higher dimensional data
+#                 scale_factors = [1.0] * len(image.shape)
+#                 scale_factors[-2] = output_height / image.shape[-2]
+#                 scale_factors[-1] = output_width / image.shape[-1]
+#                 output_shape = tuple(
+#                     int(s * f) for s, f in zip(image.shape, scale_factors)
+#                 )
+
+#             # Perform resize based on algorithm
+#             if algorithm == "Lanczos":
+#                 # Use skimage for Lanczos
+#                 resized = resize(
+#                     image, output_shape, order=3, mode="reflect", anti_aliasing=True
+#                 )
+#             else:
+#                 # Use scipy for other algorithms
+#                 order = algorithm_map[algorithm]
+#                 if len(image.shape) == 2:
+#                     resized = ndimage.zoom(
+#                         image,
+#                         (output_height / image.shape[0], output_width / image.shape[1]),
+#                         order=order,
+#                     )
+#                 elif len(image.shape) == 3 and image.shape[-1] in [3, 4]:
+#                     # Handle RGB/RGBA separately for each channel
+#                     resized = np.zeros(output_shape, dtype=image.dtype)
+#                     for i in range(image.shape[-1]):
+#                         resized[..., i] = ndimage.zoom(
+#                             image[..., i],
+#                             (
+#                                 output_height / image.shape[0],
+#                                 output_width / image.shape[1],
+#                             ),
+#                             order=order,
+#                         )
+#                 else:
+#                     # General case
+#                     zoom_factors = [
+#                         out_s / in_s for out_s, in_s in zip(output_shape, image.shape)
+#                     ]
+#                     resized = ndimage.zoom(image, zoom_factors, order=order)
+
+#             # Add resized image as new layer
+#             name = image_layer.name + "_resized"
+#             if name in self._viewer.layers:
+#                 self._viewer.layers[name].data = resized
+#             else:
+#                 self._viewer.add_image(resized, name=name)
+
+#         except Exception as e:
+#             print(f"Error resizing image: {e}")
+class ImageResize(Container):
+    """Container widget for resizing images with different interpolation algorithms."""
+
+    def __init__(self, viewer: "napari.viewer.Viewer"):
+        super().__init__()
+        self._viewer = viewer
+
+        # Image selection
+        self._image_layer_combo = create_widget(
+            label="Image", annotation="napari.layers.Image"
+        )
+
+        # Output size widgets
+        self._width_spinbox = create_widget(
+            label="Width", annotation=int, widget_type="SpinBox"
+        )
+        self._width_spinbox.min = 1
+        self._width_spinbox.max = 10000
+        self._width_spinbox.value = 512
+
+        self._height_spinbox = create_widget(
+            label="Height", annotation=int, widget_type="SpinBox"
+        )
+        self._height_spinbox.min = 1
+        self._height_spinbox.max = 10000
+        self._height_spinbox.value = 512
+
+        # Scale factor widgets
+        self._scale_x_spinbox = create_widget(
+            label="Scale X", annotation=float, widget_type="FloatSpinBox"
+        )
+        self._scale_x_spinbox.min = 0.01
+        self._scale_x_spinbox.max = 100.0
+        self._scale_x_spinbox.value = 1.0
+        self._scale_x_spinbox.step = 0.1
+
+        self._scale_y_spinbox = create_widget(
+            label="Scale Y", annotation=float, widget_type="FloatSpinBox"
+        )
+        self._scale_y_spinbox.min = 0.01
+        self._scale_y_spinbox.max = 100.0
+        self._scale_y_spinbox.value = 1.0
+        self._scale_y_spinbox.step = 0.1
+
+        # Resize mode selection
+        self._mode_combo = ComboBox(
+            label="Resize Mode",
+            choices=["Absolute Size", "Scale Factor"],
+            value="Absolute Size",
+        )
+
+        # Interpolation algorithm selection
+        self._algorithm_combo = ComboBox(
+            label="Algorithm",
+            choices=[
+                "Nearest Neighbor",
+                "Bilinear",
+                "Bicubic",
+                "Lanczos",
+            ],
+            value="Bilinear",
+        )
+
+        # Maintain aspect ratio checkbox
+        self._maintain_aspect_checkbox = CheckBox(text="Maintain Aspect Ratio")
+
+        # Apply button
+        self._apply_button = PushButton(text="Apply Resize!")
+        self._apply_button.clicked.connect(self._resize_image)
+
+        # Add all widgets to container
+        self.extend(
+            [
+                self._image_layer_combo,
+                self._mode_combo,
+                self._width_spinbox,
+                self._height_spinbox,
+                self._scale_x_spinbox,
+                self._scale_y_spinbox,
+                self._maintain_aspect_checkbox,
+                self._algorithm_combo,
+                self._apply_button,
+            ]
+        )
+
+        # Connect callbacks
+        self._image_layer_combo.changed.connect(self._on_image_changed)
+        self._mode_combo.changed.connect(self._on_mode_changed)
+        self._width_spinbox.changed.connect(self._on_size_changed)
+        self._height_spinbox.changed.connect(self._on_size_changed)
+
+        # Initialize visibility
+        self._on_mode_changed()
+
+    # -------------------
+    # Callback methods
+    # -------------------
+    def _on_image_changed(self):
+        """Update size spinboxes when image is selected."""
+        image_layer = self._image_layer_combo.value
+        if image_layer is not None and hasattr(image_layer, "data"):
+            shape = image_layer.data.shape
+            if len(shape) >= 2:
+                self._height_spinbox.value = shape[-2]
+                self._width_spinbox.value = shape[-1]
+
+    def _on_mode_changed(self):
+        """Toggle visibility of size/scale widgets based on mode."""
+        mode = self._mode_combo.value
+        if mode == "Absolute Size":
+            self._width_spinbox.show()
+            self._height_spinbox.show()
+            self._scale_x_spinbox.hide()
+            self._scale_y_spinbox.hide()
+        else:  # Scale Factor
+            self._width_spinbox.hide()
+            self._height_spinbox.hide()
+            self._scale_x_spinbox.show()
+            self._scale_y_spinbox.show()
+
+    def _on_size_changed(self):
+        """Maintain aspect ratio in absolute size mode."""
+        if not self._maintain_aspect_checkbox.value:
+            return
+
+        image_layer = self._image_layer_combo.value
+        if image_layer is None or not hasattr(image_layer, "data"):
+            return
+
+        shape = image_layer.data.shape
+        if len(shape) < 2:
+            return
+
+        original_height, original_width = shape[-2], shape[-1]
+        aspect_ratio = original_width / original_height
+
+        sender = self.sender()
+        if sender == self._width_spinbox:
+            new_width = self._width_spinbox.value
+            new_height = int(new_width / aspect_ratio)
+            self._height_spinbox.value = new_height
+        elif sender == self._height_spinbox:
+            new_height = self._height_spinbox.value
+            new_width = int(new_height * aspect_ratio)
+            self._width_spinbox.value = new_width
+
+    # -------------------
+    # Resize operation
+    # -------------------
+    def _resize_image(self):
+        image_layer = self._image_layer_combo.value
+        if image_layer is None:
+            return
+
+        image = image_layer.data
+        mode = self._mode_combo.value
+        algorithm = self._algorithm_combo.value
+
+        # Determine output shape
+        if mode == "Absolute Size":
+            output_height = self._height_spinbox.value
+            output_width = self._width_spinbox.value
+        else:  # Scale Factor
+            scale_y = self._scale_y_spinbox.value
+            scale_x = self._scale_x_spinbox.value
+            original_shape = image.shape
+            output_height = int(original_shape[-2] * scale_y)
+            output_width = int(original_shape[-1] * scale_x)
+
+        # Map algorithm names
+        algorithm_map = {"Nearest Neighbor": 0, "Bilinear": 1, "Bicubic": 3, "Lanczos": None}
+
+        try:
+            # Determine output shape for different dimensions
+            if len(image.shape) == 2:
+                output_shape = (output_height, output_width)
+            elif len(image.shape) == 3:
+                if image.shape[-1] in [3, 4]:  # RGB / RGBA
+                    output_shape = (output_height, output_width, image.shape[-1])
+                else:  # 3D grayscale
+                    output_shape = (
+                        int(image.shape[0] * (output_height / image.shape[-2])),
+                        output_height,
+                        output_width,
+                    )
+            else:
+                scale_factors = [1.0] * len(image.shape)
+                scale_factors[-2] = output_height / image.shape[-2]
+                scale_factors[-1] = output_width / image.shape[-1]
+                output_shape = tuple(
+                    int(s * f) for s, f in zip(image.shape, scale_factors)
+                )
+
+            # Perform resize
+            if algorithm == "Lanczos":
+                resized = resize(
+                    image, output_shape, order=3, mode="reflect", anti_aliasing=True
+                )
+            else:
+                order = algorithm_map[algorithm]
+                if len(image.shape) == 2:
+                    resized = ndimage.zoom(
+                        image,
+                        (output_height / image.shape[0], output_width / image.shape[1]),
+                        order=order,
+                    )
+                elif len(image.shape) == 3 and image.shape[-1] in [3, 4]:
+                    resized = np.zeros(output_shape, dtype=image.dtype)
+                    for i in range(image.shape[-1]):
+                        resized[..., i] = ndimage.zoom(
+                            image[..., i],
+                            (
+                                output_height / image.shape[0],
+                                output_width / image.shape[1],
+                            ),
+                            order=order,
+                        )
+                else:
+                    zoom_factors = [
+                        out_s / in_s for out_s, in_s in zip(output_shape, image.shape)
+                    ]
+                    resized = ndimage.zoom(image, zoom_factors, order=order)
+
+            # Add resized image as new layer
+            name = image_layer.name + "_resized"
+            if name in self._viewer.layers:
+                self._viewer.layers[name].data = resized
+            else:
+                self._viewer.add_image(resized, name=name)
+
+        except Exception as e:
+            print(f"Error resizing image: {e}")
 
 class ExampleQWidget(QWidget):
     # your QWidget.__init__ can optionally request the napari viewer instance

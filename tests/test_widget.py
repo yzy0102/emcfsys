@@ -2,6 +2,7 @@ import numpy as np
 
 from emcfsys._widget import (
     ExampleQWidget,
+    ImageResize,
     ImageThreshold,
     threshold_autogenerate_widget,
     threshold_magic_widget,
@@ -64,3 +65,93 @@ def test_example_q_widget(make_napari_viewer, capsys):
     # read captured output and check that it's as we expected
     captured = capsys.readouterr()
     assert captured.out == "napari has 1 layers\n"
+
+
+def test_image_resize_widget(make_napari_viewer):
+    """Test the ImageResize widget."""
+    viewer = make_napari_viewer()
+    # Create a test image
+    test_image = np.random.random((100, 100))
+    layer = viewer.add_image(test_image)
+
+    # Create the resize widget
+    resize_widget = ImageResize(viewer)
+
+    # Set the image layer
+    resize_widget._image_layer_combo.value = layer
+
+    # Test absolute size mode
+    resize_widget._mode_combo.value = "Absolute Size"
+    resize_widget._width_spinbox.value = 50
+    resize_widget._height_spinbox.value = 50
+    resize_widget._algorithm_combo.value = "Bilinear"
+
+    # Apply resize
+    resize_widget._resize_image()
+
+    # Check that a new layer was created
+    assert len(viewer.layers) == 2
+    assert "test_image_resized" in viewer.layers
+
+    # Check the output shape
+    resized_layer = viewer.layers["test_image_resized"]
+    assert resized_layer.data.shape == (50, 50)
+
+
+def test_image_resize_scale_mode(make_napari_viewer):
+    """Test the ImageResize widget with scale factor mode."""
+    viewer = make_napari_viewer()
+    # Create a test image
+    test_image = np.random.random((100, 100))
+    layer = viewer.add_image(test_image)
+
+    # Create the resize widget
+    resize_widget = ImageResize(viewer)
+
+    # Set the image layer
+    resize_widget._image_layer_combo.value = layer
+
+    # Test scale factor mode
+    resize_widget._mode_combo.value = "Scale Factor"
+    resize_widget._scale_x_spinbox.value = 0.5
+    resize_widget._scale_y_spinbox.value = 0.5
+    resize_widget._algorithm_combo.value = "Nearest Neighbor"
+
+    # Apply resize
+    resize_widget._resize_image()
+
+    # Check that a new layer was created
+    assert len(viewer.layers) == 2
+
+    # Check the output shape (should be 50x50)
+    resized_layer = viewer.layers["test_image_resized"]
+    assert resized_layer.data.shape == (50, 50)
+
+
+def test_image_resize_algorithms(make_napari_viewer):
+    """Test different resize algorithms."""
+    viewer = make_napari_viewer()
+    test_image = np.random.random((100, 100))
+    layer = viewer.add_image(test_image)
+
+    algorithms = ["Nearest Neighbor", "Bilinear", "Bicubic", "Lanczos"]
+
+    for algorithm in algorithms:
+        # Clear previous layers except the original
+        while len(viewer.layers) > 1:
+            viewer.layers.pop()
+
+        resize_widget = ImageResize(viewer)
+        resize_widget._image_layer_combo.value = layer
+        resize_widget._mode_combo.value = "Absolute Size"
+        resize_widget._width_spinbox.value = 50
+        resize_widget._height_spinbox.value = 50
+        resize_widget._algorithm_combo.value = algorithm
+
+        # Apply resize
+        resize_widget._resize_image()
+
+        # Check that resize was successful
+        assert len(viewer.layers) == 2
+        resized_layer = viewer.layers["test_image_resized"]
+        assert resized_layer.data.shape == (50, 50)

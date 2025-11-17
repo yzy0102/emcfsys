@@ -30,6 +30,9 @@ contributions:
     - id: emcfsys.make_qwidget
       python_name: emcfsys:ExampleQWidget
       title: Make example QWidget
+    - id: emcfsys.make_resize_widget
+      python_name: emcfsys:ImageResize
+      title: Make image resize widget
   readers:
     - command: emcfsys.get_reader
       accepts_directories: false
@@ -55,3 +58,5 @@ contributions:
       display_name: Autogenerate Threshold
     - command: emcfsys.make_qwidget
       display_name: Example QWidget
+    - command: emcfsys.make_resize_widget
+      display_name: Image Resize
