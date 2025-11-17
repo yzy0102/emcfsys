@@ -5,7 +5,7 @@ import numpy as np
 from torch.utils.data import Dataset, DataLoader
 import torch
 import torch.nn as nn
-from .model import UNet
+from .model import UNet, load_pretrained
 from skimage.io import imread
 from skimage.transform import resize
 from PIL import Image
@@ -65,27 +65,33 @@ class ImageMaskDataset(Dataset):
         return torch.from_numpy(im), torch.from_numpy(m)
 
 
-def train_loop(images_dir, masks_dir, save_path,
+def train_loop(images_dir, masks_dir, save_path, pretrained_model=None,
                lr=1e-3, batch_size=4, epochs=100, device=None,
                callback=None, target_size=(512, 512), 
-               in_channels=1, classes_num=2, ignore_index=None):
+               in_channels=1, classes_num=2, ignore_index=-1):
     if device is None:
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     
 
-        
+    
     ds = ImageMaskDataset(images_dir, masks_dir, target_size=target_size)
     loader = DataLoader(ds, batch_size=batch_size, shuffle=True, num_workers=0)
     model = UNet(in_channels=in_channels, out_channels=classes_num).to(device)
+    
+    if pretrained_model is not None:
+        model = load_pretrained(model, pretrained_model, device)
+            
     opt = torch.optim.Adam(model.parameters(), lr=lr)
     criterion = nn.CrossEntropyLoss(ignore_index=ignore_index)
     
-        
+    best_metric = -1
+    best_model_path = None
     for epoch in range(1, epochs+1):
         epoch_start = time.time()
         model.train()
         tot_loss = 0.0
         metrics_accum = []
+        
         
         for batch_idx, (img, msk) in enumerate(loader):
             img = img.to(device).float()                     # shape (B,C,H,W)
@@ -107,6 +113,7 @@ def train_loop(images_dir, masks_dir, save_path,
             
             if callback:
                 callback(epoch, batch_idx+1, len(loader), loss.item())
+
         
         # epoch 平均指标
         avg = tot_loss / len(loader) if len(loader)>0 else 0.0
@@ -114,13 +121,42 @@ def train_loop(images_dir, masks_dir, save_path,
         for k in metrics_accum[0].keys():
             avg_metrics[k] = sum([m[k] for m in metrics_accum]) / len(metrics_accum)
             
+        current_iou = avg_metrics["IoU"]  # 你也可以换成 F1 或 Accuracy
+
+        if current_iou > best_metric:
+            print(f"New best model found at epoch {epoch}! IoU={current_iou:.4f}")
+
+            # 删除旧 best
+            if best_model_path is not None and os.path.exists(best_model_path):
+                os.remove(best_model_path)
+
+            best_model_path = os.path.join(save_path, f"best_model_epoch{epoch}_IoU={current_iou:.4f}.pth")
+            torch.save(model, best_model_path)
+            best_metric = current_iou
+            
+        # # save the best IoU model
+        # if epoch == 1:
+        #     best_iou = avg_metrics['IoU']
+        #     best_epoch = epoch
+        #     best_model= model
+        # else:
+        #     if avg_metrics['IoU'] > best_iou:
+        #         best_iou = avg_metrics['IoU']
+        #         best_epoch = epoch
+        #         best_model = model
+                
+        # torch.save(best_model, os.path.join(save_path, f"best_model_epoch_{best_epoch}.pth") )
+
+            
+            
         epoch_time = time.time() - epoch_start
         if callback:
             callback(epoch, 0, len(loader), avg,
                      finished_epoch=True, epoch_time=epoch_time,
-                     model_dict=model.state_dict(), metrics=avg_metrics)
-            
-            
-    # save final model state_dict
-    torch.save(model.state_dict(), os.path.join(save_path, "best_model.pth") )
+                     model_dict=model, metrics=avg_metrics)
+        
+
+    # save the final model
+    torch.save(model, os.path.join(save_path, f"final_model.pth") )    
+    
     return save_path

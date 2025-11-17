@@ -450,6 +450,7 @@ class DLTrainingContainer(Container):
         self.images_dir = FileEdit(label="Images folder", mode="d")
         self.masks_dir = FileEdit(label="Masks folder", mode="d")
         self.save_path = FileEdit(label="Save model as (.pth)", mode="d")
+        self.pretrained_model = FileEdit(label="Pretrained model (.pth)", nullable=True, mode="r")
 
         self.lr = FloatSpinBox(label="Learning rate", min=1e-6, max=1.0, step=1e-4, value=1e-3)
         self.batch_size = SpinBox(label="Batch size", min=1, max=512, step=1, value=8)
@@ -459,6 +460,7 @@ class DLTrainingContainer(Container):
         self.classes_num = SpinBox(label="Classes num", min=1, max=1000, step=1, value=2)
         self.in_channels = SpinBox(label="Image channels", min=1, max=3, step=1, value=1)
         self.target_size = SpinBox(label="Target size", min=1, max=10**8, value=512)
+        self.ignore_index = SpinBox(label="Ignore the index in mask", min=-1, max=10**8, value=-1)
 
         self._train_button = PushButton(text="Start Training")
         self._stop_button = PushButton(text="Stop Training")
@@ -470,9 +472,10 @@ class DLTrainingContainer(Container):
 
         # add widgets
         self.extend([
-            self.images_dir, self.masks_dir, self.save_path,
+            self.images_dir, self.masks_dir, self.save_path, self.pretrained_model,
             self.lr, self.batch_size, self.epochs, self.device,
             self.classes_num, self.in_channels, self.target_size,
+            self.ignore_index,
             self._train_button, self._stop_button, self._log_label, 
             self._log_widget
         ])
@@ -517,12 +520,12 @@ class DLTrainingContainer(Container):
         if epoch is not None:
             self._x_values.append(epoch)
             self._y_values.append(loss)
-        else:
-            # batch 级别直接追加
-            self._x_values.append(len(self._x_values)+1)
-            self._y_values.append(loss)
+        # else:
+        #     # batch 级别直接追加
+        #     self._x_values.append(len(self._x_values)+1)
+        #     self._y_values.append(loss)
         self._ax.clear()
-        self._ax.set_xlabel("Epoch / Batch")
+        self._ax.set_xlabel("Epoch")
         self._ax.set_ylabel("Loss")
         self._ax.set_title("Training Loss Curve")
         self._ax.plot(self._x_values, self._y_values, color='blue')
@@ -543,6 +546,7 @@ class DLTrainingContainer(Container):
         images_dir = self.images_dir.value
         masks_dir = self.masks_dir.value
         save_path = self.save_path.value
+        pretrained_model = self.pretrained_model.value
         lr = self.lr.value
         batch_size = self.batch_size.value
         epochs = self.epochs.value
@@ -550,7 +554,7 @@ class DLTrainingContainer(Container):
         in_channels = self.in_channels.value
         classes_num = self.classes_num.value
         target_size = self.target_size.value
-
+        ignore_index = self.ignore_index.value
         dev = torch.device(device) if device != "auto" else None
 
         from .EMCellFiner.train import train_loop  # 自己的训练函数
@@ -565,8 +569,8 @@ class DLTrainingContainer(Container):
                 # 更新 loss 曲线
                 if finished_epoch:
                     self._update_loss_curve(loss, epoch=epoch)
-                else:
-                    self._update_loss_curve(loss, epoch=epoch)
+                # else:
+                #     self._update_loss_curve(loss, epoch=epoch)
 
                 # 保存 epoch 时间
                 if finished_epoch and epoch_time is not None:
@@ -585,10 +589,10 @@ class DLTrainingContainer(Container):
                 if batch == 0 and finished_epoch:
                     if epoch_time is not None:
                         self._log(f"Epoch {epoch} finished, avg loss {loss:.4f}, time {epoch_time:.2f}s, metric {metrics}" )
-                    else:
-                        self._log(f"Epoch {epoch} finished, avg loss {loss:.4f}")
-                else:
-                    self._log(f"Epoch {epoch} batch {batch}/{n_batches} loss {loss:.4f}")
+                #     else:
+                #         self._log(f"Epoch {epoch} finished, avg loss {loss:.4f}")
+                # else:
+                #     self._log(f"Epoch {epoch} batch {batch}/{n_batches} loss {loss:.4f}")
 
                 # 停止训练
                 if self._stop_flag and model_dict is not None:
@@ -599,13 +603,13 @@ class DLTrainingContainer(Container):
 
             try:
                 train_loop(
-                    images_dir, masks_dir, save_path,
+                    images_dir, masks_dir, save_path, pretrained_model,
                     lr=lr, batch_size=batch_size, epochs=epochs,
                     device=dev, callback=cb,
                     target_size=(target_size, target_size),
                     in_channels=in_channels,
                     classes_num=classes_num,
-                    ignore_index = None,
+                    ignore_index = ignore_index,
                 )
             except StopIteration:
                 self._log("Training stopped by user.")

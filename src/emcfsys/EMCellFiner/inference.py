@@ -1,7 +1,7 @@
 # inference.py
 import numpy as np
 import torch
-from .model import load_model
+from .model import load_model, load_pretrained
 from skimage.transform import resize
 
 def prepare_image(img: np.ndarray):
@@ -33,11 +33,15 @@ def infer_numpy(model_path: str, image: np.ndarray, device=None, threshold=0.5):
     """
     if device is None:
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    model = load_model(model_path, device=device)
+        
+    model = torch.load(model_path, map_location=device)
+    # load_pretrained(model, model_path, device=device)
+    
+    
     x = prepare_image(image).to(device)
     with torch.no_grad():
         out = model(x)  # assume output shape (1, 1, H, W) or (1, C, H, W)
-        out = torch.sigmoid(out)
+        out = torch.argmax(out, dim=1)    
         out = out.cpu().numpy().squeeze()
     # if output has channel dim >1, take first
     if out.ndim == 3:
