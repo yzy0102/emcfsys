@@ -9,6 +9,8 @@ from ._sample_data import make_sample_data
 from ._widget import (
     ExampleQWidget,
     ImageResize,
+    DLInferenceContainer,
+    DLTrainingContainer,
     ImageThreshold,
     threshold_autogenerate_widget,
     threshold_magic_widget,
@@ -25,4 +27,6 @@ __all__ = (
     "ImageResize",
     "threshold_autogenerate_widget",
     "threshold_magic_widget",
+    "DLInferenceContainer",
+    "DLTrainingContainer",
 )

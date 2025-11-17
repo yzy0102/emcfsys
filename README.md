@@ -25,7 +25,7 @@ https://napari.org/stable/plugins/index.html
 
 ## Installation
 
-Assume you have a virtual enviroment like conda with python==3.10.11
+Assume you have a virtual enviroment like conda with python==3.11.10
 
 First, you should install the napari fr PyQt6.
 
@@ -45,11 +45,10 @@ If napari is not already installed, you can install `emcfsys` with napari and Qt
 pip install "emcfsys[all]"
 ```
 
-
 ## Other
 
-You can instal the samv2 for napari
-See https://github.com/Krishvraman/napari-SAMV2/blob/main/README.md
+~~You can instal the samv2 for napari
+See https://github.com/Krishvraman/napari-SAMV2/blob/main/README.md~~
 
 It can speed the data annotation.
 

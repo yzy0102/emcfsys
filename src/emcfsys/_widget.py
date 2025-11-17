@@ -366,3 +366,308 @@ class ExampleQWidget(QWidget):
 
     def _on_click(self):
         print("napari has", len(self.viewer.layers), "layers")
+
+#-----------model test
+from magicgui.widgets import Container, FileEdit, FloatSpinBox, SpinBox, ComboBox, PushButton, Label, TextEdit
+# from qtpy.QtWidgets import QTextEdit
+from napari.qt.threading import thread_worker
+import torch
+import numpy as np
+
+# -----------------------------
+# DL Inference Container
+# -----------------------------
+class DLInferenceContainer(Container):
+    def __init__(self, viewer: "napari.viewer.Viewer"):
+        super().__init__()
+        self._viewer = viewer
+        # widgets
+        self.model_path = FileEdit(label="Model (.pt/.pth/.ptscript)")
+        
+        # 使用 create_widget 支持直接选择 napari Image layer
+        self._image_layer_combo = create_widget(
+            label="Image", annotation="napari.layers.Image"
+        )
+        
+        self.threshold = FloatSpinBox(label="Threshold", min=0.0, max=1.0, step=0.01, value=0.5)
+        self.device = ComboBox(label="Device", choices=["auto", "cpu", "cuda"], value="auto")
+        self._run_button = PushButton(text="Run Inference")
+
+        # add widgets
+        self.extend([self.model_path, self._image_layer_combo, self.threshold, self.device, self._run_button])
+
+        # connect
+        self._run_button.clicked.connect(self._run_inference)
+
+
+
+    def _run_inference(self):
+        img_layer = self._image_layer_combo.value
+        if img_layer is None:
+            return
+
+        img = img_layer.data
+        device = self.device.value
+        dev = torch.device(device) if device != "auto" else None
+        model_path = self.model_path.value
+        threshold = self.threshold.value
+
+        @thread_worker
+        def _worker():
+            from .EMCellFiner.inference import infer_numpy
+            return infer_numpy(model_path, img, device=dev, threshold=threshold)
+
+        worker = _worker()
+
+        def on_result(mask: np.ndarray):
+            name = img_layer.name + "_dl_mask"
+            if name in self._viewer.layers:
+                self._viewer.layers[name].data = mask
+            else:
+                self._viewer.add_labels(mask, name=name)
+
+        worker.returned.connect(on_result)
+        worker.start()
+
+# -----------------------------
+# DL Training Container
+# -----------------------------
+# class DLTrainingContainer(Container):
+
+#     def __init__(self, viewer: "napari.viewer.Viewer"):
+#         super().__init__()
+#         self._viewer = viewer
+#         # widgets
+#         self.images_dir = FileEdit(label="Images folder", mode="d")
+#         self.masks_dir = FileEdit(label="Masks folder", mode="d")
+#         self.save_path = FileEdit(label="Save model as (.pth)", mode="d")  # 如果是保存文件，可以用 "w"
+                
+#         self.lr = FloatSpinBox(label="Learning rate", min=1e-6, max=1.0, step=1e-4, value=1e-3)
+#         self.batch_size = SpinBox(label="Batch size", min=1, max=64, step=1, value=4)
+#         self.epochs = SpinBox(label="Epochs", min=1, max=1000, step=1, value=10)
+#         self.device = ComboBox(label="Device", choices=["auto", "cpu", "cuda"], value="auto")
+        
+#         self.classes_num = SpinBox(label="classes num", min=1, max=1000, step=1, value=1)
+#         self.in_channels = SpinBox(label="image channels", min=1, max=3, step=1, value=1)
+        
+#         self._train_button = PushButton(text="Start Training")
+#         self._log_label = Label(value="Training log:")
+#         # 创建 TextEdit
+#         self._log_widget = TextEdit()  # 不能在这里加 read_only 或 min_height
+
+#         # 设置只读
+#         self._log_widget.read_only = True
+
+#         # 设置最小高度
+#         self._log_widget.native.setMinimumHeight(180)  # native 是底层 QWidget
+        
+        
+#         self._stop_button = PushButton(text="Stop Training")
+#         self.extend([self._stop_button])
+#         self._stop_button.clicked.connect(self._stop_training)
+#         self._stop_flag = False
+        
+#         # add widgets
+#         self.extend([self.images_dir, self.masks_dir, self.save_path,
+#                      self.lr, self.batch_size, self.epochs, self.device,
+#                      self.classes_num, self.in_channels,
+#                      self._train_button, self._log_label, self._log_widget])
+
+#         # connect
+#         self._train_button.clicked.connect(self._start_training)
+
+
+#     def _stop_training(self):
+#         self._stop_flag = True
+        
+#     def _log(self, s):
+#         try:
+#             self._log_widget.append(s)
+#         except Exception:
+#             print(s)
+
+#     def _start_training(self):
+#         if self._viewer is None:
+#             return
+#         images_dir = self.images_dir.value
+#         masks_dir = self.masks_dir.value
+#         save_path = self.save_path.value
+#         lr = self.lr.value
+#         batch_size = self.batch_size.value
+#         epochs = self.epochs.value
+#         device = self.device.value
+#         in_channels = self.in_channels.value
+#         classes_num = self.classes_num.value
+#         dev = torch.device(device) if device != "auto" else None
+
+#         from napari.qt.threading import thread_worker
+#         from .EMCellFiner.train import train_loop
+
+#         @thread_worker
+#         def _worker():
+#             logs = []
+
+#             def cb(epoch, batch, n_batches, loss, finished_epoch=False):
+#                 logs.append((epoch, batch, n_batches, loss, finished_epoch))
+
+#             train_loop(images_dir, masks_dir, save_path,
+#                        lr=lr, batch_size=batch_size, epochs=epochs,
+#                        device=dev, callback=cb, target_size=(256,256), 
+#                        in_channels = in_channels, 
+#                        classes_num = classes_num)
+#             return logs
+
+#         worker = _worker()
+
+#         def on_returned(logs):
+#             for t in logs:
+#                 epoch, batch, n_batches, loss, finished = t
+#                 if batch == 0:
+#                     self._log(f"Epoch {epoch} finished, avg loss {loss:.4f}")
+#                 else:
+#                     self._log(f"Epoch {epoch} batch {batch}/{n_batches} loss {loss:.4f}")
+#             self._log(f"Training finished. Model saved to: {save_path}")
+
+#         worker.returned.connect(on_returned)
+#         worker.start()
+
+from magicgui.widgets import FileEdit, FloatSpinBox, SpinBox, ComboBox, PushButton, Label, TextEdit
+# from magicgui import Container
+from pathlib import Path
+import torch
+from napari.qt.threading import thread_worker
+
+class DLTrainingContainer(Container):
+
+    def __init__(self, viewer: "napari.viewer.Viewer"):
+        super().__init__()
+        self._viewer = viewer
+        self._stop_flag = False
+
+        # widgets
+        self.images_dir = FileEdit(label="Images folder", mode="d")
+        self.masks_dir = FileEdit(label="Masks folder", mode="d")
+        self.save_path = FileEdit(label="Save model as (.pth)", mode="d")
+
+        self.lr = FloatSpinBox(label="Learning rate", min=1e-6, max=1.0, step=1e-4, value=1e-3)
+        self.batch_size = SpinBox(label="Batch size", min=1, max=64, step=1, value=4)
+        self.epochs = SpinBox(label="Epochs", min=1, max=1000, step=1, value=10)
+        self.device = ComboBox(label="Device", choices=["auto", "cpu", "cuda"], value="auto")
+
+        self.classes_num = SpinBox(label="Classes num", min=1, max=1000, step=1, value=1)
+        self.in_channels = SpinBox(label="Image channels", min=1, max=3, step=1, value=1)
+        self.target_size = SpinBox(label="Target size", min=1, max=10**6)
+
+        self._train_button = PushButton(text="Start Training")
+        self._stop_button = PushButton(text="Stop Training")
+        self._log_label = Label(value="Training log:")
+        self._log_widget = TextEdit()
+        self._log_widget.read_only = True
+        self._log_widget.native.setMinimumHeight(180)
+
+        # add widgets
+        self.extend([
+            self.images_dir, self.masks_dir, self.save_path,
+            self.lr, self.batch_size, self.epochs, self.device,
+            self.classes_num, self.in_channels, self.target_size,
+            self._train_button, self._stop_button, self._log_label, 
+            self._log_widget, 
+        ])
+
+        # connect signals
+        self._train_button.clicked.connect(self._start_training)
+        self._stop_button.clicked.connect(self._stop_training)
+
+    def _log(self, s):
+        try:
+            self._log_widget.append(s)
+        except Exception:
+            print(s)
+
+    def _start_training(self):
+        if self._viewer is None:
+            return
+
+        self._stop_flag = False  # 重置停止标志
+
+        images_dir = self.images_dir.value
+        masks_dir = self.masks_dir.value
+        save_path = self.save_path.value
+        lr = self.lr.value
+        batch_size = self.batch_size.value
+        epochs = self.epochs.value
+        device = self.device.value
+        in_channels = self.in_channels.value
+        classes_num = self.classes_num.value
+        target_size = self.target_size.value
+
+        dev = torch.device(device) if device != "auto" else None
+
+        from .EMCellFiner.train import train_loop  # 自己的训练函数
+
+        @thread_worker
+        def _worker():
+            logs = []
+            epoch_times = []
+            
+            def cb(epoch, batch, n_batches, loss, finished_epoch=False, epoch_time=None):
+                # 保存每轮时间
+                if finished_epoch and epoch_time is not None:
+                    epoch_times.append(epoch_time)
+
+                # 实时打印日志
+                logs.append((epoch, batch, n_batches, loss, finished_epoch, epoch_time))
+                # 第1轮结束时估算总训练时间
+                if finished_epoch and len(epoch_times) == 1:
+                    estimated_total = epoch_times[0] * self.epochs.value
+                    self._log(f"Estimated total training time: {estimated_total:.2f}s (~{estimated_total/60:.1f} min)")
+
+                if batch == 0 and finished_epoch:
+                    # self._log(f"Epoch {epoch} finished, avg loss {loss:.4f}")
+                    if epoch_time is not None:
+                        self._log(f"Epoch {epoch} finished, avg loss {loss:.4f}, time {epoch_time:.2f}s")
+
+                    else:
+                        self._log(f"Epoch {epoch} finished, avg loss {loss:.4f}")
+
+                        
+                else:
+                    self._log(f"Epoch {epoch} batch {batch}/{n_batches} loss {loss:.4f}")
+                    
+                # 检查停止标志
+                if self._stop_flag:
+                    raise StopIteration()
+
+            try:
+                train_loop(
+                    images_dir, masks_dir, save_path,
+                    lr=lr, batch_size=batch_size, epochs=epochs,
+                    device=dev, callback=cb, target_size=(target_size, target_size),
+                    in_channels=in_channels,
+                    classes_num=classes_num,
+                )
+            except StopIteration:
+                self._log("Training stopped by user.")
+            return logs
+
+        worker = _worker()
+
+        def on_returned(logs):
+            for t in logs:
+                epoch, batch, n_batches, loss, finished, epoch_time = t
+                if batch == 0:
+                    if epoch_time is not None:
+                        self._log(f"Epoch {epoch} finished, avg loss {loss:.4f}, time {epoch_time:.2f}s")
+                    else:
+                        self._log(f"Epoch {epoch} finished, avg loss {loss:.4f}")
+                else:
+                    self._log(f"Epoch {epoch} batch {batch}/{n_batches} loss {loss:.4f}")
+            if not self._stop_flag:
+                self._log(f"Training finished. Model saved to: {save_path}")
+
+        worker.returned.connect(on_returned)
+        worker.start()
+
+    def _stop_training(self):
+        self._stop_flag = True
+        self._log("Stop button clicked. Stopping training...")

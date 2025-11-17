@@ -32,7 +32,13 @@ contributions:
       title: Make example QWidget
     - id: emcfsys.make_resize_widget
       python_name: emcfsys:ImageResize
-      title: Make image resize widget
+      title: Make image resize widget    
+    - id: emcfsys.DLInferenceContainer
+      python_name: emcfsys._widget:DLInferenceContainer
+      title: Deep Learning DLInferenceContainer Widget
+    - id: emcfsys.DLTrainingContainer
+      python_name: emcfsys._widget:DLTrainingContainer
+      title: Deep Learning DLTrainingContainer Widget
   readers:
     - command: emcfsys.get_reader
       accepts_directories: false
@@ -60,3 +66,7 @@ contributions:
       display_name: Example QWidget
     - command: emcfsys.make_resize_widget
       display_name: Image Resize
+    - command: emcfsys.DLInferenceContainer
+      display_name: Deep Learning Inference
+    - command: emcfsys.DLTrainingContainer
+      display_name: Deep Learning DLTrainingContainer
