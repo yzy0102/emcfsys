@@ -11,9 +11,9 @@
 
 Towards foundation models for EM images analysis. EMCellFiner and EMCellFound are two foundation models trained based on a 4 million EM images dataset.
 
-----------------------------------
+---
 
-This [napari] plugin was generated with [copier] using the [napari-plugin-template] (None).
+This [napari][napari] plugin was generated with [copier][copier] using the [napari-plugin-template][napari-plugin-template] (None).
 
 <!--
 Don't miss the full getting started guide to set up your new package:
@@ -25,7 +25,15 @@ https://napari.org/stable/plugins/index.html
 
 ## Installation
 
-You can install `emcfsys` via [pip]:
+Assume you have a virtual enviroment like conda with python==3.10.11
+
+First, you should install the napari fr PyQt6.
+
+```
+python -m pip install "napari[pyqt6, optional]"   
+```
+
+Then you can install `emcfsys` via [pip][pip]:
 
 ```
 pip install emcfsys
@@ -38,15 +46,21 @@ pip install "emcfsys[all]"
 ```
 
 
+## Other
+
+You can instal the samv2 for napari
+See https://github.com/Krishvraman/napari-SAMV2/blob/main/README.md
+
+It can speed the data annotation.
 
 ## Contributing
 
-Contributions are very welcome. Tests can be run with [tox], please ensure
+Contributions are very welcome. Tests can be run with [tox][tox], please ensure
 the coverage at least stays the same before you submit a pull request.
 
 ## License
 
-Distributed under the terms of the [GNU GPL v3.0] license,
+Distributed under the terms of the [GNU GPL v3.0][GNU GPL v3.0] license,
 "emcfsys" is free and open source software
 
 ## Issues
@@ -63,7 +77,6 @@ If you encounter any problems, please [file an issue] along with a detailed desc
 [Apache Software License 2.0]: http://www.apache.org/licenses/LICENSE-2.0
 [Mozilla Public License 2.0]: https://www.mozilla.org/media/MPL/2.0/index.txt
 [napari-plugin-template]: https://github.com/napari/napari-plugin-template
-
 [napari]: https://github.com/napari/napari
 [tox]: https://tox.readthedocs.io/en/latest/
 [pip]: https://pypi.org/project/pip/
