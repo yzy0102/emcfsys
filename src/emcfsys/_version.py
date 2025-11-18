@@ -28,7 +28,7 @@ version_tuple: VERSION_TUPLE
 commit_id: COMMIT_ID
 __commit_id__: COMMIT_ID
 
-__version__ = version = '0.0.2.dev17+nogit.gbe61f1514.d20251118'
-__version_tuple__ = version_tuple = (0, 0, 2, 'dev17', 'nogit.gbe61f1514.d20251118')
+__version__ = version = '0.0.2.dev20+nogit.gea062f3fa.d20251118'
+__version_tuple__ = version_tuple = (0, 0, 2, 'dev20', 'nogit.gea062f3fa.d20251118')
 
-__commit_id__ = commit_id = 'gbe61f1514'
+__commit_id__ = commit_id = 'gea062f3fa'
