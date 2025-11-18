@@ -39,6 +39,20 @@ contributions:
     - id: emcfsys.DLTrainingContainer
       python_name: emcfsys._widget:DLTrainingContainer
       title: Deep Learning DLTrainingContainer Widget
+
+    - id: emcfsys.emcellfiner.single_infer
+      python_name:  emcfsys._widget:EMCellFinerSingleInferWidget
+      title: EMCellFiner - Single Image Inference Widget
+
+    - id: emcfsys.emcellfiner.batch_infer
+      python_name: emcfsys._widget:EMCellFinerBatchInferWidget
+      title: EMCellFiner - Batch Inference Widget
+
+    - id: emcfsys.emcellfiner.training
+      python_name: emcfsys._widget:EMCellFinerTraningWidget
+      title: EMCellFiner - Model Training Widget
+
+
   readers:
     - command: emcfsys.get_reader
       accepts_directories: false
@@ -70,3 +84,10 @@ contributions:
       display_name: Deep Learning Inference
     - command: emcfsys.DLTrainingContainer
       display_name: Deep Learning DLTrainingContainer
+
+    - command: emcfsys.emcellfiner.single_infer
+      display_name: EMCellFiner - Single Image Inference
+    - command: emcfsys.emcellfiner.batch_infer
+      display_name: EMCellFiner - Batch Inference
+    - command: emcfsys.emcellfiner.training
+      display_name: EMCellFiner - Model Training

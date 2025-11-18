@@ -414,7 +414,7 @@ class DLInferenceContainer(Container):
 
         @thread_worker
         def _worker():
-            from .EMCellFiner.inference import infer_numpy
+            from .EMCellFound.inference import infer_numpy
             return infer_numpy(model_path, img, device=dev, threshold=threshold)
 
         worker = _worker()
@@ -557,7 +557,7 @@ class DLTrainingContainer(Container):
         ignore_index = self.ignore_index.value
         dev = torch.device(device) if device != "auto" else None
 
-        from .EMCellFiner.train import train_loop  # 自己的训练函数
+        from .EMCellFound.train import train_loop  # 自己的训练函数
         
         
         @thread_worker
@@ -636,3 +636,106 @@ class DLTrainingContainer(Container):
     def _stop_training(self):
         self._stop_flag = True
         self._log("Stop button clicked. Stopping training...")
+
+#------------EMCellFiner=------
+#------------EMCellFiner=------
+
+from qtpy.QtWidgets import QWidget, QVBoxLayout, QGroupBox
+from magicgui import magicgui
+
+class EMCellFinerSingleInferWidget(QWidget):
+    def __init__(self, napari_viewer):
+        super().__init__()
+        self.viewer = napari_viewer
+        
+        # magicgui 组件
+        @magicgui(
+            model_path={"widget_type": "FileEdit", "filter": "*.pth"},
+            call_button="Run Inference",
+            layout="vertical"
+        )
+        def ui(model_path="", threshold: float = 0.5):
+            self.run_inference(model_path, threshold)
+        
+        group = QGroupBox("Single Image Inference")
+        layout = QVBoxLayout(group)
+        layout.addWidget(ui.native)
+        
+        main = QVBoxLayout(self)
+        main.addWidget(group)
+
+    def run_inference(self, model_path, threshold):
+        layer = self.viewer.layers.selection.active
+        if layer is None:
+            print("No image layer selected.")
+            return
+        # from .EMCellFiner.inference import infer_numpy
+        img = layer.data
+        mask = infer_numpy(model_path, img, threshold=threshold)
+        self.viewer.add_labels(mask, name="dl_mask")
+
+
+from qtpy.QtWidgets import QWidget, QVBoxLayout, QGroupBox
+from magicgui import magicgui
+import os
+import numpy as np
+from PIL import Image
+class EMCellFinerBatchInferWidget(QWidget):
+    def __init__(self, napari_viewer):
+        super().__init__()
+        self.viewer = napari_viewer
+        
+        @magicgui(
+            model_path={"widget_type": "FileEdit", "filter": "*.pth"},
+            folder={"widget_type": "FileEdit", "mode": "d"},
+            call_button="Run Batch Inference",
+            layout="vertical"
+        )
+        def ui(model_path="", folder=""):
+            self.run_batch(model_path, folder)
+        
+        group = QGroupBox("Batch Inference")
+        layout = QVBoxLayout(group)
+        layout.addWidget(ui.native)
+
+        main = QVBoxLayout(self)
+        main.addWidget(group)
+
+    def run_batch(self, model_path, folder):
+        from .EMCellFiner.inference import infer_numpy
+        for name in os.listdir(folder):
+            if name.lower().endswith((".png", ".jpg", ".tif")):
+                path = os.path.join(folder, name)
+                img = np.array(Image.open(path).convert("RGB"))
+                mask = infer_numpy(model_path, img)
+                self.viewer.add_labels(mask, name=f"{name}_mask")
+
+
+from qtpy.QtWidgets import QWidget, QVBoxLayout, QGroupBox
+from magicgui import magicgui
+
+class EMCellFinerTraningWidget(QWidget):
+    def __init__(self, napari_viewer):
+        super().__init__()
+        self.viewer = napari_viewer
+        
+        @magicgui(
+            data_dir={"widget_type": "FileEdit", "mode": "d"},
+            val_dir={"widget_type": "FileEdit", "mode": "d"},
+            epochs={"widget_type": "SpinBox", "min": 1, "max": 500},
+            backbone={"choices": ["resnet18", "resnet34", "resnet50"]},
+            call_button="Start Training",
+        )
+        def ui(data_dir="", val_dir="", epochs=20, backbone="resnet34"):
+            self.start_train(data_dir, val_dir, epochs, backbone)
+        
+        group = QGroupBox("Model Training")
+        layout = QVBoxLayout(group)
+        layout.addWidget(ui.native)
+
+        main = QVBoxLayout(self)
+        main.addWidget(group)
+
+    def start_train(self, data_dir, val_dir, epochs, backbone):
+        from .EMCellFiner.train import train_main
+        train_main(data_dir=data_dir, val_dir=val_dir, epochs=epochs, backbone=backbone)
