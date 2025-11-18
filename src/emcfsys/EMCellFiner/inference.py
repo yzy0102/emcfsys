@@ -3,51 +3,87 @@ import numpy as np
 import torch
 from .model import load_model, load_pretrained
 from skimage.transform import resize
+class Normalize:
+    """Normalize image to mean/std (mmseg style)."""
+    def __init__(self, mean=(123.675, 116.28, 103.53), std=(58.395, 57.12, 57.375)):
+        self.mean = np.array(mean, dtype=np.float32)
+        self.std = np.array(std, dtype=np.float32)
 
-def prepare_image(img: np.ndarray):
+    def __call__(self, img: np.ndarray):
+        img = img.astype(np.float32)
+        # HWC -> CHW if necessary
+        if img.ndim == 2:
+            img = img[np.newaxis, ...]  # 1,H,W
+        elif img.ndim == 3 and img.shape[-1] in (1,3):
+            img = np.transpose(img, (2,0,1))
+        elif img.ndim == 3 and img.shape[0] in (1,3):
+            pass
+        else:
+            raise ValueError(f"Unsupported image shape: {img.shape}")
+        # normalize
+        for c in range(img.shape[0]):
+            img[c] = (img[c] - self.mean[c]) / self.std[c]
+        return img
+
+
+def prepare_image(img: np.ndarray, 
+                  in_channels=3, 
+                  normalize=True, 
+                  mean=(123.675,116.28,103.53), 
+                  std=(58.395,57.12,57.375)):
     """
-    Ensure shape (H, W) or (C, H, W) acceptable; return torch tensor (1, C, H, W)
-    We normalize to [0,1].
+    Prepare image for model inference.
+    - img: np.ndarray, HxW, HxWxC, or CxHxW
+    - in_channels: expected input channels for the model (1 or 3)
+    - normalize: whether to apply mean/std normalization
     """
     arr = img.astype(np.float32)
+    
+    # Ensure channel-first
     if arr.ndim == 2:
-        arr = arr[np.newaxis, ...]  # 1, H, W
-    elif arr.ndim == 3 and arr.shape[0] in (1,3):  # C, H, W
-        pass
-    elif arr.ndim == 3 and arr.shape[-1] in (1,3):  # H, W, C -> transpose
-        arr = np.transpose(arr, (2,0,1))
+        arr = arr[np.newaxis, ...]  # 1,H,W
+    elif arr.ndim == 3 and arr.shape[0] in (1,3):
+        pass  # C,H,W
+    elif arr.ndim == 3 and arr.shape[-1] in (1,3):
+        arr = np.transpose(arr, (2,0,1))  # H,W,C -> C,H,W
     else:
-        raise ValueError("Unsupported image shape for inference: " + str(arr.shape))
-    # normalize to 0-1
-    mn, mx = arr.min(), arr.max()
-    if mx > mn:
-        arr = (arr - mn) / (mx - mn)
-    else:
-        arr = arr - mn
-    return torch.from_numpy(arr).unsqueeze(0)  # 1, C, H, W
+        raise ValueError(f"Unsupported image shape: {arr.shape}")
+    
+    # Match input channels
+    if arr.shape[0] != in_channels:
+        if arr.shape[0] == 1 and in_channels == 3:
+            arr = np.repeat(arr, 3, axis=0)
+        elif arr.shape[0] == 3 and in_channels == 1:
+            arr = arr.mean(axis=0, keepdims=True)
+        else:
+            raise ValueError(f"Cannot match channels {arr.shape[0]} -> {in_channels}")
+    
+    # Apply mmseg-style normalization
+    if normalize:
+        norm = Normalize(mean, std)
+        arr = norm(arr)
+    
+    return torch.from_numpy(arr).unsqueeze(0)  # 1,C,H,W
 
-def infer_numpy(model_path: str, image: np.ndarray, device=None, threshold=0.5):
+def infer_numpy(model_path, image: np.ndarray, device=None, threshold=0.5):
     """
-    Load model and run inference on single image (numpy).
-    Returns binary mask (H, W) as uint8.
+    Run inference on single image (numpy array).
+    
+    Returns mask as uint8.
     """
     if device is None:
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         
     model = torch.load(model_path, map_location=device)
-    # load_pretrained(model, model_path, device=device)
+    model.eval()
+    model.to(device)
     
+    x = prepare_image(image, in_channels=3).to(device)
     
-    x = prepare_image(image).to(device)
     with torch.no_grad():
-        out = model(x)  # assume output shape (1, 1, H, W) or (1, C, H, W)
-        out = torch.argmax(out, dim=1)    
-        out = out.cpu().numpy().squeeze()
-    # if output has channel dim >1, take first
-    if out.ndim == 3:
-        out = out[0]
-    # ensure same spatial size as input (resize if necessary)
-    if out.shape != image.shape[-2:]:
-        out = resize(out, image.shape[-2:], preserve_range=True, order=1)
-    mask = (out > threshold).astype(np.uint8)
-    return mask
+        out = model(x)   # 1,C,H,W
+        # print(out.shape)
+        mask = torch.argmax(out, dim=1)
+        mask = mask.cpu().numpy().squeeze()
+
+    return mask.astype(np.uint8)

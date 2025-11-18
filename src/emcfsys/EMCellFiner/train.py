@@ -17,7 +17,12 @@ from PIL import Image
 from skimage.transform import resize
 import torch
 import time
-from .metrics import compute_metrics  
+from .metrics import compute_metrics, DiceCELoss
+from .transforms import Compose, LoadImage, LoadMask, PhotometricDistortion, AlbumentationsTransform, RandomErasing, RandomScale, Pad, ToTensor,  RandomCrop, Resize, Normalize
+import albumentations as A
+from PIL import Image
+from .dataset import SegmentationDataset
+
 
 class ImageMaskDataset(Dataset):
     def __init__(self, images_dir, masks_dir, 
@@ -72,17 +77,32 @@ def train_loop(images_dir, masks_dir, save_path, pretrained_model=None,
     if device is None:
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     
+    pipeline = Compose([
+                    LoadImage(),
+                    LoadMask(), 
+                    Resize((target_size[0], target_size[1])),
+                    AlbumentationsTransform(A.HorizontalFlip(p=.5)),  # Albumentations
+                    PhotometricDistortion(),
+                    RandomScale((0.8, 1.4)),
+                    RandomCrop((target_size[0], target_size[1])),
+                    Pad((target_size[0], target_size[1])),
+                    RandomErasing(prob=0.5),
 
+                    Normalize(mean=(123.675, 116.28, 103.53), std=(58.395, 57.12, 57.375)),
+                    ToTensor()
+                    ])
     
-    ds = ImageMaskDataset(images_dir, masks_dir, target_size=target_size)
-    loader = DataLoader(ds, batch_size=batch_size, shuffle=True, num_workers=0)
+    # dataset = ImageMaskDataset(images_dir, masks_dir, target_size=target_size)
+    dataset = SegmentationDataset(images_dir, masks_dir, transforms = pipeline)
+    loader = DataLoader(dataset, batch_size=batch_size, shuffle=True, num_workers=0)
     model = UNet(in_channels=in_channels, out_channels=classes_num).to(device)
     
     if pretrained_model is not None:
         model = load_pretrained(model, pretrained_model, device)
             
     opt = torch.optim.Adam(model.parameters(), lr=lr)
-    criterion = nn.CrossEntropyLoss(ignore_index=ignore_index)
+    # criterion = nn.CrossEntropyLoss(ignore_index=ignore_index)
+    criterion = DiceCELoss(num_classes=classes_num, ignore_index=ignore_index, dice_weight=1, ce_weight=1)
     
     best_metric = -1
     best_model_path = None
