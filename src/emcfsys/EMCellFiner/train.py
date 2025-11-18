@@ -22,7 +22,7 @@ from .transforms import Compose, LoadImage, LoadMask, PhotometricDistortion, Alb
 import albumentations as A
 from PIL import Image
 from .dataset import SegmentationDataset
-
+from .models.UNet import ResUnet
 
 class ImageMaskDataset(Dataset):
     def __init__(self, images_dir, masks_dir, 
@@ -95,7 +95,9 @@ def train_loop(images_dir, masks_dir, save_path, pretrained_model=None,
     # dataset = ImageMaskDataset(images_dir, masks_dir, target_size=target_size)
     dataset = SegmentationDataset(images_dir, masks_dir, transforms = pipeline)
     loader = DataLoader(dataset, batch_size=batch_size, shuffle=True, num_workers=0)
-    model = UNet(in_channels=in_channels, out_channels=classes_num).to(device)
+    
+    # model = UNet(in_channels=in_channels, out_channels=classes_num).to(device)
+    model = ResUnet(backbone='resnet34', num_classes=classes_num, pretrained=True).to(device)    
     
     if pretrained_model is not None:
         model = load_pretrained(model, pretrained_model, device)

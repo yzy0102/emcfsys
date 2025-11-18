@@ -3,7 +3,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from typing import Optional
-
+from .ResNet import ResNetBackbone
 
 def load_pretrained(model, ckpt_path, device):
     print("Loading pretrained:", ckpt_path)
@@ -94,7 +94,7 @@ class UNet(nn.Module):
         u3 = self.up3(u2, c1)
         return self.outc(u3)
 
-def load_model(path: str, device: Optional[torch.device]=None, in_channels=1, out_channels=1):
+def load_model(path: str, device: Optional[torch.device]=None, in_channels=3, out_channels=1):
     """
     Try to load a model from path.
     - If it's a scripted/traced model (torch.jit), use torch.jit.load
@@ -117,3 +117,109 @@ def load_model(path: str, device: Optional[torch.device]=None, in_channels=1, ou
         model = model.to(device)
         model.eval()
         return model
+
+
+
+class ResUnet(nn.Module):
+    def __init__(self, backbone='resnet34', 
+                        num_classes=2, 
+                        pretrained=True):
+        super().__init__()
+        self.backbone = ResNetBackbone(depth=int(backbone.replace("resnet","")), pretrained=pretrained, out_indices=[0,1,2,3,4])
+        
+        if backbone == 'resnet18':
+            enc_channels = [64, 64, 128, 256, 512]
+            dec_channels = [256, 128, 64, 64]  # decoder 输出通道
+        elif backbone == 'resnet34':
+            enc_channels = [64, 64, 128, 256, 512]
+            dec_channels = [256, 128, 64, 64]  # decoder 输出通道
+        elif backbone == 'resnet50':
+            enc_channels = [64, 256, 512, 1024, 2048]
+            dec_channels = [512, 256, 128, 64]  # decoder 输出通道
+        elif backbone == 'resnet101':
+            enc_channels = [64, 256, 512, 1024, 2048]
+            dec_channels = [512, 256, 128, 64]  # decoder 输出通道
+        else:
+            raise ValueError(f"Unsupported backbone: {backbone}")
+        # decoder
+        # 假设 out_indices 对应 features=[64,64,128,256,512] （resnet34）
+        # 这里需要根据 backbone 调整通道数
+        # enc_channels = [64, 64, 128, 256, 512]
+        # dec_channels = [256, 128, 64, 64]  # decoder 输出通道
+        
+        self.up4 = nn.ConvTranspose2d(enc_channels[4], dec_channels[0], kernel_size=2, stride=2)
+        self.conv4 = nn.Sequential(nn.Conv2d(enc_channels[3]+dec_channels[0], dec_channels[0], 3,1,1),
+                                   nn.ReLU(),
+                                   nn.Conv2d(dec_channels[0], dec_channels[0], 3,1,1),
+                                   nn.ReLU())
+        
+        self.up3 = nn.ConvTranspose2d(dec_channels[0], dec_channels[1], kernel_size=2, stride=2)
+        
+        self.conv3 = nn.Sequential(nn.Conv2d(enc_channels[2]+dec_channels[1], dec_channels[1],3,1,1),
+                                   nn.ReLU(),
+                                   nn.Conv2d(dec_channels[1], dec_channels[1],3,1,1),
+                                   nn.ReLU())
+        
+        self.up2 = nn.ConvTranspose2d(dec_channels[1], dec_channels[2], kernel_size=2, stride=2)
+    
+        self.conv2 = nn.Sequential(nn.Conv2d(enc_channels[1]+dec_channels[2], dec_channels[2],3,1,1),
+                                   nn.ReLU(),
+                                   nn.Conv2d(dec_channels[2], dec_channels[2],3,1,1),
+                                   nn.ReLU())
+        
+        self.up1 = nn.ConvTranspose2d(dec_channels[2], dec_channels[3], kernel_size=2, stride=2)
+        
+        self.conv1 = nn.Sequential(nn.Conv2d(dec_channels[3], dec_channels[3]*2, 3, 1, 1),
+                                   nn.ReLU(),
+                                   nn.Conv2d(dec_channels[3]*2, dec_channels[3], 3, 1, 1),
+                                   nn.ReLU())
+        
+        self.up0 = nn.ConvTranspose2d(dec_channels[3], dec_channels[3], kernel_size=2, stride=2)
+        
+        self.conv0 = nn.Sequential(nn.Conv2d(dec_channels[3], dec_channels[3], 3, 1, 1),
+                                   nn.ReLU(),
+                                   nn.Conv2d(dec_channels[3], dec_channels[3], 3, 1, 1),
+                                   nn.ReLU())
+        
+        # self.head = nn.Conv2d(dec_channels[3], num_classes, 1)
+        
+        self.head = nn.Sequential(
+            nn.Conv2d(dec_channels[3], dec_channels[3], 3, 1, 1),
+            nn.ReLU(),
+            nn.Conv2d(dec_channels[3], num_classes, 1)
+        )
+        
+    def forward(self, x):
+        feats = self.backbone(x)
+        # x4, x3, x2, x1, x0 = feats[::-1]  # 反转，方便 decoder
+        _, x1, x2, x3, x4 = feats
+
+
+    
+        # x0: torch.Size([1, 64, 64, 64])
+        # x1: torch.Size([1, 64, 64, 64])
+        # x2: torch.Size([1, 128, 32, 32])
+        # x3: torch.Size([1, 256, 16, 16])
+        # x4: torch.Size([1, 512, 8, 8])
+        
+        # decoder
+        d4 = self.up4(x4)
+        d4 = self.conv4(torch.cat([d4, x3], dim=1))
+
+        
+        d3 = self.up3(d4)
+        d3 = self.conv3(torch.cat([d3, x2], dim=1))
+        
+        d2 = self.up2(d3)
+        d2 = self.conv2(torch.cat([d2, x1], dim=1))
+        
+        d1 = self.up1(d2)
+        d1 = self.conv1(d1)
+        
+        d0 = self.up0(d1)
+        d0 = self.conv0(d0)
+
+        out = self.head(d0)
+        
+        # out = F.interpolate(out, size=x.shape[2:], mode='bilinear', align_corners=False)
+        return out
