@@ -1,7 +1,7 @@
 # inference.py
 import numpy as np
 import torch
-from .model import load_model, load_pretrained
+from .models.UNet import load_model, load_pretrained
 from skimage.transform import resize
 class Normalize:
     """Normalize image to mean/std (mmseg style)."""

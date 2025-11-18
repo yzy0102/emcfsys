@@ -5,7 +5,7 @@ import numpy as np
 from torch.utils.data import Dataset, DataLoader
 import torch
 import torch.nn as nn
-from .model import UNet, load_pretrained
+from .models.UNet import UNet, load_pretrained
 from skimage.io import imread
 from skimage.transform import resize
 from PIL import Image
@@ -154,21 +154,7 @@ def train_loop(images_dir, masks_dir, save_path, pretrained_model=None,
             torch.save(model, best_model_path)
             best_metric = current_iou
             
-        # # save the best IoU model
-        # if epoch == 1:
-        #     best_iou = avg_metrics['IoU']
-        #     best_epoch = epoch
-        #     best_model= model
-        # else:
-        #     if avg_metrics['IoU'] > best_iou:
-        #         best_iou = avg_metrics['IoU']
-        #         best_epoch = epoch
-        #         best_model = model
-                
-        # torch.save(best_model, os.path.join(save_path, f"best_model_epoch_{best_epoch}.pth") )
 
-            
-            
         epoch_time = time.time() - epoch_start
         if callback:
             callback(epoch, 0, len(loader), avg,
