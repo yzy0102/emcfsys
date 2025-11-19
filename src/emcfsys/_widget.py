@@ -288,12 +288,12 @@ class ImageResize(Container):
 
 
 #-----------model test
-from magicgui.widgets import Container, FileEdit, FloatSpinBox, SpinBox, ComboBox, PushButton, Label, TextEdit
+from magicgui.widgets import Container, FileEdit, FloatSpinBox, SpinBox, ComboBox, PushButton, Label, TextEdit, SpinBox
 # from qtpy.QtWidgets import QTextEdit
 from napari.qt.threading import thread_worker
 import torch
 import numpy as np
-
+from .EMCellFound.inference import load_model
 # -----------------------------
 # DL Inference Container
 # -----------------------------
@@ -309,12 +309,21 @@ class DLInferenceContainer(Container):
             label="Image", annotation="napari.layers.Image"
         )
         
-        self.threshold = FloatSpinBox(label="Threshold", min=0.0, max=1.0, step=0.01, value=0.5)
+        self.num_classes = SpinBox(label="num classes", min=0, max=1000, step=1, value=2)
+        
         self.device = ComboBox(label="Device", choices=["auto", "cpu", "cuda"], value="auto")
+        backbone_zoom = ["resnet34", "resnet50", "resnet101"]
+        model_zoom = ["deeplabv3plus", "unet", "pspnet", "upernet"]
+        self.backbone_name = ComboBox(label="Backbone", choices=backbone_zoom, value="resnet34")
+        self.model_name = ComboBox(label="Model", choices=model_zoom, value="deeplabv3plus")
+        
         self._run_button = PushButton(text="Run Inference")
 
         # add widgets
-        self.extend([self.model_path, self._image_layer_combo, self.threshold, self.device, self._run_button])
+        self.extend([self.model_path, 
+                     self._image_layer_combo, 
+                     self.backbone_name, self.model_name,
+                     self.num_classes, self.device, self._run_button])
 
         # connect
         self._run_button.clicked.connect(self._run_inference)
@@ -329,12 +338,20 @@ class DLInferenceContainer(Container):
         device = self.device.value
         dev = torch.device(device) if device != "auto" else None
         model_path = self.model_path.value
-        threshold = self.threshold.value
+
 
         @thread_worker
         def _worker():
             from .EMCellFound.inference import infer_numpy
-            return infer_numpy(model_path, img, device=dev, threshold=threshold)
+            model = load_model(
+                    model_name=self.model_name.value, 
+                    backbone_name=self.backbone_name.value, 
+                    num_classes=self.num_classes.value, 
+                    model_path=model_path, 
+                    aux_on=False, 
+                    device=dev)
+            
+            return infer_numpy(model, img, device=dev)
 
         worker = _worker()
 

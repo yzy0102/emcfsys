@@ -96,7 +96,7 @@ def prepare_image(img: np.ndarray,
     
     return torch.from_numpy(arr).unsqueeze(0)  # 1,C,H,W
 
-def infer_numpy(model, image: np.ndarray, device=None, threshold=0.5):
+def infer_numpy(model, image: np.ndarray, device=None):
     """
     Run inference on single image (numpy array).
     
