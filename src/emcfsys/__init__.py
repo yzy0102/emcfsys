@@ -7,13 +7,12 @@ except ImportError:
 from ._reader import napari_get_reader
 from ._sample_data import make_sample_data
 from ._widget import (
-    ExampleQWidget,
     ImageResize,
     DLInferenceContainer,
     DLTrainingContainer,
-    ImageThreshold,
-    threshold_autogenerate_widget,
-    threshold_magic_widget,
+    EMCellFinerSingleInferWidget,
+    EMCellFinerBatchInferWidget,
+    
 )
 from ._writer import write_multiple, write_single_image
 
@@ -22,11 +21,9 @@ __all__ = (
     "write_single_image",
     "write_multiple",
     "make_sample_data",
-    "ExampleQWidget",
-    "ImageThreshold",
     "ImageResize",
-    "threshold_autogenerate_widget",
-    "threshold_magic_widget",
     "DLInferenceContainer",
     "DLTrainingContainer",
+    "EMCellFinerSingleInferWidget",
+    "EMCellFinerBatchInferWidget",
 )
