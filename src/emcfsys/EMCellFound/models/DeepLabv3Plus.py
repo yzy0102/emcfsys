@@ -1,179 +1,198 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from .BaseModel import BaseModel
-
-# -------------------------
-# basic Conv + BN + ReLU
-# -------------------------
-def conv3x3(in_ch, out_ch, dilation=1, bias=False):
-    padding = dilation
-    return nn.Conv2d(in_ch, out_ch, kernel_size=3, padding=padding, dilation=dilation, bias=bias)
-
-class ConvBNReLU(nn.Sequential):
-    def __init__(self, in_ch, out_ch, kernel_size=3, stride=1, padding=1, dilation=1, bias=False):
-        conv = nn.Conv2d(in_ch, out_ch, kernel_size=kernel_size,
-                         stride=stride, padding=padding, dilation=dilation, bias=bias)
-        bn = nn.BatchNorm2d(out_ch)
-        relu = nn.ReLU(inplace=True)
-        super().__init__(conv, bn, relu)
+import timm
 
 
-# -------------------------
-# ASPP module (DeepLabV3)
-# -------------------------
+# ------------------------------
+#   ASPP 模块
+# ------------------------------
 class ASPP(nn.Module):
-    def __init__(self, in_channels, out_channels=256, dilations=(12, 24, 36), align_corners=False):
-        """
-        in_channels: channels of backbone deepest feature (C5)
-        out_channels: channels for each ASPP branch conv output (default 256)
-        dilations: tuple of dilation rates for 3x3 branches
-        """
+    def __init__(self, in_channels, out_channels, dilation_rates=(1, 6, 12, 18)):
         super().__init__()
-        self.align_corners = align_corners
+        self.aspp_blocks = nn.ModuleList()
 
-        # 1x1 branch
-        self.branch1 = nn.Sequential(
-            nn.Conv2d(in_channels, out_channels, kernel_size=1, bias=False),
-            nn.BatchNorm2d(out_channels),
-            nn.ReLU(inplace=True)
-        )
-
-        # 3x3 dilated branches
-        self.branches = nn.ModuleList()
-        for d in dilations:
-            self.branches.append(
+        for rate in dilation_rates:
+            self.aspp_blocks.append(
                 nn.Sequential(
-                    nn.Conv2d(in_channels, out_channels, kernel_size=3, padding=d, dilation=d, bias=False),
+                    nn.Conv2d(in_channels, out_channels, kernel_size=3 if rate != 1 else 1,
+                              padding=rate if rate != 1 else 0, dilation=rate, bias=False),
                     nn.BatchNorm2d(out_channels),
-                    nn.ReLU(inplace=True)
+                    nn.ReLU(inplace=True),
                 )
             )
 
-        # image pooling branch
-        self.image_pool = nn.Sequential(
+        self.global_pool = nn.Sequential(
             nn.AdaptiveAvgPool2d(1),
             nn.Conv2d(in_channels, out_channels, kernel_size=1, bias=False),
             nn.BatchNorm2d(out_channels),
-            nn.ReLU(inplace=True)
+            nn.ReLU(inplace=True),
         )
 
-        # concat -> proj
-        total_branches = 2 + len(dilations)  # branch1 + image_pool + len(dilations)
         self.project = nn.Sequential(
-            nn.Conv2d(out_channels * (len(dilations) + 2), out_channels, kernel_size=1, bias=False),
+            nn.Conv2d(out_channels * (len(dilation_rates) + 1), out_channels, kernel_size=1, bias=False),
             nn.BatchNorm2d(out_channels),
             nn.ReLU(inplace=True),
-            nn.Dropout2d(0.1)
+            nn.Dropout(0.1),
         )
 
     def forward(self, x):
-        size = x.shape[2:]
-        outs = []
-        outs.append(self.branch1(x))
-        for b in self.branches:
-            outs.append(b(x))
-        img = self.image_pool(x)
-        img = F.interpolate(img, size=size, mode='bilinear', align_corners=self.align_corners)
-        outs.append(img)
-        x = torch.cat(outs, dim=1)
-        x = self.project(x)
-        return x
+        feats = [block(x) for block in self.aspp_blocks]
+
+        gp = self.global_pool(x)
+        gp = F.interpolate(gp, size=x.shape[2:], mode="bilinear", align_corners=False)
+        feats.append(gp)
+
+        feats = torch.cat(feats, dim=1)
+        return self.project(feats)
 
 
-# -------------------------
-# Decoder (DeepLabV3+ style)
-# -------------------------
-class Decoder(nn.Module):
-    def __init__(self, low_level_inplanes, low_level_out=48, aspp_out=256, decoder_channels=256, num_classes=21):
-        """
-        low_level_inplanes: channels of the low-level feature (layer1)
-        low_level_out: reduced channels for low-level feature after 1x1 conv
-        aspp_out: channels from ASPP (default 256)
-        decoder_channels: channels in decoder conv block
-        """
+# ------------------------------
+#  主干 + Decoder 模块
+# ------------------------------
+class DeepLabV3Plus(nn.Module):
+    def __init__(
+        self,
+        backbone_name: str = "resnet50",
+        num_classes: int = 21,
+        aux_on: bool = True,
+        pretrained: bool = True,
+    ):
         super().__init__()
-        # reduce low-level feature channels
-        self.reduce_low = nn.Sequential(
-            nn.Conv2d(low_level_inplanes, low_level_out, kernel_size=1, bias=False),
-            nn.BatchNorm2d(low_level_out),
-            nn.ReLU(inplace=True)
+
+        self.out_channels = num_classes
+        self.aux_on = aux_on
+        feat_len = len(timm.create_model(backbone_name, pretrained=False, features_only=True).feature_info)
+        out_indices = tuple(range(1, feat_len))  # skip first if you want, 或 (0,1,2,3)
+
+        # ---- timm backbone ----
+        self.backbone = timm.create_model(backbone_name, 
+                                          features_only=True, 
+                                          pretrained=pretrained,
+                                          out_indices=out_indices)
+        
+        feat_channels = self.backbone.feature_info.channels()
+
+        self.low_level_in = feat_channels[1]   # C2
+        self.high_level_in = feat_channels[-1] # C5
+
+        # ---- ASPP ----
+        self.aspp = ASPP(self.high_level_in, 256)
+
+        # ---- 低层特征通道压缩 ----
+        self.low_proj = nn.Sequential(
+            nn.Conv2d(self.low_level_in, 48, kernel_size=1, bias=False),
+            nn.BatchNorm2d(48),
+            nn.ReLU(inplace=True),
         )
 
-        # after concat (aspp_up + low_level_reduced)
-        self.last_conv = nn.Sequential(
-            nn.Conv2d(aspp_out + low_level_out, decoder_channels, kernel_size=3, padding=1, bias=False),
-            nn.BatchNorm2d(decoder_channels),
+        # ---- Decoder ----
+        self.decoder = nn.Sequential(
+            nn.Conv2d(256 + 48, 256, kernel_size=3, padding=1, bias=False),
+            nn.BatchNorm2d(256),
             nn.ReLU(inplace=True),
-            nn.Conv2d(decoder_channels, decoder_channels, kernel_size=3, padding=1, bias=False),
-            nn.BatchNorm2d(decoder_channels),
+
+            nn.Conv2d(256, 256, kernel_size=3, padding=1, bias=False),
+            nn.BatchNorm2d(256),
             nn.ReLU(inplace=True),
-            nn.Dropout2d(0.1)
         )
 
-        self.cls_seg = nn.Conv2d(decoder_channels, num_classes, kernel_size=1)
+        self.pred_head = nn.Conv2d(256, self.out_channels, kernel_size=1)
 
-    def forward(self, aspp_feat, low_level_feat, input_size, align_corners=False):
-        # aspp_feat: feature from ASPP (shape: H_aspp x W_aspp)
-        # low_level_feat: layer1 feature (higher resolution)
-        # 1) reduce low-level channels
-        low = self.reduce_low(low_level_feat)
-        # 2) upsample aspp to low size
-        aspp_up = F.interpolate(aspp_feat, size=low.shape[2:], mode='bilinear', align_corners=align_corners)
-        # 3) concat and refine
-        x = torch.cat([aspp_up, low], dim=1)
-        x = self.last_conv(x)
-        # 4) upsample to original input size
-        x = self.cls_seg(x)
-        x = F.interpolate(x, size=input_size, mode='bilinear', align_corners=align_corners)
-        return x
-
-
-# -------------------------
-# Full DeepLabV3+ Model
-# -------------------------
-class DeepLabV3Plus(BaseModel):
-    def __init__(self,
-                 backbone='resnet34',
-                 num_classes=2,
-                 pretrained=True,
-                 aspp_dilations=(12, 24, 36),
-                 align_corners=False):
-        """
-        backbone: 'resnet34' / 'resnet50' / ...
-        num_classes: segmentation classes
-        aspp_dilations: dilation rates for ASPP 3x3 branches
-        """
-        super().__init__(backbone, num_classes, pretrained)
-
-        # channels from your BaseModel: [stem, layer1, layer2, layer3, layer4]
-        enc_ch = self.enc_channels
-        # use deepest feature channels for ASPP (enc_ch[-1])
-        aspp_in = enc_ch[-1]
-        # low-level feature from layer1 (enc_ch[1])
-        low_level_in = enc_ch[1]
-
-        # modules
-        self.aspp = ASPP(in_channels=aspp_in, out_channels=256, dilations=aspp_dilations, align_corners=align_corners)
-        self.decoder = Decoder(low_level_inplanes=low_level_in,
-                               low_level_out=48,
-                               aspp_out=256,
-                               decoder_channels=256,
-                               num_classes=num_classes)
-        self.align_corners = align_corners
+        # ---- auxiliary 深监督 ----
+        if aux_on:
+            self.aux_head = nn.Sequential(
+                nn.Conv2d(self.high_level_in, 256, kernel_size=3, padding=1, bias=False),
+                nn.BatchNorm2d(256),
+                nn.ReLU(inplace=True),
+                nn.Conv2d(256, self.out_channels, kernel_size=1)
+            )
 
     def forward(self, x):
-        """
-        forward with:
-          feats = [stem, layer1, layer2, layer3, layer4]
-        """
-        input_size = (x.shape[2], x.shape[3])
+        # features: [C1, C2, C3, C4, C5]
         feats = self.backbone(x)
+        low = feats[1]      # C2
+        high = feats[-1]    # C5
 
-        # deep / low-level selection
-        low_level_feat = feats[1]   # layer1 (higher resolution, e.g., 1/4)
-        deep_feat = feats[-1]       # layer4 (lowest resolution, e.g., 1/32)
+        # ASPP
+        high = self.aspp(high)
 
-        aspp_feat = self.aspp(deep_feat)
-        out = self.decoder(aspp_feat, low_level_feat, input_size, align_corners=self.align_corners)
-        return out
+        # 低层特征
+        low = self.low_proj(low)
+        high = F.interpolate(high, size=low.shape[2:], mode="bilinear", align_corners=False)
+
+        # decoder
+        fused = torch.cat([high, low], dim=1)
+        out = self.decoder(fused)
+        pred = self.pred_head(out)
+
+        pred = F.interpolate(pred, size=x.shape[2:], mode="bilinear", align_corners=False)
+
+        # --------------------
+        # 输出统一格式
+        # --------------------
+        aux = None
+        if self.aux_on:
+            aux = self.aux_head(feats[-1])
+            aux = F.interpolate(aux, size=x.shape[2:], mode="bilinear", align_corners=False)
+
+        return pred, aux
+    
+    
+    # Inference helper (numpy -> torch -> numpy)
+# --------------------------
+def infer_image_numpy(model, img_np, device="cpu", to_uint8=True):
+    """
+    img_np: HWC uint8 or float32 in [0,255] or normalized
+    returns: segmentation mask (H, W) int label by argmax
+    """
+    model.eval()
+    # prepare tensor
+    x = img_np
+    if x.dtype == np.uint8:
+        x = x.astype(np.float32) / 255.0
+    elif x.dtype == np.float32 or x.dtype == np.float64:
+        # assume already normalized to [0,1] or other; we won't change
+        x = x.astype(np.float32)
+    else:
+        x = x.astype(np.float32)
+
+    # HWC -> CHW
+    t = torch.from_numpy(x).permute(2, 0, 1).unsqueeze(0)  # 1,C,H,W
+    t = t.to(device)
+
+    with torch.no_grad():
+        logits, aux = model(t)
+        probs = F.softmax(logits, dim=1)
+        seg = probs.argmax(dim=1)[0].cpu().numpy().astype(np.uint8)
+
+    return seg
+
+import numpy as np
+# --------------------------
+# Quick test
+# --------------------------
+if __name__ == "__main__":
+    # quick sanity check
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+
+    # net = DeepLabV3Plus(backbone_name="convnext_large.dinov3_lvd1689m", num_classes=3, pretrained=True, aux_on=False)
+    # net = DeepLabV3Plus(backbone_name="convnext_base.dinov3_lvd1689m", num_classes=3, pretrained=True, aux_on=False)
+    net = DeepLabV3Plus(backbone_name="vit_small_patch16_dinov3.lvd1689m", num_classes=3, pretrained=True, aux_on=False)
+    # net = DeepLabV3Plus(backbone_name="hiera_small_abswin_256.sbb2_e200_in12k_ft_in1k", num_classes=3, pretrained=False, aux_on=False)
+    # net = DeepLabV3Plus(backbone_name="convnext_tiny", num_classes=3, pretrained=False, aux_on=False)
+    # net = DeepLabV3Plus(backbone_name="resnet50", num_classes=3, pretrained=True, aux_on=False)
+
+    net.eval()
+    
+    img_size = 512
+    
+    x = torch.randn(1, 3, img_size, img_size)
+    
+    out, aux = net(x)
+    print("main logits shape:", out.shape)
+    if aux is not None:
+        print("aux logits shape:", aux.shape)
+    seg = infer_image_numpy(net, (np.random.rand(img_size,img_size,3)*255).astype(np.uint8), device="cpu")
+    print("seg shape:", seg.shape)

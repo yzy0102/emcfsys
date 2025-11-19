@@ -5,7 +5,7 @@ import numpy as np
 from torch.utils.data import Dataset, DataLoader
 import torch
 import torch.nn as nn
-from .models.UNet import UNet, load_pretrained
+from .utils.checkpoint import load_pretrained
 from skimage.io import imread
 from skimage.transform import resize
 from PIL import Image
@@ -17,91 +17,39 @@ from PIL import Image
 from skimage.transform import resize
 import torch
 import time
-from .metrics import compute_metrics, DiceCELoss
-from .transforms import Compose, LoadImage, LoadMask, PhotometricDistortion, AlbumentationsTransform, RandomErasing, RandomScale, Pad, ToTensor,  RandomCrop, Resize, Normalize
+from .metrics.metrics import compute_metrics, DiceCELoss
+from .transforms.transforms import Compose, LoadImage, LoadMask, PhotometricDistortion, AlbumentationsTransform, RandomErasing, RandomScale, Pad, ToTensor,  RandomCrop, Resize, Normalize
 import albumentations as A
 from PIL import Image
-from .dataset import SegmentationDataset
-from .models.UNet import ResUnet
+from .datasets.segmentation2D import SegmentationDataset
+from .transforms.augmentations import get_train_transform
+
 from .models.PSPNet import PSPNet
-from .models.DeepLabv3Plus import DeepLabV3Plus
+from .models.model_factory import get_model
 
-# class ImageMaskDataset(Dataset):
-#     def __init__(self, images_dir, masks_dir, 
-#                  image_ext=("png","jpg","jpeg","tif","tiff"),
-#                  mask_ext="png",
-#                  target_size=None):
-#         self.images_dir = Path(images_dir)
-#         self.masks_dir = Path(masks_dir)
-
-#         # 收集所有 image 文件
-#         imgs = []
-#         for e in image_ext:
-#             imgs += list(self.images_dir.glob(f"**/*.{e}"))
-
-#         # 只保留有对应 mask 的 image
-#         self.files = [p for p in imgs if (self.masks_dir / (p.stem + f".{mask_ext}")).exists()]
-#         self.target_size = target_size
-
-#     def __len__(self):
-#         return len(self.files)
-
-#     def __getitem__(self, idx):
-#         img_path = self.files[idx]
-#         mask_path = self.masks_dir / f"{img_path.stem}.png"  # mask 必须为 png
-
-#         # 读取 image
-#         im = np.array(Image.open(img_path).convert("L"))  # 转灰度
-
-#         # 读取 mask
-#         m = np.array(Image.open(mask_path).convert("P"))  # 保持离散标签
-
-#         # Resize
-#         if self.target_size is not None and im.shape != self.target_size:
-#             im = resize(im, self.target_size, preserve_range=True)
-#             m = resize(m, self.target_size, preserve_range=True, order=0)  # 最近邻插值
-
-#         # Normalize image [0,1]
-#         im = im.astype("float32")
-#         if im.max() > im.min():
-#             im = (im - im.min()) / (im.max() - im.min())
-
-#         im = im[np.newaxis, ...]  # C,H,W
-#         m = (m > 0).astype("float32")[np.newaxis, ...]  # binarize mask
-
-#         return torch.from_numpy(im), torch.from_numpy(m)
-
-
-def train_loop(images_dir, masks_dir, save_path, pretrained_model=None,
-               lr=1e-3, batch_size=4, epochs=100, device=None,
+def train_loop(images_dir, masks_dir, 
+               save_path, 
+               model_name='deeplabv3plus',
+               backbone_name='resnet34',
+               pretrained = True,
+               pretrained_model=None,
+               lr=1e-3, batch_size=4, 
+               epochs=100, device=None,
                callback=None, target_size=(512, 512), 
-               in_channels=3, classes_num=2, ignore_index=-1):
+               classes_num=2, ignore_index=-1):
+    
     if device is None:
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    
-    pipeline = Compose([
-                    LoadImage(),
-                    LoadMask(), 
-                    Resize((target_size[0], target_size[1])),
-                    AlbumentationsTransform(A.HorizontalFlip(p=.5)),  # Albumentations
-                    PhotometricDistortion(),
-                    RandomScale((0.8, 1.4)),
-                    RandomCrop((target_size[0], target_size[1])),
-                    Pad((target_size[0], target_size[1])),
-                    RandomErasing(prob=0.5),
-
-                    Normalize(mean=(123.675, 116.28, 103.53), std=(58.395, 57.12, 57.375)),
-                    ToTensor()
-                    ])
-    
-    # dataset = ImageMaskDataset(images_dir, masks_dir, target_size=target_size)
+        
+    # transforms pipline
+    pipeline = get_train_transform(target_size)
     dataset = SegmentationDataset(images_dir, masks_dir, transforms = pipeline)
-    loader = DataLoader(dataset, batch_size=batch_size, shuffle=True, num_workers=0)
     
-    # model = UNet(in_channels=in_channels, out_channels=classes_num).to(device)
-    # model = ResUnet(backbone='resnet34', num_classes=classes_num, pretrained=True).to(device)    
-    # model = PSPNet(backbone='resnet34', num_classes=classes_num, pretrained=True).to(device)    
-    model = DeepLabV3Plus(backbone='resnet34', num_classes=classes_num, pretrained=True).to(device)    
+    loader = DataLoader(dataset, batch_size=batch_size, shuffle=True, num_workers=0)
+    # 动态选择模型
+    model = get_model(model_name=model_name, backbone_name=backbone_name,
+                      num_classes=classes_num, aux_on=True, pretrained=pretrained).to(device)
+ 
     
     if pretrained_model is not None:
         model = load_pretrained(model, pretrained_model, device)
@@ -124,7 +72,7 @@ def train_loop(images_dir, masks_dir, save_path, pretrained_model=None,
             msk = msk.to(device).long().squeeze(1)                     # shape (B,H,W), 类别索引
 
             opt.zero_grad()
-            out = model(img)                                 # shape (B,C,H,W)
+            out, aux = model(img)                                 # shape (B,C,H,W)
             loss = criterion(out, msk)
             
             loss.backward()
@@ -157,7 +105,7 @@ def train_loop(images_dir, masks_dir, save_path, pretrained_model=None,
                 os.remove(best_model_path)
 
             best_model_path = os.path.join(save_path, f"best_model_epoch{epoch}_IoU={current_iou:.4f}.pth")
-            torch.save(model, best_model_path)
+            torch.save(model.state_dict(), best_model_path)
             best_metric = current_iou
             
 
@@ -169,6 +117,6 @@ def train_loop(images_dir, masks_dir, save_path, pretrained_model=None,
         
 
     # save the final model
-    torch.save(model, os.path.join(save_path, f"final_model.pth") )    
+    torch.save(model.state_dict(), os.path.join(save_path, f"final_model.pth") )    
     
     return save_path

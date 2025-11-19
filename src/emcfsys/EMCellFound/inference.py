@@ -1,8 +1,11 @@
 # inference.py
 import numpy as np
 import torch
-from .models.UNet import load_model, load_pretrained
+
+from .utils.checkpoint import load_model, load_pretrained
 from skimage.transform import resize
+
+from .models.model_factory import get_model
 class Normalize:
     """Normalize image to mean/std (mmseg style)."""
     def __init__(self, mean=(123.675, 116.28, 103.53), std=(58.395, 57.12, 57.375)):
@@ -24,6 +27,34 @@ class Normalize:
         for c in range(img.shape[0]):
             img[c] = (img[c] - self.mean[c]) / self.std[c]
         return img
+
+def load_model(model_name: str, backbone_name: str, num_classes: int, model_path: str, aux_on=True, device=None):
+    """
+    加载训练好的模型权重（state_dict）到指定模型
+    """
+    if device is None:
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    
+    # 构建模型
+    model = get_model(model_name, backbone_name, num_classes=num_classes, aux_on=aux_on, pretrained=False)
+    
+    # 加载权重
+    state_dict = torch.load(model_path, map_location=device)
+    
+    # 支持两种保存方式：整个 state_dict 或者直接 model 对象
+    if isinstance(state_dict, dict) and "state_dict" in state_dict:
+        state_dict = state_dict["state_dict"]
+    
+    try:
+        model.load_state_dict(state_dict)
+    except RuntimeError as e:
+        print("Warning: load_state_dict failed, trying strict=False")
+        model.load_state_dict(state_dict, strict=False)
+    
+    model.to(device)
+    model.eval()
+    
+    return model
 
 
 def prepare_image(img: np.ndarray, 
@@ -65,7 +96,7 @@ def prepare_image(img: np.ndarray,
     
     return torch.from_numpy(arr).unsqueeze(0)  # 1,C,H,W
 
-def infer_numpy(model_path, image: np.ndarray, device=None, threshold=0.5):
+def infer_numpy(model, image: np.ndarray, device=None, threshold=0.5):
     """
     Run inference on single image (numpy array).
     
@@ -74,14 +105,14 @@ def infer_numpy(model_path, image: np.ndarray, device=None, threshold=0.5):
     if device is None:
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         
-    model = torch.load(model_path, map_location=device)
+
     model.eval()
     model.to(device)
     
     x = prepare_image(image, in_channels=3).to(device)
     
     with torch.no_grad():
-        out = model(x)   # 1,C,H,W
+        out, _ = model(x)   # 1,C,H,W
         # print(out.shape)
         mask = torch.argmax(out, dim=1)
         mask = mask.cpu().numpy().squeeze()

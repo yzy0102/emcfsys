@@ -1,236 +1,138 @@
-# model.py
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from typing import Optional
-from .ResNet import ResNetBackbone
+import timm
+import numpy as np
 
-def load_pretrained(model, ckpt_path, device):
-    print("Loading pretrained:", ckpt_path)
-    obj = torch.load(ckpt_path, map_location=device)
-
-    # ① 如果是完整模型：包含 model.state_dict()
-    if hasattr(obj, "state_dict"):
-        print("Loaded a full model object.")
-        sd = obj.state_dict()
-
-    # ② 如果是纯 state_dict（OrderedDict）
-    elif isinstance(obj, dict) and all(isinstance(k, str) for k in obj.keys()):
-        # 如果是 {"model": state_dict, ... }
-        if "model" in obj and isinstance(obj["model"], dict):
-            print("Loaded checkpoint with key 'model'")
-            sd = obj["model"]
-
-        # 如果是 {"state_dict": state_dict, ... }
-        elif "state_dict" in obj and isinstance(obj["state_dict"], dict):
-            print("Loaded checkpoint with key 'state_dict'")
-            sd = obj["state_dict"]
-
-        # 直接是 state_dict
-        else:
-            print("Loaded raw state_dict")
-            sd = obj
-
-    else:
-        raise ValueError("Unrecognized checkpoint format")
-
-    # 统一 load
-    model.load_state_dict(sd, strict=True)
-    print("Pretrained weights loaded successfully.")
-    return model
-
-
-class DoubleConv(nn.Module):
-    def __init__(self, in_c, out_c):
+# ----------------------------
+#   UNet 上下采样模块
+# ----------------------------
+class ConvBlock(nn.Module):
+    def __init__(self, in_ch, out_ch):
         super().__init__()
-        self.net = nn.Sequential(
-            nn.Conv2d(in_c, out_c, 3, padding=1),
+        self.conv = nn.Sequential(
+            nn.Conv2d(in_ch, out_ch, 3, padding=1),
             nn.ReLU(inplace=True),
-            nn.Conv2d(out_c, out_c, 3, padding=1),
-            nn.ReLU(inplace=True),
+            nn.Conv2d(out_ch, out_ch, 3, padding=1),
+            nn.ReLU(inplace=True)
         )
-    def forward(self, x):
-        return self.net(x)
 
-class Down(nn.Module):
-    def __init__(self, in_c, out_c):
-        super().__init__()
-        self.pool = nn.MaxPool2d(2)
-        self.conv = DoubleConv(in_c, out_c)
     def forward(self, x):
-        return self.conv(self.pool(x))
-
-class Up(nn.Module):
-    def __init__(self, in_c, out_c):
-        super().__init__()
-        self.up = nn.ConvTranspose2d(in_c, in_c//2, 2, stride=2)
-        self.conv = DoubleConv(in_c, out_c)
-    def forward(self, x, skip):
-        x = self.up(x)
-        # concat skip
-        x = torch.cat([x, skip], dim=1)
         return self.conv(x)
 
+class UpBlock(nn.Module):
+    def __init__(self, in_ch, skip_ch, out_ch):
+        super().__init__()
+        self.up = nn.ConvTranspose2d(in_ch, out_ch, 2, stride=2)
+        self.conv = ConvBlock(out_ch + skip_ch, out_ch)
+
+    def forward(self, x, skip):
+        x = self.up(x)
+        if x.shape[2:] != skip.shape[2:]:
+            x = F.interpolate(x, size=skip.shape[2:], mode='bilinear', align_corners=False)
+        x = torch.cat([x, skip], dim=1)
+        x = self.conv(x)
+        return x
+
+# ----------------------------
+#   UNet 主体
+# ----------------------------
 class UNet(nn.Module):
-    def __init__(self, in_channels=1, out_channels=1, base_c=32):
+    def __init__(self, num_classes=2, backbone_name='resnet50', aux_on=True, pretrained=True, fpn_dim=256):
         super().__init__()
-        self.inc = DoubleConv(in_channels, base_c)
-        self.down1 = Down(base_c, base_c*2)
-        self.down2 = Down(base_c*2, base_c*4)
-        self.down3 = Down(base_c*4, base_c*8)
-        self.up1 = Up(base_c*8, base_c*4)
-        self.up2 = Up(base_c*4, base_c*2)
-        self.up3 = Up(base_c*2, base_c)
-        self.outc = nn.Conv2d(base_c, out_channels, 1)
+        self.num_classes = num_classes
+        self.aux_on = aux_on
+        
+        feat_len = len(timm.create_model(backbone_name, pretrained=False, features_only=True).feature_info)
+        out_indices = tuple(range(1, feat_len))  # skip first if you want, 或 (0,1,2,3)
 
-    def forward(self, x):
-        c1 = self.inc(x)
-        c2 = self.down1(c1)
-        c3 = self.down2(c2)
-        c4 = self.down3(c3)
-        
-        u1 = self.up1(c4, c3)
-        u2 = self.up2(u1, c2)
-        u3 = self.up3(u2, c1)
-        return self.outc(u3)
-
-def load_model(path: str, device: Optional[torch.device]=None, in_channels=3, out_channels=1):
-    """
-    Try to load a model from path.
-    - If it's a scripted/traced model (torch.jit), use torch.jit.load
-    - Else try to load state_dict into UNet
-    """
-    if device is None:
-        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    try:
-        # try scripted model first
-        mdl = torch.jit.load(path, map_location=device)
-        mdl.eval()
-        return mdl.to(device)
-    except Exception:
-        # fall back: state_dict into UNet
-        model = UNet(in_channels, out_channels)
-        state = torch.load(path, map_location=device)
-        if isinstance(state, dict) and "state_dict" in state:
-            state = state["state_dict"]
-        model.load_state_dict(state)
-        model = model.to(device)
-        model.eval()
-        return model
-
-
-
-class ResUnet(nn.Module):
-    def __init__(self, backbone='resnet34', 
-                        num_classes=2, 
-                        pretrained=True):
-        super().__init__()
-        self.backbone = ResNetBackbone(depth=int(backbone.replace("resnet","")), pretrained=pretrained, out_indices=[1,2,3,4])
-        
-        if backbone == 'resnet18':
-            enc_channels = [64, 64, 128, 256, 512]
-            dec_channels = [256, 128, 64, 64]  # decoder 输出通道
-        elif backbone == 'resnet34':
-            enc_channels = [64, 64, 128, 256, 512]
-            dec_channels = [256, 128, 64, 64]  # decoder 输出通道
-        elif backbone == 'resnet50':
-            enc_channels = [64, 256, 512, 1024, 2048]
-            dec_channels = [512, 256, 128, 64]  # decoder 输出通道
-        elif backbone == 'resnet101':
-            enc_channels = [64, 256, 512, 1024, 2048]
-            dec_channels = [512, 256, 128, 64]  # decoder 输出通道
-        else:
-            raise ValueError(f"Unsupported backbone: {backbone}")
-        # decoder
-        # 假设 out_indices 对应 features=[64,64,128,256,512] （resnet34）
-        # 这里需要根据 backbone 调整通道数
-        # enc_channels = [64, 64, 128, 256, 512]
-        # dec_channels = [256, 128, 64, 64]  # decoder 输出通道
-        
-        self.up4 = nn.ConvTranspose2d(enc_channels[4], dec_channels[0], kernel_size=2, stride=2)
-        self.conv4 = nn.Sequential(nn.Conv2d(enc_channels[3]+dec_channels[0], dec_channels[0], 3,1,1),
-                                   nn.BatchNorm2d(dec_channels[0]),
-                                   nn.ReLU(),
-                                   nn.Conv2d(dec_channels[0], dec_channels[0], 3,1,1),
-                                   nn.BatchNorm2d(dec_channels[0]),
-                                   nn.ReLU())
-        
-        self.up3 = nn.ConvTranspose2d(dec_channels[0], dec_channels[1], kernel_size=2, stride=2)
-        
-        self.conv3 = nn.Sequential(nn.Conv2d(enc_channels[2]+dec_channels[1], dec_channels[1],3,1,1),
-                                   nn.BatchNorm2d(dec_channels[1]),
-                                   nn.ReLU(),
-                                   nn.Conv2d(dec_channels[1], dec_channels[1],3,1,1),
-                                   nn.BatchNorm2d(dec_channels[1]),
-                                   nn.ReLU())
-        
-        self.up2 = nn.ConvTranspose2d(dec_channels[1], dec_channels[2], kernel_size=2, stride=2)
-    
-        self.conv2 = nn.Sequential(nn.Conv2d(enc_channels[1]+dec_channels[2], dec_channels[2],3,1,1),
-                                   nn.ReLU(),
-                                   nn.BatchNorm2d(dec_channels[2]),
-                                   nn.Conv2d(dec_channels[2], dec_channels[2],3,1,1),
-                                   nn.BatchNorm2d(dec_channels[2]),
-                                   nn.ReLU())
-        
-        self.up1 = nn.ConvTranspose2d(dec_channels[2], dec_channels[3], kernel_size=2, stride=2)
-        
-        self.conv1 = nn.Sequential(nn.Conv2d(dec_channels[3], dec_channels[3]*2, 3, 1, 1),
-                                   nn.BatchNorm2d(dec_channels[3]*2),
-                                   nn.ReLU(),
-                                   nn.Conv2d(dec_channels[3]*2, dec_channels[3], 3, 1, 1),
-                                   nn.BatchNorm2d(dec_channels[3]),
-                                   nn.ReLU())
-        
-        self.up0 = nn.ConvTranspose2d(dec_channels[3], dec_channels[3], kernel_size=2, stride=2)
-        
-        self.conv0 = nn.Sequential(nn.Conv2d(dec_channels[3], dec_channels[3], 3, 1, 1),
-                                   nn.BatchNorm2d(dec_channels[3]),
-                                   nn.ReLU(),
-                                   
-                                   nn.Conv2d(dec_channels[3], dec_channels[3], 3, 1, 1),
-                                   nn.BatchNorm2d(dec_channels[3]),
-                                   nn.ReLU())
-        
-        # self.head = nn.Conv2d(dec_channels[3], num_classes, 1)
-        
-        self.head = nn.Sequential(
-            nn.Conv2d(dec_channels[3], dec_channels[3], 3, 1, 1),
-            nn.ReLU(),
-            nn.Conv2d(dec_channels[3], num_classes, 1)
+        # ---------- timm backbone ----------
+        self.backbone = timm.create_model(
+            backbone_name,
+            features_only=True,
+            pretrained=pretrained,
+            out_indices=out_indices,  # 对应 c2,c3,c4,c5
         )
-        
+        channels = self.backbone.feature_info.channels()  # [C2, C3, C4, C5]
+
+        # ---------- UNet decoder ----------
+        self.up4 = UpBlock(channels[3], channels[2], fpn_dim)  # 2048 + 1024 -> 256
+        self.up3 = UpBlock(fpn_dim, channels[1], fpn_dim)      # 256 + 512 -> 256
+        self.up2 = UpBlock(fpn_dim, channels[0], fpn_dim)      # 256 + 256 -> 256
+        self.up1 = nn.Sequential(
+            nn.Conv2d(fpn_dim, fpn_dim, 3, padding=1),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(fpn_dim, fpn_dim, 3, padding=1),
+            nn.ReLU(inplace=True)
+        )
+
+        # ---------- Final segmentation head ----------
+        self.cls_head = nn.Conv2d(fpn_dim, num_classes, 1)
+
+        # ---------- Aux head ----------
+        if aux_on:
+            self.aux_head = nn.Sequential(
+                nn.Conv2d(channels[2], 256, 3, padding=1),
+                nn.ReLU(inplace=True),
+                nn.Conv2d(256, num_classes, 1)
+            )
+
     def forward(self, x):
-        feats = self.backbone(x)
-        # x4, x3, x2, x1, x0 = feats[::-1]  # 反转，方便 decoder
-        x1, x2, x3, x4 = feats
+        H, W = x.shape[2:]
 
+        # Backbone
+        feats = self.backbone(x)  # [c2,c3,c4,c5]
+        c2, c3, c4, c5 = feats
+        
 
-    
-        # x0: torch.Size([1, 64, 64, 64])
-        # x1: torch.Size([1, 64, 64, 64])
-        # x2: torch.Size([1, 128, 32, 32])
-        # x3: torch.Size([1, 256, 16, 16])
-        # x4: torch.Size([1, 512, 8, 8])
-        
-        # decoder
-        d4 = self.up4(x4)
-        d4 = self.conv4(torch.cat([d4, x3], dim=1))
+        # Aux
+        if self.aux_on:
+            aux = self.aux_head(c4)
+            aux = F.interpolate(aux, size=(H, W), mode='bilinear', align_corners=False)
+        else:
+            aux = None
 
-        
-        d3 = self.up3(d4)
-        d3 = self.conv3(torch.cat([d3, x2], dim=1))
-        
-        d2 = self.up2(d3)
-        d2 = self.conv2(torch.cat([d2, x1], dim=1))
-        
+        # Decoder
+        d4 = self.up4(c5, c4)
+        d3 = self.up3(d4, c3)
+        d2 = self.up2(d3, c2)
         d1 = self.up1(d2)
-        d1 = self.conv1(d1)
-        
-        d0 = self.up0(d1)
-        d0 = self.conv0(d0)
 
-        out = self.head(d0)
-        
-        # out = F.interpolate(out, size=x.shape[2:], mode='bilinear', align_corners=False)
-        return out
+        out = self.cls_head(d1)
+        out = F.interpolate(out, size=(H, W), mode='bilinear', align_corners=False)
+
+        return out, aux
+
+# --------------------------
+# Inference helper
+# --------------------------
+def infer_image_numpy(model, img_np, device="cpu", to_uint8=True):
+    model.eval()
+    x = img_np
+    if x.dtype == np.uint8:
+        x = x.astype(np.float32) / 255.0
+    elif x.dtype in [np.float32, np.float64]:
+        x = x.astype(np.float32)
+    else:
+        x = x.astype(np.float32)
+
+    t = torch.from_numpy(x).permute(2,0,1).unsqueeze(0).to(device)
+    with torch.no_grad():
+        logits, aux = model(t)
+        probs = F.softmax(logits, dim=1)
+        seg = probs.argmax(dim=1)[0].cpu().numpy().astype(np.uint8)
+    return seg
+
+# --------------------------
+# Quick test
+# --------------------------
+if __name__ == "__main__":
+    net = UNet(backbone_name="resnet50", num_classes=3, pretrained=False, aux_on=True)
+    net.eval()
+    x = torch.randn(1,3,512,512)
+    out, aux = net(x)
+    print("main logits shape:", out.shape)
+    if aux is not None:
+        print("aux logits shape:", aux.shape)
+    seg = infer_image_numpy(net, (np.random.rand(512,512,3)*255).astype(np.uint8), device="cpu")
+    print("seg shape:", seg.shape)
