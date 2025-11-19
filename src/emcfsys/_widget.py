@@ -50,7 +50,26 @@ if TYPE_CHECKING:
 # we specify a widget type for the threshold parameter
 # and use auto_call=True so the function is called whenever
 # the value of a parameter changes
+backbone_zoom = ["resnet34", "resnet50", "resnet101", 
+                
+                    "convnext_tiny", "convnext_small", "convnext_base", "convnext_large",
+                    
+                    "efficientnet_b0", "efficientnet_b2", 
+                    "efficientnet_b4" , "efficientnet_b6", 
+                    "efficientnet_b7",
+                    
+                    "efficientnetv2_s", "efficientnetv2_m", "efficientnetv2_l",
+                    
+                    "rexnetr_200.sw_in12k", "rexnetr_300.sw_in12k", 
+                    
+                    "vit_base_patch32_clip_448.laion2b_ft_in12k_in1k", 
+                    "vit_so400m_patch14_siglip_gap_448.pali_refcoco_seg",
+                    
+                    "vit_small_patch16_dinov3.lvd1689m", "vit_base_patch16_dinov3.lvd1689m",
+                    "vit_large_patch16_dinov3.lvd1689m", "vit_huge_patch16_dinov3.lvd1689m"]
 
+
+model_zoom = ["deeplabv3plus", "unet", "pspnet", "upernet"]
 
 class ImageResize(Container):
     """Container widget for resizing images with different interpolation algorithms."""
@@ -309,11 +328,26 @@ class DLInferenceContainer(Container):
             label="Image", annotation="napari.layers.Image"
         )
         
-        self.num_classes = SpinBox(label="num classes", min=0, max=1000, step=1, value=2)
+        self.num_classes = SpinBox(label="num classes", min=2, max=1000, step=1, value=2)
         
         self.device = ComboBox(label="Device", choices=["auto", "cpu", "cuda"], value="auto")
-        backbone_zoom = ["resnet34", "resnet50", "resnet101"]
-        model_zoom = ["deeplabv3plus", "unet", "pspnet", "upernet"]
+        
+        # backbone_zoom = ["resnet34", "resnet50", "resnet101", 
+                        
+        #                  "convnext_tiny", "convnext_small", "convnext_base", "convnext_large",
+                         
+        #                  "efficientnet_b0", "efficientnet_b2", 
+        #                  "efficientnet_b4" , "efficientnet_b6", 
+        #                  "efficientnet_b7",
+                         
+        #                  "efficientnetv2_s", "efficientnetv2_m", "efficientnetv2_l",
+                         
+        #                  "rexnetr_200.sw_in12k", "rexnetr_300.sw_in12k", 
+                         
+        #                  "vit_small_patch16_dinov3.lvd1689m", "vit_base_patch16_dinov3.lvd1689m",
+        #                  "vit_large_patch16_dinov3.lvd1689m", "vit_huge_patch16_dinov3.lvd1689m"]
+        
+        # model_zoom = ["deeplabv3plus", "unet", "pspnet", "upernet"]
         self.backbone_name = ComboBox(label="Backbone", choices=backbone_zoom, value="resnet34")
         self.model_name = ComboBox(label="Model", choices=model_zoom, value="deeplabv3plus")
         
@@ -388,13 +422,16 @@ class DLTrainingContainer(Container):
         self.save_path = FileEdit(label="Save model as (.pth)", mode="d")
         self.pretrained_model = FileEdit(label="Pretrained model (.pth)", nullable=True, mode="r")
 
-        self.lr = FloatSpinBox(label="Learning rate", min=1e-6, max=1.0, step=1e-4, value=1e-3)
+        self.backbone_name = ComboBox(label="Backbone", choices=backbone_zoom, value="resnet34")
+        self.model_name = ComboBox(label="Model", choices=model_zoom, value="deeplabv3plus")
+
+        self.lr = FloatSpinBox(label="Learning rate", min=1e-8, max=1.0, step=1e-4, value=1e-4)
         self.batch_size = SpinBox(label="Batch size", min=1, max=512, step=1, value=8)
         self.epochs = SpinBox(label="Epochs", min=1, max=1000, step=10, value=100)
         self.device = ComboBox(label="Device", choices=["auto", "cpu", "cuda"], value="auto")
 
-        self.classes_num = SpinBox(label="Classes num", min=1, max=1000, step=1, value=2)
-        self.in_channels = SpinBox(label="Image channels", min=1, max=3, step=1, value=1)
+        self.classes_num = SpinBox(label="Classes num", min=2, max=1000, step=1, value=2)
+        # self.in_channels = SpinBox(label="Image channels", min=1, max=3, step=1, value=3)
         self.target_size = SpinBox(label="Target size", min=1, max=10**8, value=512)
         self.ignore_index = SpinBox(label="Ignore the index in mask", min=-1, max=10**8, value=-1)
 
@@ -409,8 +446,9 @@ class DLTrainingContainer(Container):
         # add widgets
         self.extend([
             self.images_dir, self.masks_dir, self.save_path, self.pretrained_model,
+            self.backbone_name, self.model_name,
             self.lr, self.batch_size, self.epochs, self.device,
-            self.classes_num, self.in_channels, self.target_size,
+            self.classes_num,  self.target_size,
             self.ignore_index,
             self._train_button, self._stop_button, self._log_label, 
             self._log_widget
@@ -478,16 +516,28 @@ class DLTrainingContainer(Container):
         self._ax.cla()
         self._canvas.draw()
         
+        # -------✔ 完整重置 loss 曲线 -------
+        self._x_values = []
+        self._y_values = []
+
+        self._ax.clear()
+        self._ax.set_xlabel("Epoch")
+        self._ax.set_ylabel("Loss")
+        self._ax.set_title("Training Loss Curve")
+        self._fig.tight_layout()
+        self._canvas.draw()
         
         images_dir = self.images_dir.value
         masks_dir = self.masks_dir.value
         save_path = self.save_path.value
         pretrained_model = self.pretrained_model.value
+        backbone_name = self.backbone_name.value
+        model_name = self.model_name.value
         lr = self.lr.value
         batch_size = self.batch_size.value
         epochs = self.epochs.value
         device = self.device.value
-        in_channels = self.in_channels.value
+        # in_channels = self.in_channels.value
         classes_num = self.classes_num.value
         target_size = self.target_size.value
         ignore_index = self.ignore_index.value
@@ -538,17 +588,21 @@ class DLTrainingContainer(Container):
                     raise StopIteration()
 
             try:
-                train_loop(
-                    images_dir, masks_dir, save_path, pretrained_model,
-                    lr=lr, batch_size=batch_size, epochs=epochs,
-                    device=dev, callback=cb,
-                    target_size=(target_size, target_size),
-                    in_channels=in_channels,
-                    classes_num=classes_num,
-                    ignore_index = ignore_index,
-                )
+                train_loop(images_dir, masks_dir, save_path,
+                        model_name=model_name,
+                        backbone_name=backbone_name,
+                        pretrained = True,
+                        pretrained_model=pretrained_model,
+                        lr=lr, batch_size=batch_size, epochs=epochs,
+                        device=dev, callback=cb,
+                        target_size=(target_size, target_size),
+                        classes_num=classes_num,
+                        ignore_index = ignore_index,
+                        stop_flag_fn=lambda: self._stop_flag
+                    )
             except StopIteration:
                 self._log("Training stopped by user.")
+
             return logs
 
         worker = _worker()
@@ -573,7 +627,11 @@ class DLTrainingContainer(Container):
         self._stop_flag = True
         self._log("Stop button clicked. Stopping training...")
 
-
+    def _cleanup_gpu(self):
+        import gc
+        torch.cuda.empty_cache()
+        gc.collect()
+        self._log("GPU memory released.")
 
 
 

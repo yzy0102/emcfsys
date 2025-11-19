@@ -66,11 +66,17 @@ class DeepLabV3Plus(nn.Module):
         out_indices = tuple(range(1, feat_len))  # skip first if you want, 或 (0,1,2,3)
 
         # ---- timm backbone ----
-        self.backbone = timm.create_model(backbone_name, 
-                                          features_only=True, 
-                                          pretrained=pretrained,
-                                          out_indices=out_indices)
-        
+        try:
+            self.backbone = timm.create_model(backbone_name, 
+                                            features_only=True, 
+                                            pretrained=pretrained,
+                                            out_indices=out_indices)
+        except:
+            print("No pretrained weights available, using random initialization...")
+            self.backbone = timm.create_model(backbone_name, 
+                                            features_only=True, 
+                                            pretrained=False,
+                                            out_indices=out_indices)
         feat_channels = self.backbone.feature_info.channels()
 
         self.low_level_in = feat_channels[1]   # C2
