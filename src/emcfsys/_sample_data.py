@@ -19,4 +19,13 @@ def make_sample_data():
     # Check the documentation for more information about the
     # add_image_kwargs
     # https://napari.org/stable/api/napari.Viewer.html#napari.Viewer.add_image
-    return [(numpy.random.rand(512, 512), {})]
+    
+    # download the test image from github
+    import requests
+    import io
+    from PIL import Image
+    url = "github:yzy0102/emcfsys/raw/main/test_image.png"
+    response = requests.get(url)
+    img = Image.open(io.BytesIO(response.content))
+    img = numpy.array(img)
+    return [(img, {})]

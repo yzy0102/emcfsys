@@ -48,9 +48,6 @@ contributions:
       python_name: emcfsys._widget:EMCellFinerBatchInferWidget
       title: EMCellFiner - Batch Inference Widget
 
-    - id: emcfsys.emcellfiner.training
-      python_name: emcfsys._widget:EMCellFinerTraningWidget
-      title: EMCellFiner - Model Training Widget
 
 
   readers:
@@ -89,5 +86,3 @@ contributions:
       display_name: EMCellFiner - Single Image Inference
     - command: emcfsys.emcellfiner.batch_infer
       display_name: EMCellFiner - Batch Inference
-    - command: emcfsys.emcellfiner.training
-      display_name: EMCellFiner - Model Training

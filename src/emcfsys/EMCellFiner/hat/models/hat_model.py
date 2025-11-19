@@ -3,7 +3,7 @@ import torch.nn as nn
 from torch.nn import functional as F
 
 from .img_utils import imwrite, tensor2img
-from ..archs.hat_arch import HAT
+from .hat_arch import HAT
 import math
 from tqdm import tqdm
 from os import path as osp
@@ -28,7 +28,8 @@ class HATModel(nn.Module):
         self.tile_size = tile_size
         self.tile_pad = tile_pad
         self.window_size = window_size
-        self.scale = scale
+        self.scale = 4
+        self.scale_temp = scale
     
         checkpoint = None 
         
@@ -40,7 +41,7 @@ class HATModel(nn.Module):
 
         else:
             # 优先级 B: 如果提供了 URL，则使用 torch.hub 自动下载或读取缓存
-            print(f"Dwonloading model from : {self.online_url}")
+            print(f"Using the model from torch hub : {self.online_url}")
             try:
                 # torch.hub 会自动处理下载和缓存 (默认存放在 ~/.cache/torch/hub/checkpoints)
                 checkpoint = load_state_dict_from_url(
@@ -160,5 +161,10 @@ class HATModel(nn.Module):
         self.pre_process()
         self.tile_process()
         self.post_process()
-
+        if self.scale_temp == 1:
+            # resze self.output to match self.lq
+            self.output = F.interpolate(self.output, size=self.lq.size()[2:], mode='bicubic', align_corners=False)
+        if self.scale_temp == 2:
+            # return self.output to match self.lq *2
+            self.output = F.interpolate(self.output, size=self.lq.size()[2:]*2, mode='bicubic', align_corners=False)
         return self.output

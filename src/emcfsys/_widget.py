@@ -400,7 +400,6 @@ class DLInferenceContainer(Container):
         self._run_button.clicked.connect(self._run_inference)
 
 
-
     def _run_inference(self):
         img_layer = self._image_layer_combo.value
         if img_layer is None:
@@ -555,7 +554,7 @@ class DLTrainingContainer(Container):
         classes_num = self.classes_num.value
         target_size = self.target_size.value
         ignore_index = self.ignore_index.value
-        dev = torch.device(device) if device != "auto" else None
+        dev = torch.device(device) if device != "auto" else torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
         from .EMCellFound.train import train_loop  # 自己的训练函数
         
@@ -637,42 +636,127 @@ class DLTrainingContainer(Container):
         self._stop_flag = True
         self._log("Stop button clicked. Stopping training...")
 
+
+
+
+
+
+
 #------------EMCellFiner=------
 #------------EMCellFiner=------
 
 from qtpy.QtWidgets import QWidget, QVBoxLayout, QGroupBox
 from magicgui import magicgui
+from .EMCellFiner.hat.models.hat_model import HATModel
+from .EMCellFiner.hat.models.img_utils import tensor2img
+from .EMCellFiner.hat.models.inference_hat import hat_infer_numpy
+from PIL import Image
+import numpy as np
+import torch
+import numpy as np
+from magicgui.widgets import create_widget, ComboBox, Container, FileEdit, PushButton
+from napari.qt.threading import thread_worker
+from napari.layers import Image as ImageLayer
+import napari
 
-class EMCellFinerSingleInferWidget(QWidget):
-    def __init__(self, napari_viewer):
+class EMCellFinerSingleInferWidget(Container):
+    def __init__(self, viewer: "napari.viewer.Viewer"):
         super().__init__()
-        self.viewer = napari_viewer
-        
-        # magicgui 组件
-        @magicgui(
-            model_path={"widget_type": "FileEdit", "filter": "*.pth"},
-            call_button="Run Inference",
-            layout="vertical"
-        )
-        def ui(model_path="", threshold: float = 0.5):
-            self.run_inference(model_path, threshold)
-        
-        group = QGroupBox("Single Image Inference")
-        layout = QVBoxLayout(group)
-        layout.addWidget(ui.native)
-        
-        main = QVBoxLayout(self)
-        main.addWidget(group)
+        self.viewer = viewer
 
-    def run_inference(self, model_path, threshold):
-        layer = self.viewer.layers.selection.active
-        if layer is None:
-            print("No image layer selected.")
+        MODEL_ZOO = ["EMCellFiner"]
+        
+        self.model_path = FileEdit(label="Model (.pth)", nullable=True, mode="r")
+        
+        # 修复：annotation 必须是类型，不是字符串
+        self._image_layer_combo = create_widget(
+            label="Image",
+            annotation=ImageLayer
+        )
+        
+        self.device = ComboBox(label="Device", choices=["auto", "cpu", "cuda"], value="auto")
+        self.scale = ComboBox(label="Scale", choices=[1, 2, 4], value=4)
+        self.tile_size = ComboBox(label="Tile Size", choices=[256, 384, 512, 640], value=512)
+        self.model_choice = ComboBox(label="Model", choices=MODEL_ZOO, value="EMCellFiner")
+        
+        self._run_button = PushButton(text="Run Inference")
+        
+        self.extend([
+            self.model_choice, self.model_path, 
+            self._image_layer_combo, self.scale, 
+            self.tile_size, self.device, self._run_button
+        ])
+
+        # 修复：不加括号，绑定函数本体
+        self._run_button.clicked.connect(self._run_inference)
+            
+
+    # ==================================================
+    #                 深度学习推理（多线程）
+    # ==================================================
+    def _run_inference(self):
+        img_layer = self._image_layer_combo.value
+        if img_layer is None:
+            print("No layer selected")
             return
-        # from .EMCellFiner.inference import infer_numpy
-        img = layer.data
-        mask = infer_numpy(model_path, img, threshold=threshold)
-        self.viewer.add_labels(mask, name="dl_mask")
+        
+        img_np = img_layer.data
+        
+        # 单通道 -> 3通道
+        if img_np.ndim == 2:
+            img_np = np.stack([img_np] * 3, axis=-1)
+        elif img_np.shape[-1] == 1:
+            img_np = np.repeat(img_np, 3, axis=-1)
+
+        # 读取 UI 参数
+        model_path = self.model_path.value
+        scale = self.scale.value
+        tile_size = self.tile_size.value
+        device = self.device.value
+        if device == "auto":
+            device = "cuda" if torch.cuda.is_available() else "cpu"
+        
+        if model_path in ["None", "", None]:
+            model_path = None
+
+        # ---- 在执行推理前启动进度条 ----
+        progress = napari.utils.progress(total=100, desc="EMCellFiner Inference...")
+
+        # ---- 启动线程 ----
+        @thread_worker
+        def _worker():
+            # 模型加载
+            model = HATModel(
+                local_path=model_path,
+                scale=scale,
+                tile_size=tile_size,
+            )
+
+            # 推理（你自己的函数）
+            # 在推理中调用 progress.update(x) 也可以
+            output_np = hat_infer_numpy(model, img_np, device)
+
+            return output_np
+
+        worker = _worker()
+
+        # ---- 推理完成后回到主线程处理结果 ----
+        @worker.returned.connect
+        def _on_result(output_np):
+            progress.close()
+            self.viewer.add_image(
+                output_np,
+                name=f"{img_layer.name}_EMCFiner_SR",
+            )
+            print("✔ Inference Finished")
+
+        # ---- 推理出错处理 ----
+        @worker.errored.connect
+        def _on_error(err):
+            progress.close()
+            print("❌ Inference Error:", err)
+
+        worker.start()
 
 
 from qtpy.QtWidgets import QWidget, QVBoxLayout, QGroupBox
@@ -680,62 +764,150 @@ from magicgui import magicgui
 import os
 import numpy as np
 from PIL import Image
-class EMCellFinerBatchInferWidget(QWidget):
-    def __init__(self, napari_viewer):
-        super().__init__()
-        self.viewer = napari_viewer
-        
-        @magicgui(
-            model_path={"widget_type": "FileEdit", "filter": "*.pth"},
-            folder={"widget_type": "FileEdit", "mode": "d"},
-            call_button="Run Batch Inference",
-            layout="vertical"
-        )
-        def ui(model_path="", folder=""):
-            self.run_batch(model_path, folder)
-        
-        group = QGroupBox("Batch Inference")
-        layout = QVBoxLayout(group)
-        layout.addWidget(ui.native)
-
-        main = QVBoxLayout(self)
-        main.addWidget(group)
-
-    def run_batch(self, model_path, folder):
-        from .EMCellFiner.inference import infer_numpy
-        for name in os.listdir(folder):
-            if name.lower().endswith((".png", ".jpg", ".tif")):
-                path = os.path.join(folder, name)
-                img = np.array(Image.open(path).convert("RGB"))
-                mask = infer_numpy(model_path, img)
-                self.viewer.add_labels(mask, name=f"{name}_mask")
 
 
 from qtpy.QtWidgets import QWidget, QVBoxLayout, QGroupBox
 from magicgui import magicgui
+import os
+import numpy as np
+from glob import glob
+from PIL import Image
+from magicgui.widgets import create_widget, ComboBox, Container, FileEdit, PushButton, LineEdit
+from napari.qt.threading import thread_worker
+import napari
 
-class EMCellFinerTraningWidget(QWidget):
-    def __init__(self, napari_viewer):
+
+class EMCellFinerBatchInferWidget(Container):
+    def __init__(self, viewer: "napari.viewer.Viewer"):
         super().__init__()
-        self.viewer = napari_viewer
-        
-        @magicgui(
-            data_dir={"widget_type": "FileEdit", "mode": "d"},
-            val_dir={"widget_type": "FileEdit", "mode": "d"},
-            epochs={"widget_type": "SpinBox", "min": 1, "max": 500},
-            backbone={"choices": ["resnet18", "resnet34", "resnet50"]},
-            call_button="Start Training",
-        )
-        def ui(data_dir="", val_dir="", epochs=20, backbone="resnet34"):
-            self.start_train(data_dir, val_dir, epochs, backbone)
-        
-        group = QGroupBox("Model Training")
-        layout = QVBoxLayout(group)
-        layout.addWidget(ui.native)
+        self.viewer = viewer
 
-        main = QVBoxLayout(self)
-        main.addWidget(group)
+        MODEL_ZOO = ["EMCellFiner"]
 
-    def start_train(self, data_dir, val_dir, epochs, backbone):
-        from .EMCellFiner.train import train_main
-        train_main(data_dir=data_dir, val_dir=val_dir, epochs=epochs, backbone=backbone)
+        self.model_path = FileEdit(label="Model (.pth)", mode="r", nullable=True)
+
+        self.input_dir = FileEdit(label="Input Folder", mode="d")
+        self.output_dir = FileEdit(label="Save Folder", mode="d")
+
+        self.scale = ComboBox(label="Scale", choices=[1, 2, 4], value=4)
+        self.tile_size = ComboBox(label="Tile Size", choices=[256, 384, 512, 640], value=512)
+        self.device = ComboBox(label="Device", choices=["auto", "cpu", "cuda"], value="auto")
+        self.model_choice = ComboBox(label="Model", choices=MODEL_ZOO, value="EMCellFiner")
+
+        self._run_button = PushButton(text="Run Batch Inference")
+        self._stop_button = PushButton(text="Stop Inference")
+        
+        self.extend([
+            self.model_choice, self.model_path,
+            self.input_dir, self.output_dir,
+            self.scale, self.tile_size, self.device,
+            self._run_button, self._stop_button
+        ])
+
+        # 按钮绑定
+        self._run_button.clicked.connect(self._run_batch_inference)
+        self._stop_button.clicked.connect(self._stop_worker)
+        
+
+        # 保存 worker 对象和 stop flag
+        self._worker = None
+        self._stop_flag = False
+
+        
+    def _stop_worker(self):
+        self._stop_flag = True
+        if self._worker is not None:
+            self._worker.quit()
+            print("⚠ Batch inference stopped by user.")
+            
+    # ==================================================
+    #               多张图推理的多线程函数
+    # ==================================================
+    def _run_batch_inference(self):
+        input_dir = self.input_dir.value
+        output_dir = self.output_dir.value
+        model_path = self.model_path.value
+        
+        if model_path in ["None", "", ".", None]:
+            model_path = None
+            
+            
+        if not (input_dir and os.path.isdir(input_dir)):
+            print("❌ Invalid Input Folder")
+            return
+
+        if not (output_dir and os.path.isdir(output_dir)):
+            print("❌ Invalid Output Folder")
+            return
+
+        # 搜索所有图像
+        img_files = []
+        for ext in ["*.png", "*.jpg", "*.jpeg", "*.tif", "*.tiff", "*.bmp"]:
+            img_files.extend(glob(os.path.join(input_dir, ext)))
+
+        if len(img_files) == 0:
+            print("❌ No images found in folder")
+            return
+
+        scale = self.scale.value
+        tile_size = self.tile_size.value
+        device = self.device.value
+        device = "cuda" if torch.cuda.is_available() else "cpu" if device == "auto" else device
+        
+        # 重置 stop flag
+        self._stop_flag = False
+
+        # napari 进度条
+        progress = napari.utils.progress(range(len(img_files)), desc="Batch Inference...")
+
+        @thread_worker
+        def _worker():
+            # 加载模型一次
+            model = HATModel(
+                local_path=model_path,
+                scale=scale,
+                tile_size=tile_size,
+            )
+
+            for idx, path in enumerate(img_files):
+                if self._stop_flag:
+                    print("⚠ Worker stopped by user")
+                    break
+
+                # 打开图片并转换成 RGB
+                img = np.array(Image.open(path).convert("RGB"))
+                # 保证img是unit8
+                
+                
+                out_np = hat_infer_numpy(model, img, device)
+
+                # 每张图推理完成就返回主线程处理
+                yield path, out_np, idx
+
+        self._worker = _worker()
+        worker = self._worker
+
+        # ----------------------------
+        # 每张图推理完成回调
+        # ----------------------------
+        @worker.yielded.connect
+        def _on_each(args):
+            path, out_np, idx = args
+            save_path = os.path.join(output_dir, os.path.basename(path))
+            Image.fromarray(out_np).save(save_path)
+            print(f"idx: {idx} : {os.path.basename(path)} Saved to: ", save_path)
+            progress.update(idx + 1)
+
+        @worker.errored.connect
+        def _on_err(err):
+            progress.close()
+            print("❌ Error:", err)
+
+        @worker.finished.connect
+        def _on_finished():
+            progress.close()
+            print("✔ Batch Inference Finished")
+            self._worker = None  # 清理 worker 对象
+            self._stop_flag = False
+        worker.start()
+        
