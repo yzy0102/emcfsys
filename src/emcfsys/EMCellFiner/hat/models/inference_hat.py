@@ -29,7 +29,7 @@ def hat_infer_numpy(
     model.to(device)
 
     # 先保证输入img是uint8
-    img = img.astype(np.uint8)
+    image = image.astype(np.uint8)
     
     # --- Convert to float32 normalized
     if image.dtype != np.float32:
