@@ -3,6 +3,8 @@ import torch.nn as nn
 import torch.nn.functional as F
 import timm
 import numpy as np
+from emcfsys.EMCellFound.models.EMCellFoundViT import emcellfound_vit_base   # 必须确保模块被加载
+from emcfsys.EMCellFound.models.BackboneWrapper import CasualBackbones
 
 # ----------------------------
 #   UNet 上下采样模块
@@ -38,22 +40,24 @@ class UpBlock(nn.Module):
 #   UNet 主体
 # ----------------------------
 class UNet(nn.Module):
-    def __init__(self, num_classes=2, backbone_name='resnet50', aux_on=True, pretrained=True, fpn_dim=256):
+    def __init__(self, num_classes=2, 
+                 img_size = 512,
+                 backbone_name='resnet50', 
+                 aux_on=True, 
+                 pretrained=True, fpn_dim=256):
         super().__init__()
         self.num_classes = num_classes
         self.aux_on = aux_on
         
-        feat_len = len(timm.create_model(backbone_name, pretrained=False, features_only=True).feature_info)
-        out_indices = tuple(range(1, feat_len))  # skip first if you want, 或 (0,1,2,3)
+        self.backbone = CasualBackbones(backbone_name, 
+                                        pretrained=pretrained, 
+                                        img_size=img_size, 
+                                        features_only=True)
+        
+        channels = self.backbone.channels# [C2, C3, C4, C5]
 
-        # ---------- timm backbone ----------
-        self.backbone = timm.create_model(
-            backbone_name,
-            features_only=True,
-            pretrained=pretrained,
-            out_indices=out_indices,  # 对应 c2,c3,c4,c5
-        )
-        channels = self.backbone.feature_info.channels()  # [C2, C3, C4, C5]
+
+
 
         # ---------- UNet decoder ----------
         self.up4 = UpBlock(channels[3], channels[2], fpn_dim)  # 2048 + 1024 -> 256
@@ -127,7 +131,8 @@ def infer_image_numpy(model, img_np, device="cpu", to_uint8=True):
 # Quick test
 # --------------------------
 if __name__ == "__main__":
-    net = UNet(backbone_name="resnet50", num_classes=3, pretrained=False, aux_on=True)
+    net = UNet(backbone_name="vit_small_patch16_dinov3.lvd1689m", num_classes=3, pretrained=False, aux_on=True)
+    # net = UNet(backbone_name="resnet50", num_classes=3, pretrained=False, aux_on=True)
     net.eval()
     x = torch.randn(1,3,512,512)
     out, aux = net(x)

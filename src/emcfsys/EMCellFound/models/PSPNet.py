@@ -3,6 +3,8 @@ import torch.nn as nn
 import torch.nn.functional as F
 import timm
 import numpy as np
+from emcfsys.EMCellFound.models.EMCellFoundViT import emcellfound_vit_base   # 必须确保模块被加载
+from emcfsys.EMCellFound.models.BackboneWrapper import CasualBackbones
 
 
 # --------------------------
@@ -98,6 +100,7 @@ class PSPHead(nn.Module):
 # --------------------------
 class PSPNet(nn.Module):
     def __init__(self, backbone_name="resnet50", 
+                img_size = 512,
                  num_classes=21, 
                  pretrained=True,
                  ppm_pool_sizes=(1,2,3,6), 
@@ -113,18 +116,16 @@ class PSPNet(nn.Module):
         """
         super().__init__()
         
-        feat_len = len(timm.create_model(backbone_name, pretrained=False, features_only=True).feature_info)
-        out_indices = tuple(range(1, feat_len))  # skip first if you want, 或 (0,1,2,3)
-
         # create backbone that returns features
         # choose out_indices so we get multi-stage outputs; use (1,2,3,4) as a common default
-        self.backbone = timm.create_model(
-            backbone_name,
-            features_only=True,
-            pretrained=pretrained,
-            out_indices=out_indices,
-        )
-        feat_channels = self.backbone.feature_info.channels()  # list like [C2, C3, C4, C5]
+        self.backbone = CasualBackbones(backbone_name, 
+                                        pretrained=pretrained, 
+                                        img_size=img_size, 
+                                        features_only=True)
+        
+        feat_channels = self.backbone.channels # list like [C2, C3, C4, C5]
+        
+        
         if len(feat_channels) < 2:
             raise ValueError("Backbone must provide at least two feature maps for PSPNet usage")
 
@@ -204,7 +205,8 @@ def infer_image_numpy(model, img_np, device="cpu", to_uint8=True):
 # --------------------------
 if __name__ == "__main__":
     # quick sanity check
-    net = PSPNet(backbone_name="resnet50", num_classes=3, pretrained=True, aux_on=False)
+    net = PSPNet(backbone_name="vit_small_patch16_dinov3.lvd1689m", num_classes=3, pretrained=True, aux_on=False)
+    # net = PSPNet(backbone_name="resnet50", num_classes=3, pretrained=True, aux_on=False)
     net.eval()
     x = torch.randn(1, 3, 512, 512)
     out, aux = net(x)

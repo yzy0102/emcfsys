@@ -2,7 +2,8 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import timm
-
+from emcfsys.EMCellFound.models.EMCellFoundViT import emcellfound_vit_base   # 必须确保模块被加载
+from emcfsys.EMCellFound.models.BackboneWrapper import CasualBackbones
 
 # ------------------------------
 #   ASPP 模块
@@ -54,6 +55,7 @@ class DeepLabV3Plus(nn.Module):
     def __init__(
         self,
         backbone_name: str = "resnet50",
+        img_size = 512,
         num_classes: int = 21,
         aux_on: bool = True,
         pretrained: bool = True,
@@ -62,23 +64,16 @@ class DeepLabV3Plus(nn.Module):
 
         self.out_channels = num_classes
         self.aux_on = aux_on
-        feat_len = len(timm.create_model(backbone_name, pretrained=False, features_only=True).feature_info)
-        out_indices = tuple(range(1, feat_len))  # skip first if you want, 或 (0,1,2,3)
 
-        # ---- timm backbone ----
-        try:
-            self.backbone = timm.create_model(backbone_name, 
-                                            features_only=True, 
-                                            pretrained=pretrained,
-                                            out_indices=out_indices)
-        except:
-            print("No pretrained weights available, using random initialization...")
-            self.backbone = timm.create_model(backbone_name, 
-                                            features_only=True, 
-                                            pretrained=False,
-                                            out_indices=out_indices)
-        feat_channels = self.backbone.feature_info.channels()
 
+
+        self.backbone = CasualBackbones(backbone_name, 
+                                        pretrained=pretrained, 
+                                        img_size=img_size, 
+                                        features_only=True)
+        
+        feat_channels = self.backbone.channels
+        
         self.low_level_in = feat_channels[1]   # C2
         self.high_level_in = feat_channels[-1] # C5
 
@@ -117,6 +112,7 @@ class DeepLabV3Plus(nn.Module):
     def forward(self, x):
         # features: [C1, C2, C3, C4, C5]
         feats = self.backbone(x)
+        # print("feats:", [f.shape for f in feats])
         low = feats[1]      # C2
         high = feats[-1]    # C5
 
@@ -183,6 +179,7 @@ if __name__ == "__main__":
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 
+    # net = DeepLabV3Plus(backbone_name="emcellfound_vit_base", num_classes=3, pretrained=True, aux_on=False)
     # net = DeepLabV3Plus(backbone_name="convnext_large.dinov3_lvd1689m", num_classes=3, pretrained=True, aux_on=False)
     # net = DeepLabV3Plus(backbone_name="convnext_base.dinov3_lvd1689m", num_classes=3, pretrained=True, aux_on=False)
     net = DeepLabV3Plus(backbone_name="vit_small_patch16_dinov3.lvd1689m", num_classes=3, pretrained=True, aux_on=False)

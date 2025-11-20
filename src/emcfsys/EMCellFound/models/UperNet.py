@@ -2,6 +2,8 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import timm
+from emcfsys.EMCellFound.models.EMCellFoundViT import emcellfound_vit_base   # 必须确保模块被加载
+from emcfsys.EMCellFound.models.BackboneWrapper import CasualBackbones
 
 
 # ----------------------------
@@ -66,6 +68,7 @@ class PSPModule(nn.Module):
 # ----------------------------
 class UPerNet(nn.Module):
     def __init__(self, 
+                img_size = 512,
                  num_classes=2, 
                  backbone_name='resnet50', 
                  aux_on=True, 
@@ -77,15 +80,12 @@ class UPerNet(nn.Module):
         feat_len = len(timm.create_model(backbone_name, pretrained=False, features_only=True).feature_info)
         out_indices = tuple(range(1, feat_len))  # skip first if you want, 或 (0,1,2,3)
         # ---------- timm backbone ----------
-        self.backbone = timm.create_model(
-            backbone_name,
-            features_only=True,
-            pretrained=pretrained,
-            out_indices=out_indices,
-        )
-
-        channels = self.backbone.feature_info.channels()  # [C2, C3, C4, C5]
-
+        self.backbone = CasualBackbones(backbone_name, 
+                                        pretrained=pretrained, 
+                                        img_size=img_size, 
+                                        features_only=True)
+        
+        channels = self.backbone.channels
         # ---------- FPN ----------
         self.fpn = FPN(channels, out_channels=fpn_dim)
 
@@ -171,7 +171,7 @@ import numpy as np
 # --------------------------
 if __name__ == "__main__":
     # quick sanity check
-    net = UPerNet(backbone_name="resnet50", num_classes=3, pretrained=True, aux_on=False)
+    net = UPerNet(backbone_name="vit_small_patch16_dinov3.lvd1689m", num_classes=3, pretrained=True, aux_on=False)
     net.eval()
     x = torch.randn(1, 3, 512, 512)
     out, aux = net(x)
