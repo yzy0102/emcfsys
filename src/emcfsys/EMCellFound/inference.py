@@ -118,3 +118,166 @@ def infer_numpy(model, image: np.ndarray, device=None):
         mask = mask.cpu().numpy().squeeze()
 
     return mask.astype(np.uint8)
+
+
+
+
+# ============================================
+# 1. 整图推理（支持 resize）
+# ============================================
+def infer_full_image(model,
+                     image: np.ndarray,
+                     input_size=None,  # 如 (512,512)，None 则不 resize
+                     device=None):
+    """
+    整图推理
+    - image: HWC, HW, CHW
+    - input_size: (H, W) 或 None
+    """
+
+    if device is None:
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+    # 保存原尺寸
+    H, W = image.shape[:2]
+
+    # 是否 resize 输入图像
+    if input_size is not None:
+        img_resized = resize(image, input_size, preserve_range=True).astype(np.float32)
+    else:
+        img_resized = image.astype(np.float32)
+
+    # 输入模型
+    x = prepare_image(img_resized, in_channels=3).to(device)
+
+    with torch.no_grad():
+        out, _ = model(x)  # 1,C,h,w
+        pred = torch.argmax(out, dim=1).cpu().numpy().squeeze()
+
+    # 再 resize 回去
+    if input_size is not None:
+        pred = resize(pred, (H, W), order=0, preserve_range=True).astype(np.uint8)
+
+    return pred
+
+import numpy as np
+
+def tile_image(image, tile_size, overlap):
+    H, W = image.shape[:2]
+    stride = int(tile_size * (1 - overlap))
+
+    tiles = []
+    for y in range(0, H, stride):
+        for x in range(0, W, stride):
+
+            tile = image[y:y+tile_size, x:x+tile_size]
+
+            pad_y = tile_size - tile.shape[0]
+            pad_x = tile_size - tile.shape[1]
+
+            if pad_y > 0 or pad_x > 0:
+                # 2D 灰度图 (H,W)
+                if tile.ndim == 2:
+                    tile = np.pad(
+                        tile,
+                        ((0, pad_y), (0, pad_x)),
+                        mode='constant',
+                        constant_values=0
+                    )
+                # 3D 彩色图 (H,W,C)
+                elif tile.ndim == 3:
+                    tile = np.pad(
+                        tile,
+                        ((0, pad_y), (0, pad_x), (0, 0)),
+                        mode='constant',
+                        constant_values=0
+                    )
+                else:
+                    raise ValueError(f"Unsupported tile ndim={tile.ndim}")
+
+            tiles.append((tile, (y, x)))
+
+    return tiles
+
+
+
+def merge_tiles(preds, coords, full_size, tile_size, overlap):
+    H, W = full_size
+    stride = int(tile_size * (1 - overlap))
+
+    prob_map = np.zeros((H, W), dtype=np.float32)
+    count_map = np.zeros((H, W), dtype=np.float32)
+
+    for pred, (y, x) in zip(preds, coords):
+        h = min(tile_size, H - y)
+        w = min(tile_size, W - x)
+        prob_map[y:y+h, x:x+w] += pred[:h, :w]
+        count_map[y:y+h, x:x+w] += 1
+
+    # 避免除以0
+    count_map[count_map == 0] = 1
+
+    return (prob_map / count_map).round()
+# ============================================
+# 2. 滑动窗口推理
+# ============================================
+def infer_sliding_window(model, image, window_size, overlap=0.3, img_size=None, device=None):
+    """
+    滑动窗口推理
+    - model: torch model
+    - image: HxW or HxWxC
+    - window_size: 滑窗大小
+    - overlap: 重叠比例
+    - img_size: 模型输入大小 (H_in,W_in) 或 None
+    """
+    if device is None:
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+    H, W = image.shape[:2]
+    stride = int(window_size * (1 - overlap))
+
+    prob_map = np.zeros((H, W), dtype=np.float32)
+    count_map = np.zeros((H, W), dtype=np.float32)
+
+    for y in range(0, H, stride):
+        for x in range(0, W, stride):
+
+            tile = image[y:y+window_size, x:x+window_size]
+
+            # pad 到 window_size
+            pad_y = window_size - tile.shape[0]
+            pad_x = window_size - tile.shape[1]
+            if pad_y > 0 or pad_x > 0:
+                if tile.ndim == 2:
+                    tile = np.pad(tile, ((0, pad_y), (0, pad_x)), constant_values=0)
+                else:  # 3D
+                    tile = np.pad(tile, ((0, pad_y), (0, pad_x), (0,0)), constant_values=0)
+
+            # === 核心逻辑 ===
+            if img_size is not None:
+                # resize tile -> 模型输入
+                tile_resized = resize(tile, img_size, preserve_range=True).astype(np.uint8)
+            else:
+                # 不 resize
+                tile_resized = tile
+
+            # prepare input
+            x_in = prepare_image(tile_resized, in_channels=3).to(device)
+            with torch.no_grad():
+                out, _ = model(x_in)
+                pred = torch.argmax(out, dim=1)[0].cpu().numpy()
+
+            # 如果有 resize，resize 回 tile 原始大小
+            if img_size is not None:
+                pred = resize(
+                    pred.astype(np.uint8),
+                    (tile.shape[0], tile.shape[1]),
+                    order=0, preserve_range=True, anti_aliasing=False
+                ).astype(np.uint8)
+
+            # merge
+            h, w = tile.shape[:2]
+            prob_map[y:y+h, x:x+w] += pred[:h, :w]
+            count_map[y:y+h, x:x+w] += 1
+
+    return (prob_map / count_map).astype(np.uint8)

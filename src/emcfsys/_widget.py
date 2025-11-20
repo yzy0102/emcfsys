@@ -350,22 +350,30 @@ class DLInferenceContainer(Container):
         #                  "vit_large_patch16_dinov3.lvd1689m", "vit_huge_patch16_dinov3.lvd1689m"]
         
         # model_zoom = ["deeplabv3plus", "unet", "pspnet", "upernet"]
-        self.backbone_name = ComboBox(label="Backbone", choices=backbone_zoom, value="resnet34")
+        self.backbone_name = ComboBox(label="Backbone", choices=backbone_zoom, value="emcellfound_vit_base")
         self.model_name = ComboBox(label="Model", choices=model_zoom, value="deeplabv3plus")
+        self.img_size = SpinBox(label="Image size", min=1, max=4096, step=1, value=512)
+        self.slide_window_size = SpinBox(label="Slide window size", min=1, max=4096, step=1, value=512)
         
-        self._run_button = PushButton(text="Run Inference")
+        
+        
+        self._run_button_full = PushButton(text="Run Full Inference")
+        self._run_button_slide = PushButton(text="Run Slide Inference")
 
         # add widgets
         self.extend([self.model_path, 
                      self._image_layer_combo, 
                      self.backbone_name, self.model_name,
-                     self.num_classes, self.device, self._run_button])
+                     self.num_classes, self.device, 
+                     self.img_size,
+                     self.slide_window_size,
+                     self._run_button_full, self._run_button_slide])
 
         # connect
-        self._run_button.clicked.connect(self._run_inference)
+        self._run_button_full.clicked.connect(self._run_inference_full)
+        self._run_button_slide.clicked.connect(self._run_inference_slide)
 
-
-    def _run_inference(self):
+    def _run_inference_full(self):
         img_layer = self._image_layer_combo.value
         if img_layer is None:
             return
@@ -378,7 +386,7 @@ class DLInferenceContainer(Container):
 
         @thread_worker
         def _worker():
-            from .EMCellFound.inference import infer_numpy
+            from .EMCellFound.inference import infer_full_image
             model = load_model(
                     model_name=self.model_name.value, 
                     backbone_name=self.backbone_name.value, 
@@ -387,7 +395,43 @@ class DLInferenceContainer(Container):
                     aux_on=False, 
                     device=dev)
             
-            return infer_numpy(model, img, device=dev)
+            return infer_full_image(model, img, input_size=(self.img_size.value, self.img_size.value), device=dev)
+
+        worker = _worker()
+
+        def on_result(mask: np.ndarray):
+            name = img_layer.name + "_dl_mask"
+            if name in self._viewer.layers:
+                self._viewer.layers[name].data = mask
+            else:
+                self._viewer.add_labels(mask, name=name)
+
+        worker.returned.connect(on_result)
+        worker.start()
+
+    def _run_inference_slide(self):
+        img_layer = self._image_layer_combo.value
+        if img_layer is None:
+            return
+
+        img = img_layer.data
+        device = self.device.value
+        dev = torch.device(device) if device != "auto" else None
+        model_path = self.model_path.value
+
+
+        @thread_worker
+        def _worker():
+            from .EMCellFound.inference import infer_sliding_window
+            model = load_model(
+                    model_name=self.model_name.value, 
+                    backbone_name=self.backbone_name.value, 
+                    num_classes=self.num_classes.value, 
+                    model_path=model_path, 
+                    aux_on=False, 
+                    device=dev)
+            
+            return infer_sliding_window(model, img, window_size=self.img_size.value, img_size=(self.slide_window_size.value, self.slide_window_size.value),device=dev)
 
         worker = _worker()
 
