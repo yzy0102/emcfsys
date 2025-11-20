@@ -172,7 +172,7 @@ def load_pretrained(model,
                     img_size, 
                     pretrained=True, 
                     local_url=None,
-                    pathc_size=16,
+                    patch_size=16,
                     using_log=True):
     
     pretrained_url = "https://github.com/yzy0102/emcfsys/releases/latest/download/MAE_EMCellFoundVit_base_224_inEMCF.pth"
@@ -204,9 +204,9 @@ def load_pretrained(model,
             
             # 自动位置编码插值
             if using_log:
-                state_dict = interpolate_pos_encoding_log_state_dict(state_dict, new_img_size=img_size, pathc_size=16)
+                state_dict = interpolate_pos_encoding_log_state_dict(state_dict, new_img_size=img_size, patch_size=16)
             else:
-                state_dict = interpolate_pos_encoding_state_dict(state_dict, new_img_size=img_size, pathc_size=16)
+                state_dict = interpolate_pos_encoding_state_dict(state_dict, new_img_size=img_size, patch_size=16)
                 
             missing, unexpected = model.load_state_dict(state_dict, strict=False)
 
