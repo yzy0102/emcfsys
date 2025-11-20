@@ -50,7 +50,9 @@ if TYPE_CHECKING:
 # we specify a widget type for the threshold parameter
 # and use auto_call=True so the function is called whenever
 # the value of a parameter changes
-backbone_zoom = ["resnet34", "resnet50", "resnet101", 
+backbone_zoom = [   "emcellfound_vit_base_512"
+                 
+                    "resnet34", "resnet50", "resnet101", 
                 
                     "convnext_tiny", "convnext_small", "convnext_base", "convnext_large",
                     
