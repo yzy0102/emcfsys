@@ -352,7 +352,7 @@ class DLInferenceContainer(Container):
         # model_zoom = ["deeplabv3plus", "unet", "pspnet", "upernet"]
         self.backbone_name = ComboBox(label="Backbone", choices=backbone_zoom, value="emcellfound_vit_base")
         self.model_name = ComboBox(label="Model", choices=model_zoom, value="deeplabv3plus")
-        self.img_size = SpinBox(label="Image size", min=1, max=4096, step=1, value=512)
+        self.img_size = SpinBox(label="Image size to model", min=1, max=4096, step=1, value=512)
         self.slide_window_size = SpinBox(label="Slide window size", min=1, max=4096, step=1, value=512)
         
         
@@ -422,7 +422,7 @@ class DLInferenceContainer(Container):
 
         @thread_worker
         def _worker():
-            from .EMCellFound.inference import infer_sliding_window
+            from .EMCellFound.inference import infer_sliding_window_mmseg_style
             model = load_model(
                     model_name=self.model_name.value, 
                     backbone_name=self.backbone_name.value, 
@@ -431,7 +431,12 @@ class DLInferenceContainer(Container):
                     aux_on=False, 
                     device=dev)
             
-            return infer_sliding_window(model, img, window_size=self.img_size.value, img_size=(self.slide_window_size.value, self.slide_window_size.value),device=dev)
+            return infer_sliding_window_mmseg_style(model, 
+                                                    img, 
+                                                    window_size=self.slide_window_size.value,
+                                                    img_size=(self.img_size.value, self.img_size.value), 
+                                                    out_channels = self.num_classes.value,
+                                                    device=dev)
 
         worker = _worker()
 
