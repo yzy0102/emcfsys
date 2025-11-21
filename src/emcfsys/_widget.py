@@ -441,7 +441,7 @@ class DLInferenceContainer(Container):
         worker = _worker()
 
         def on_result(mask: np.ndarray):
-            name = img_layer.name + "_dl_mask"
+            name = img_layer.name + "_slide_mask"
             if name in self._viewer.layers:
                 self._viewer.layers[name].data = mask
             else:
