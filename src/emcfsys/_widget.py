@@ -743,11 +743,11 @@ class EMCellFinerSingleInferWidget(Container):
 
         img_np = img_layer.data
         
-        # 单通道 -> 3通道
-        if img_np.ndim == 2:
-            img_np = np.stack([img_np] * 3, axis=-1)
-        elif img_np.shape[-1] == 1:
-            img_np = np.repeat(img_np, 3, axis=-1)
+        # # 单通道 -> 3通道
+        # if img_np.ndim == 2:
+        #     img_np = np.stack([img_np] * 3, axis=-1)
+        # elif img_np.shape[-1] == 1:
+        #     img_np = np.repeat(img_np, 3, axis=-1)
 
 
         # ---- 在执行推理前启动进度条 ----
