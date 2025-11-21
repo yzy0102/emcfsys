@@ -333,29 +333,10 @@ class DLInferenceContainer(Container):
         self.num_classes = SpinBox(label="num classes", min=2, max=1000, step=1, value=2)
         
         self.device = ComboBox(label="Device", choices=["auto", "cpu", "cuda"], value="auto")
-        
-        # backbone_zoom = ["resnet34", "resnet50", "resnet101", 
-                        
-        #                  "convnext_tiny", "convnext_small", "convnext_base", "convnext_large",
-                         
-        #                  "efficientnet_b0", "efficientnet_b2", 
-        #                  "efficientnet_b4" , "efficientnet_b6", 
-        #                  "efficientnet_b7",
-                         
-        #                  "efficientnetv2_s", "efficientnetv2_m", "efficientnetv2_l",
-                         
-        #                  "rexnetr_200.sw_in12k", "rexnetr_300.sw_in12k", 
-                         
-        #                  "vit_small_patch16_dinov3.lvd1689m", "vit_base_patch16_dinov3.lvd1689m",
-        #                  "vit_large_patch16_dinov3.lvd1689m", "vit_huge_patch16_dinov3.lvd1689m"]
-        
-        # model_zoom = ["deeplabv3plus", "unet", "pspnet", "upernet"]
         self.backbone_name = ComboBox(label="Backbone", choices=backbone_zoom, value="emcellfound_vit_base")
         self.model_name = ComboBox(label="Model", choices=model_zoom, value="deeplabv3plus")
         self.img_size = SpinBox(label="Image size to model", min=1, max=4096, step=1, value=512)
         self.slide_window_size = SpinBox(label="Slide window size", min=1, max=4096, step=1, value=512)
-        
-        
         
         self._run_button_full = PushButton(text="Run Full Inference")
         self._run_button_slide = PushButton(text="Run Slide Inference")
@@ -383,6 +364,7 @@ class DLInferenceContainer(Container):
         dev = torch.device(device) if device != "auto" else None
         model_path = self.model_path.value
 
+        print("image_layer:", img.shape)
 
         @thread_worker
         def _worker():
@@ -422,7 +404,7 @@ class DLInferenceContainer(Container):
 
         @thread_worker
         def _worker():
-            from .EMCellFound.inference import infer_sliding_window_mmseg_style
+            from .EMCellFound.inference import infer_sliding_window
             model = load_model(
                     model_name=self.model_name.value, 
                     backbone_name=self.backbone_name.value, 
@@ -431,12 +413,12 @@ class DLInferenceContainer(Container):
                     aux_on=False, 
                     device=dev)
             
-            return infer_sliding_window_mmseg_style(model, 
-                                                    img, 
-                                                    window_size=self.slide_window_size.value,
-                                                    img_size=(self.img_size.value, self.img_size.value), 
-                                                    out_channels = self.num_classes.value,
-                                                    device=dev)
+            return infer_sliding_window(model, 
+                                        img, 
+                                        window_size=self.slide_window_size.value,
+                                        img_size=(self.img_size.value, self.img_size.value), 
+                                        out_channels = self.num_classes.value,
+                                        device=dev)
 
         worker = _worker()
 
@@ -746,13 +728,7 @@ class EMCellFinerSingleInferWidget(Container):
             print("No layer selected")
             return
         
-        img_np = img_layer.data
-        
-        # 单通道 -> 3通道
-        if img_np.ndim == 2:
-            img_np = np.stack([img_np] * 3, axis=-1)
-        elif img_np.shape[-1] == 1:
-            img_np = np.repeat(img_np, 3, axis=-1)
+
 
         # 读取 UI 参数
         model_path = self.model_path.value
@@ -765,8 +741,18 @@ class EMCellFinerSingleInferWidget(Container):
         if model_path in ["None", "", None]:
             model_path = None
 
+        img_np = img_layer.data
+        
+        # 单通道 -> 3通道
+        if img_np.ndim == 2:
+            img_np = np.stack([img_np] * 3, axis=-1)
+        elif img_np.shape[-1] == 1:
+            img_np = np.repeat(img_np, 3, axis=-1)
+
+
         # ---- 在执行推理前启动进度条 ----
         progress = napari.utils.progress(total=100, desc="EMCellFiner Inference...")
+
 
         # ---- 启动线程 ----
         @thread_worker

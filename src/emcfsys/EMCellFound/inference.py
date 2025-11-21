@@ -4,10 +4,50 @@ import torch
 
 from .utils.checkpoint import load_model, load_pretrained
 from skimage.transform import resize
-
+import torch.nn.functional as F
+import numpy as np
 # import Optional
 from typing import Optional
 from .models.model_factory import get_model
+import numpy as np
+import torch
+from skimage.transform import resize
+from typing import Optional, Tuple, List, Union
+
+from PIL import Image
+import time
+import functools
+
+def timer(func):
+    """
+    一个修饰函数，用于计算被装饰函数的执行时间并打印结果。
+    """
+    # 使用 functools.wraps 保持原函数的名称、文档字符串等元数据
+    @functools.wraps(func)
+    def wrapper(*args, **kwargs):
+        
+        # 记录开始时间
+        start_time = time.time()
+        
+        # 执行原函数并获取结果
+        result = func(*args, **kwargs)
+        
+        # 记录结束时间
+        end_time = time.time()
+        
+        # 计算并打印持续时间
+        duration = end_time - start_time
+        print(f"🕒 函数 '{func.__name__}' 执行完成，耗时: {duration:.4f} 秒。")
+        
+        # 返回原函数的执行结果
+        return result
+        
+    return wrapper
+
+# 提示：如果需要更精确或更侧重于 CPU 时间的计时，
+# 可以将 time.time() 替换为 time.perf_counter()。
+
+
 class Normalize:
     """Normalize image to mean/std (mmseg style)."""
     def __init__(self, mean=(123.675, 116.28, 103.53), std=(58.395, 57.12, 57.375)):
@@ -15,6 +55,12 @@ class Normalize:
         self.std = np.array(std, dtype=np.float32)
 
     def __call__(self, img: np.ndarray):
+        # 兼容 N x C x H x W 格式的 Batch 输入
+        if img.ndim == 4:
+            # 这种情况下，我们假设归一化操作将在 prepare_image 外部的 NumPy 广播中完成，
+            # 这里保持不变，以防 prepare_image 内部逻辑调用它。
+            return img
+        
         img = img.astype(np.float32)
         # HWC -> CHW if necessary
         if img.ndim == 2:
@@ -29,6 +75,10 @@ class Normalize:
         for c in range(img.shape[0]):
             img[c] = (img[c] - self.mean[c]) / self.std[c]
         return img
+
+
+
+
 
 def load_model(model_name: str, backbone_name: str, num_classes: int, model_path: str, aux_on=True, device=None):
     """
@@ -59,48 +109,93 @@ def load_model(model_name: str, backbone_name: str, num_classes: int, model_path
     return model
 
 
+@timer
 def prepare_image(img: np.ndarray, 
                   in_channels=3, 
                   normalize=True, 
                   mean=(123.675,116.28,103.53), 
                   std=(58.395,57.12,57.375)):
     """
-    Prepare image for model inference.
-    - img: np.ndarray, HxW, HxWxC, or CxHxW
-    - in_channels: expected input channels for the model (1 or 3)
-    - normalize: whether to apply mean/std normalization
+    Prepare image(s) for model inference, unifying the output shape to (N, 3, H, W).
+    
+    - img: np.ndarray, 可以是单张图像 (ndim<=3) 或图像 Stack (ndim>=4)。
+    - in_channels: 此参数将被忽略，输出通道数固定为 3 (RGB)。
+    
+    Returns: torch.Tensor of shape (N, 3, H, W).
     """
-    arr = img.astype(np.float32)
     
-    # Ensure channel-first
+    # 0. 设置目标通道数
+    TARGET_CHANNELS = 3
+    arr = np.array(img).astype(np.float32)
+    # 1. 类型转换为 float32
+    # arr = img
+    
+    # 2. 确定维度并转换为 N x C_in x H x W 格式
+    
+    # inputx: B, H, W, C  or  H, W, C  or H, W
     if arr.ndim == 2:
-        arr = arr[np.newaxis, ...]  # 1,H,W
-    elif arr.ndim == 3 and arr.shape[0] in (1,3):
-        pass  # C,H,W
-    elif arr.ndim == 3 and arr.shape[-1] in (1,3):
-        arr = np.transpose(arr, (2,0,1))  # H,W,C -> C,H,W
-    else:
-        raise ValueError(f"Unsupported image shape: {arr.shape}")
-    
-    # Match input channels
-    if arr.shape[0] != in_channels:
-        if arr.shape[0] == 1 and in_channels == 3:
-            arr = np.repeat(arr, 3, axis=0)
-        elif arr.shape[0] == 3 and in_channels == 1:
-            arr = arr.mean(axis=0, keepdims=True)
-        else:
-            raise ValueError(f"Cannot match channels {arr.shape[0]} -> {in_channels}")
-    
-    # Apply mmseg-style normalization
-    if normalize:
-        norm = Normalize(mean, std)
-        arr = norm(arr)
-    
-    return torch.from_numpy(arr).unsqueeze(0)  # 1,C,H,W
+        # 输入图像是单张灰度图 H， W
+        # 转化成 (1, 1, h, w)
+        arr = np.expand_dims(arr, axis=(0, 1))# 1, 1, H, W
 
+    elif arr.ndim == 3:
+        if arr.shape[-1] > 5:
+            # case1: 输入图像可能是 B,H,W 一个batch的灰度图像
+            arr = arr[:,np.newaxis, ...] # B, 1, H, W
+            
+        elif arr.shape[-1] == 3 or arr.shape[-1] == 4:
+            # case2: 也有可能是 H, W, 3/4 需要保证为3  -> [H, W, 3]
+            arr = np.array(Image.fromarray(np.uint8(arr)).convert("RGB")).astype(np.float32)
+            # transpose h,w,3 -> 3,h,w
+            arr = np.transpose(arr, (2, 0, 1))
+            # 3,h,w -> 1, 3, h, w   1 is batch
+            arr = arr[np.newaxis, ...]
+        else:
+            print("Please convert image to gray or RGB first!")
+            
+    elif arr.ndim == 4:
+        # case1 输入为B, H, W, C -> B, C, H, W
+        arr = np.transpose(arr, (0, 3, 1, 2))
+    
+    
+    # 统一判断  此时，arr 的 shape 为 N x C_in x H x W
+    # B, C, H, W 把C统一转成3
+    C_in = arr.shape[1]
+    
+    # 3. 统一通道匹配 (目标 C = 3)
+    if C_in != TARGET_CHANNELS:
+        if C_in == 1:
+            # 灰度 (N x 1 x H x W) -> RGB (N x 3 x H x W)
+            arr = np.repeat(arr, TARGET_CHANNELS, axis=1)
+        elif C_in == 4:
+            # RGBA (N x 4 x H x W) -> RGB (N x 3 x H x W)
+            arr = arr[:, :TARGET_CHANNELS, :, :]
+        elif C_in == TARGET_CHANNELS:
+            # 已经是 3 通道
+            pass
+        else:
+            raise ValueError(f"Cannot match input channels {C_in} to target {TARGET_CHANNELS}")
+    
+    
+    # 4. 应用 mmseg 风格归一化 (使用 NumPy 广播提高效率)
+    if normalize:
+        # 重塑 mean/std 为 1 x C x 1 x 1，以便跨 N, H, W 维度广播
+        mean_b = np.array(mean, dtype=np.float32).reshape(1, TARGET_CHANNELS, 1, 1)
+        std_b = np.array(std, dtype=np.float32).reshape(1, TARGET_CHANNELS, 1, 1)
+        
+        arr = (arr - mean_b) / std_b
+        
+    # 5. 最终输出: N x 3 x H x W Tensor
+    return torch.from_numpy(arr)
+
+
+
+
+@timer
 def infer_numpy(model, image: np.ndarray, device=None):
     """
     Run inference on single image (numpy array).
+    Run inference on batch image (numpy array).
     
     Returns mask as uint8.
     """
@@ -122,11 +217,10 @@ def infer_numpy(model, image: np.ndarray, device=None):
     return mask.astype(np.uint8)
 
 
-
-
 # ============================================
-# 1. 整图推理（支持 resize）
+# 1. 整图推理（支持 resize） 支持stack、batch image 支持single image
 # ============================================
+@timer
 def infer_full_image(model,
                      image: np.ndarray,
                      input_size=None,  # 如 (512,512)，None 则不 resize
@@ -136,69 +230,73 @@ def infer_full_image(model,
     - image: HWC, HW, CHW
     - input_size: (H, W) 或 None
     """
-
     if device is None:
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     # 保存原尺寸
-    H, W = image.shape[:2]
+    # H, W = image.shape[:2]
+    image = prepare_image(image, in_channels=3).to(device)
+    B,C,H,W = image.shape
 
     # 是否 resize 输入图像
     if input_size is not None:
-        img_resized = resize(image, input_size, preserve_range=True).astype(np.float32)
-    else:
-        img_resized = image.astype(np.float32)
-
-    # 输入模型
-    x = prepare_image(img_resized, in_channels=3).to(device)
+        image = F.interpolate(image, size=input_size, mode='bilinear', align_corners=False)
 
     with torch.no_grad():
-        out, _ = model(x)  # 1,C,h,w
-        pred = torch.argmax(out, dim=1).cpu().numpy().squeeze()
+        preds = []
+        for i in range(B):
+            out, _ = model(image[i:i+1,:,:,:])  # B,C,h,w
+            if input_size is not None:
+                out = F.interpolate(out, size=(H, W), mode='bilinear', align_corners=False)
+            pred = torch.argmax(out, dim=1)
+            preds.append(pred.cpu().numpy().squeeze())
+        preds = np.stack(preds, axis=0)
+    
+    return preds
 
-    # 再 resize 回去
-    if input_size is not None:
-        pred = resize(pred, (H, W), order=0, preserve_range=True).astype(np.uint8)
 
-    return pred
-import torch.nn.functional as F
-import numpy as np
+
 # 为了获取模型的输出通道数，我们定义一个辅助函数进行单次切片推理
-def _infer_tile_logits(model, tile_img: np.ndarray, input_size = None, device=None) -> np.ndarray:
+def _infer_tile_logits(model, tile_img, input_size = None, device=None) -> np.ndarray:
     """
     对单个切片执行模型推理，并返回原始 logits (CxH_outxW_out, NumPy 数组)。
+    tile_img : torch.tensor: [b, c, h, w]
+    
     """
     
     # 1. 可选：Resize (如果有 input_size 且它不等于当前的切片尺寸)
-    tile_to_model = tile_img
-    if input_size is not None and (tile_img.shape[0] != input_size[0] or tile_img.shape[1] != input_size[1]):
-        # 注意: 这里的 resize 应该使用线性/双线性，因为是原始图像数据
-        tile_to_model = resize(tile_img, input_size, preserve_range=True).astype(tile_img.dtype)
+    _, _, h, w = tile_img.shape
+    x_in = tile_img
+    
+    if input_size is not None and (h != input_size[0] or w != input_size[1]):
+        x_in = F.interpolate(tile_img, size=input_size, mode='bilinear', align_corners=False)
+        
+        # tile_to_model = resize(tile_img, input_size, preserve_range=True).astype(tile_img.dtype)
     
     # 2. prepare_image: (H,W,C) -> (1, C, H, W) Tensor
-    x_in: torch.Tensor = prepare_image(tile_to_model, in_channels=3).to(device)
+    # x_in: torch.Tensor = prepare_image(tile_to_model, in_channels=3).to(device)
+    
     
     # 3. 模型推理
     with torch.no_grad():
         # 假设您的模型返回 (logits, aux_output)
         logits, _ = model(x_in) # 1xNum_ClassesxH_outxW_out
         
-        # 4. 可选：将 Logits resize 回切片原始大小 (Logits插值必须用 torch)
-        H_tile, W_tile = tile_img.shape[:2]
-        
+        # 将 Logits resize 回切片原始大小 (Logits插值必须用 torch)
         # 如果模型输出尺寸与切片原始尺寸不同，需要插值回切片尺寸
-        if logits.shape[2] != H_tile or logits.shape[3] != W_tile:
+        if logits.shape[2] != h or logits.shape[3] != w:
              # resize logits (1, C, H_out, W_out) -> (1, C, H_tile, W_tile)
              logits = F.interpolate(
                 logits, 
-                size=(H_tile, W_tile), 
+                size=(h, w), 
                 mode='bilinear', 
                 align_corners=False # 分割任务中常用
              )
         
         return logits.squeeze(0).cpu().numpy() # CxH_tilexW_tile NumPy
 
-def infer_sliding_window_mmseg_style(
+@timer
+def infer_sliding_window(
     model: torch.nn.Module, 
     image: np.ndarray, 
     window_size: int, # 对应 crop_size 的 H 和 W (假设为方形)
@@ -214,31 +312,25 @@ def infer_sliding_window_mmseg_style(
     - window_size: 滑窗的边长 (H_crop = W_crop)。
     - overlap: 重叠比例 (0.0 到 1.0)。
     - img_size: 模型输入大小 (H_in, W_in) 或 None。
-        - 如果 img_size != None，每个切片会被 resize 到 img_size 后输入模型，
+        - 如果 img_size != None, 每个切片会被 resize 到 img_size 后输入模型，
           推理结果 logits 再被 resize 回切片原始大小。
     
     Returns:
         np.ndarray: 最终的分割结果 mask (H x W, np.uint8)。
     """
+
     if device is None:
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     
     model.eval()
     model.to(device)
 
-    H_img, W_img = image.shape[:2]
+   
+    image = prepare_image(image, in_channels=3).to(device) #  return N x 3 x H x W Tensor
+    batch, C, H_img, W_img = image.shape
+    # H_img, W_img = image.shape[-2], image.shape[-1]
     H_crop, W_crop = window_size, window_size # 假设窗口为方形
-
-    # 1. 确定输出通道数 (Num_classes)
-    # 通过对图像左上角一小块进行推理来获取通道数
-    # try:
-    #     dummy_tile = image[:H_crop, :W_crop]
-    #     # 使用 _infer_tile_logits 获取 Logits shape
-    #     dummy_logits = _infer_tile_logits(model, dummy_tile, img_size, device)
-    #     out_channels = dummy_logits.shape[0]
-    # except Exception as e:
-    #     raise RuntimeError(f"Failed to auto-determine num_classes from model output: {e}")
-        
+ 
     # 2. 准备 Logits 累加图和计数图
     preds = np.zeros((out_channels, H_img, W_img), dtype=np.float32) # CxHxW Logits
     count_mat = np.zeros((H_img, W_img), dtype=np.float32)           # HxW 计数
@@ -253,46 +345,55 @@ def infer_sliding_window_mmseg_style(
     # 计算网格数量
     h_grids = max(H_img - H_crop + h_stride - 1, 0) // h_stride + 1
     w_grids = max(W_img - W_crop + w_stride - 1, 0) // w_stride + 1
-
-    # 4. 滑动窗口循环
-    for h_idx in range(h_grids):
-        for w_idx in range(w_grids):
-            y1_orig = h_idx * h_stride
-            x1_orig = w_idx * w_stride
-            
-            # MMseg 风格的边界处理：确保切片不超过图像边界，且贴合边界
-            y2 = min(y1_orig + H_crop, H_img)
-            x2 = min(x1_orig + W_crop, W_img)
-            
-            # 修正起始坐标，以确保边缘切片也尽量使用完整 crop_size
-            y1 = max(y2 - H_crop, 0)
-            x1 = max(x2 - W_crop, 0)
-            
-            # 切片 (H_tile, W_tile, C) 或 (H_tile, W_tile)
-            tile = image[y1:y2, x1:x2] 
-            
-            # 5. 推理并获取 Logits
-            # crop_seg_logit_resized: CxH_tilexW_tile NumPy Logits
-            crop_seg_logit_resized = _infer_tile_logits(model, tile, img_size, device)
-            
-            # 6. 累加 Logits 和 计数
-            # Logits 累加 (CxHxW)
-            preds[:, y1:y2, x1:x2] += crop_seg_logit_resized
-            
-            # 计数累加 (HxW)
-            count_mat[y1:y2, x1:x2] += 1
-
-    # 7. 计算平均 Logits
-    count_mat[count_mat == 0] = 1 # 避免除以零
     
-    # 扩展 count_mat 维度以进行逐通道平均
-    count_mat_expanded = np.expand_dims(count_mat, axis=0) # 1xHxW
-    avg_seg_logits = preds / count_mat_expanded             # CxHxW
+    final_masks = []
+    for i in range(batch):
+        # 4. 滑动窗口循环
+        for h_idx in range(h_grids):
+            for w_idx in range(w_grids):
+                y1_orig = h_idx * h_stride
+                x1_orig = w_idx * w_stride
+                
+                # MMseg 风格的边界处理：确保切片不超过图像边界，且贴合边界
+                y2 = min(y1_orig + H_crop, H_img)
+                x2 = min(x1_orig + W_crop, W_img)
+                
+                # 修正起始坐标，以确保边缘切片也尽量使用完整 crop_size
+                y1 = max(y2 - H_crop, 0)
+                x1 = max(x2 - W_crop, 0)
+                
+                # 切片 (H_tile, W_tile, C) 或 (H_tile, W_tile)
+                # tile -> tensor: [b,C, H_tile, W_tile]
+                tile = image[i:i+1, :, y1:y2, x1:x2] 
+                
+                # 5. 推理并获取 Logits
+                # crop_seg_logit_resized: CxH_tilexW_tile NumPy Logits
+                crop_seg_logit_resized = _infer_tile_logits(model, tile, img_size, device)
+                
+                # 6. 累加 Logits 和 计数
+                # Logits 累加 (CxHxW)
+                preds[:, y1:y2, x1:x2] += crop_seg_logit_resized
+                
+                # 计数累加 (HxW)
+                count_mat[y1:y2, x1:x2] += 1
 
-    # 8. 最终 Argmax
-    # Argmax on channel dimension to get final prediction mask (HxW)
-    final_mask = np.argmax(avg_seg_logits, axis=0).astype(np.uint8)
+        # 7. 计算平均 Logits
+        count_mat[count_mat == 0] = 1 # 避免除以零
+        
+        # 扩展 count_mat 维度以进行逐通道平均
+        count_mat_expanded = np.expand_dims(count_mat, axis=0) # 1xHxW
+        avg_seg_logits = preds / count_mat_expanded             # CxHxW
 
-    return final_mask
+        # 8. 最终 Argmax
+        # Argmax on channel dimension to get final prediction mask (HxW)
+        final_mask = np.argmax(avg_seg_logits, axis=0).astype(np.uint8)
+        final_masks.append(final_mask)
+        
+    final_masks = np.stack(final_masks, axis=0)
+    
+    return final_masks
 
 
+
+    
+    
