@@ -34,4 +34,5 @@
       3. [X] DeepLabv3+
       4. [X] UperNet
 
-
+5. 数据标注类
+   1. Labelme 2 SemanticSeg

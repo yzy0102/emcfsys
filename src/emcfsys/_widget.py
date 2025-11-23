@@ -43,8 +43,13 @@ from skimage.util import img_as_float
 import os
 if TYPE_CHECKING:
     import napari
+    
 
-
+from labelme import utils as labelme_utils
+import json
+import os
+from PIL import Image
+import numpy as np
 
 # the magic_factory decorator lets us customize aspects of our widget
 # we specify a widget type for the threshold parameter
@@ -942,4 +947,189 @@ class EMCellFinerBatchInferWidget(Container):
             self._worker = None  # 清理 worker 对象
             self._stop_flag = False
         worker.start()
+
+
+
+
+#----------------------------
+# labelme2semantci segmentation mask
+#----------------------------
+import base64
+import json
+import os
+import os.path as osp
+import imgviz
+import PIL.Image
+from labelme import utils
+import numpy as np
+import json
+import ast
+class EMCellFinerBatchInferWidget(Container):
+    '''
+        using labelme to annotate the labels first, and generate json files.
+        Here, using this function we can convert those json files to semantic segmentation masks, labels are png files in P(PIL) mode.
+    '''
+    def __init__(self, viewer: "napari.viewer.Viewer"):
+        super().__init__()
+        self.viewer = viewer
+
+        MODEL_ZOO = ["EMCellFiner"]
+
+        self.json_path = FileEdit(label="Jsons labels folder", mode="d", nullable=False)
+        self.output_dir = FileEdit(label="Save mask Folder", mode="d")
+        self.label_name_to_value = FileEdit(label="Label Name to Value (txt)", mode="r", nullable=False)
         
+        self._run_button = PushButton(text="Run convert")
+        self.info = TextEdit(
+                        value=(
+                            "Convert labelme json files to semantic segmentation masks (png files).\n"
+                            "The label.txt should be written in this formats:\n"
+                            "labels.txt: \t\n"
+                            "\t \t \n"
+                            "_background_ : 0\n"
+                            "mito : 1\n"
+                            "nu : 2 \n"
+                        ),
+                    )
+        
+        self.extend([
+            self.json_path,
+            self.label_name_to_value,
+            self.output_dir,
+            
+            self._run_button,
+            
+            self.info,
+        ])
+
+        # 按钮绑定
+        self._run_button.clicked.connect(self._convert_labelme_json_to_mask)
+
+
+    def _convert_labelme_json_to_mask(self):
+
+        json_folder = self.json_path.value
+        out_dir = self.output_dir.value
+
+        # 读取 label_name_to_value
+        with open(self.label_name_to_value.value, 'r', encoding="utf-8") as f:
+            text = f.read()
+            label_name_to_value = self.auto_parse_label_mapping(text)
+
+
+        print("Label name to value =", label_name_to_value)
+        
+        if not osp.exists(out_dir):
+            os.mkdir(out_dir)
+
+
+        img_save_path = osp.join(out_dir, "image")
+        labels_save_path = osp.join(out_dir, "label")
+        vis_save_path = osp.join(out_dir, "vis")
+
+        os.makedirs(img_save_path, exist_ok=True)
+        os.makedirs(labels_save_path, exist_ok=True)
+        os.makedirs(vis_save_path, exist_ok=True)
+
+            
+        # 遍历全部 json
+        for json_file in os.listdir(json_folder):
+            if not json_file.endswith(".json"):
+                continue
+
+            json_path = os.path.join(json_folder, json_file)
+            data = json.load(open(json_path))
+            imageData = data.get("imageData")
+
+            if not imageData:
+                imagePath = os.path.join(json_folder, data["imagePath"])
+                with open(imagePath, "rb") as f:
+                    imageData = f.read()
+                    imageData = base64.b64encode(imageData).decode("utf-8")
+            img = utils.img_b64_to_arr(imageData)
+            
+            
+            # 生成mask
+            lbl, _ = labelme_utils.shapes_to_label(
+                img.shape,
+                data['shapes'],
+                label_name_to_value
+            )
+            
+            label_names = [None] * (max(label_name_to_value.values()) + 1)
+            for name, value in label_name_to_value.items():
+                label_names[value] = name
+        
+            lbl_viz = imgviz.label2rgb(
+                lbl, imgviz.asgray(img), label_names=label_names, loc="rb"
+            )
+        
+            
+            
+            
+            PIL.Image.fromarray(img).convert("RGB").save(osp.join(img_save_path, osp.splitext(data['imagePath'])[0]+".tif"))
+            utils.lblsave(os.path.join(labels_save_path, osp.splitext(data['imagePath'])[0] + ".png"), lbl)
+            PIL.Image.fromarray(lbl_viz).save(osp.join(vis_save_path, osp.splitext(data['imagePath'])[0]+ "_labelviz" + ".png"))
+            
+        print(f"All jsons converted to masks! saved to {labels_save_path}")
+
+
+
+
+
+    def auto_parse_label_mapping(self, text: str):
+        """
+        自动识别 JSON / Python dict / YAML / key-value / CSV 等格式，返回 dict。
+        """
+
+        text = text.strip()
+
+        # 1. 尝试 JSON（最规范）
+        try:
+            return json.loads(text)
+        except Exception:
+            pass
+
+        # 2. 尝试 Python 字典格式
+        try:
+            return ast.literal_eval(text)
+        except Exception:
+            pass
+
+        # 3. 尝试 YAML 风格：key: value
+        try:
+            lines = text.splitlines()
+            mapping = {}
+            for line in lines:
+                if ":" not in line:
+                    continue
+                key, value = line.split(":", 1)
+                key = key.strip()
+                value = value.strip()
+                if value.isdigit():
+                    value = int(value)
+                mapping[key] = value
+            if mapping:
+                return mapping
+        except Exception:
+            pass
+
+        # 4. 尝试 CSV 或 key,value
+        try:
+            lines = text.splitlines()
+            mapping = {}
+            for line in lines:
+                if "," not in line:
+                    continue
+                key, value = line.split(",", 1)
+                key = key.strip()
+                value = value.strip()
+                if value.isdigit():
+                    value = int(value)
+                mapping[key] = value
+            if mapping:
+                return mapping
+        except Exception:
+            pass
+
+        raise ValueError("无法解析标签映射文件，请检查文件格式。")

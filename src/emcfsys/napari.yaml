@@ -42,6 +42,9 @@ contributions:
       python_name: emcfsys._widget:EMCellFinerBatchInferWidget
       title: EMCellFiner - Batch Inference Widget
 
+    - id: emcfsys.labelme_2_semseg
+      python_name: emcfsys._widget:EMCellFinerBatchInferWidget
+      title: DatasetConverter - Convert labelme 2 semantic segmentation masks
 
 
   readers:
@@ -71,3 +74,6 @@ contributions:
       display_name: EMCellFiner - Single Image Inference
     - command: emcfsys.emcellfiner.batch_infer
       display_name: EMCellFiner - Batch Inference
+
+    - command: emcfsys.labelme_2_semseg
+      display_name: DatasetConverter - Convert labelme 2 semantic segmentation masks
