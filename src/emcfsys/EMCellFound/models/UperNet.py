@@ -78,7 +78,7 @@ class UPerNet(nn.Module):
         self.num_classes = num_classes
         self.aux_on = aux_on
         feat_len = len(timm.create_model(backbone_name, pretrained=False, features_only=True).feature_info)
-        out_indices = tuple(range(1, feat_len))  # skip first if you want, 或 (0,1,2,3)
+        # out_indices = tuple(range(1, feat_len))  # skip first if you want, 或 (0,1,2,3)
         # ---------- timm backbone ----------
         self.backbone = CasualBackbones(backbone_name, 
                                         pretrained=pretrained, 
@@ -109,7 +109,7 @@ class UPerNet(nn.Module):
 
     def forward(self, x):
         H, W = x.shape[2:]
-
+        # print("Input shape:", x.shape[2:])
         # Backbone
         feats = self.backbone(x)   # [C2, C3, C4, C5]
         c2, c3, c4, c5 = feats
@@ -126,7 +126,7 @@ class UPerNet(nn.Module):
         _, _, _, p5 = fpn_feats
 
         psp_out = self.psp(p5)
-
+        # print("psp_out shape:", psp_out.shape)
         out = self.cls_head(psp_out)
         out = F.interpolate(out, size=(H, W), mode='bilinear', align_corners=False)
 

@@ -48,7 +48,7 @@ def train_loop(images_dir, masks_dir,
     
     loader = DataLoader(dataset, batch_size=batch_size, shuffle=True, num_workers=0)
     # 动态选择模型
-    model = get_model(model_name=model_name, backbone_name=backbone_name,
+    model = get_model(model_name=model_name, backbone_name=backbone_name, img_size=target_size[0],
                       num_classes=classes_num, aux_on=True, pretrained=pretrained).to(device)
  
     

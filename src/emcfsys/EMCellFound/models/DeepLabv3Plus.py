@@ -65,8 +65,6 @@ class DeepLabV3Plus(nn.Module):
         self.out_channels = num_classes
         self.aux_on = aux_on
 
-
-
         self.backbone = CasualBackbones(backbone_name, 
                                         pretrained=pretrained, 
                                         img_size=img_size, 
@@ -178,18 +176,19 @@ if __name__ == "__main__":
     # quick sanity check
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-
-    # net = DeepLabV3Plus(backbone_name="emcellfound_vit_base", num_classes=3, pretrained=True, aux_on=False)
+    img_size = 1024
+    
+    net = DeepLabV3Plus(backbone_name="emcellfound_vit_base", img_size=img_size, num_classes=3, pretrained=True, aux_on=False)
     # net = DeepLabV3Plus(backbone_name="convnext_large.dinov3_lvd1689m", num_classes=3, pretrained=True, aux_on=False)
     # net = DeepLabV3Plus(backbone_name="convnext_base.dinov3_lvd1689m", num_classes=3, pretrained=True, aux_on=False)
-    net = DeepLabV3Plus(backbone_name="vit_small_patch16_dinov3.lvd1689m", num_classes=3, pretrained=True, aux_on=False)
+    # net = DeepLabV3Plus(backbone_name="vit_small_patch16_dinov3.lvd1689m", num_classes=3, pretrained=True, aux_on=False)
     # net = DeepLabV3Plus(backbone_name="hiera_small_abswin_256.sbb2_e200_in12k_ft_in1k", num_classes=3, pretrained=False, aux_on=False)
     # net = DeepLabV3Plus(backbone_name="convnext_tiny", num_classes=3, pretrained=False, aux_on=False)
     # net = DeepLabV3Plus(backbone_name="resnet50", num_classes=3, pretrained=True, aux_on=False)
 
     net.eval()
     
-    img_size = 512
+
     
     x = torch.randn(1, 3, img_size, img_size)
     

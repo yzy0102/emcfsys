@@ -5,7 +5,7 @@ from .PSPNet import PSPNet
 from .DeepLabv3Plus import DeepLabV3Plus
 from .UperNet import UPerNet
 
-def get_model(model_name, backbone_name='resnet34', num_classes=2, aux_on=True, pretrained=True):
+def get_model(model_name, backbone_name='resnet34', img_size = 512, num_classes=2, aux_on=True, pretrained=True):
     """
     动态选择模型
 
@@ -23,13 +23,13 @@ def get_model(model_name, backbone_name='resnet34', num_classes=2, aux_on=True, 
     model_name = model_name.lower()
     
     if model_name == "unet":
-        model = UNet(num_classes=num_classes, backbone_name=backbone_name, aux_on=aux_on, pretrained=pretrained)
+        model = UNet(num_classes=num_classes, img_size=img_size, backbone_name=backbone_name, aux_on=aux_on, pretrained=pretrained)
     elif model_name == "pspnet":
-        model = PSPNet(num_classes=num_classes, backbone_name=backbone_name, aux_on=aux_on, pretrained=pretrained)
+        model = PSPNet(num_classes=num_classes, img_size=img_size, backbone_name=backbone_name, aux_on=aux_on, pretrained=pretrained)
     elif model_name == "deeplabv3plus":
-        model = DeepLabV3Plus(num_classes=num_classes, backbone_name=backbone_name, aux_on=aux_on, pretrained=pretrained)
+        model = DeepLabV3Plus(num_classes=num_classes, img_size=img_size, backbone_name=backbone_name, aux_on=aux_on, pretrained=pretrained)
     elif model_name == "upernet":
-        model = UPerNet(num_classes=num_classes, backbone_name=backbone_name, aux_on=aux_on, pretrained=pretrained)
+        model = UPerNet(num_classes=num_classes, img_size=img_size, backbone_name=backbone_name, aux_on=aux_on, pretrained=pretrained)
     else:
         raise ValueError(f"Unknown model_name: {model_name}")
     
