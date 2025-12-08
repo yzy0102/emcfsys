@@ -131,7 +131,7 @@ def infer_image_numpy(model, img_np, device="cpu", to_uint8=True):
 # Quick test
 # --------------------------
 if __name__ == "__main__":
-    net = UNet(backbone_name="vit_small_patch16_dinov3.lvd1689m", num_classes=3, pretrained=False, aux_on=True)
+    net = UNet(backbone_name="convnext_base", num_classes=4, pretrained=False, aux_on=True)
     # net = UNet(backbone_name="resnet50", num_classes=3, pretrained=False, aux_on=True)
     net.eval()
     x = torch.randn(1,3,512,512)

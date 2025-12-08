@@ -173,7 +173,7 @@ def load_pretrained(model,
                     pretrained=True, 
                     local_url=None,
                     patch_size=16,
-                    using_log=True):
+                    using_log=False):
     
     pretrained_url = "https://github.com/yzy0102/emcfsys/releases/latest/download/MAE_EMCellFoundVit_base_224_inEMCF.pth"
     

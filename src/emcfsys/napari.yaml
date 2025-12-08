@@ -43,7 +43,7 @@ contributions:
       title: EMCellFiner - Batch Inference Widget
 
     - id: emcfsys.labelme_2_semseg
-      python_name: emcfsys._widget:EMCellFinerBatchInferWidget
+      python_name: emcfsys._widget:LabelMe2Seg
       title: DatasetConverter - Convert labelme 2 semantic segmentation masks
 
 

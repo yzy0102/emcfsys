@@ -827,7 +827,7 @@ class EMCellFinerBatchInferWidget(Container):
         self.output_dir = FileEdit(label="Save Folder", mode="d")
 
         self.scale = ComboBox(label="Scale", choices=[1, 2, 4], value=4)
-        self.tile_size = ComboBox(label="Tile Size", choices=[256, 384, 512, 640], value=512)
+        self.tile_size = ComboBox(label="Tile Size", choices=[256, 384, 512, 640, 1024], value=512)
         self.device = ComboBox(label="Device", choices=["auto", "cpu", "cuda"], value="auto")
         self.model_choice = ComboBox(label="Model", choices=MODEL_ZOO, value="EMCellFiner")
 
@@ -914,8 +914,6 @@ class EMCellFinerBatchInferWidget(Container):
                 # 打开图片并转换成 RGB
                 img = np.array(Image.open(path).convert("RGB"))
                 # 保证img是unit8
-                
-                
                 out_np = hat_infer_numpy(model, img, device)
 
                 # 每张图推理完成就返回主线程处理
@@ -931,7 +929,7 @@ class EMCellFinerBatchInferWidget(Container):
         def _on_each(args):
             path, out_np, idx = args
             save_path = os.path.join(output_dir, os.path.basename(path))
-            Image.fromarray(out_np).save(save_path)
+            _ = Image.fromarray(out_np).convert("RGB").save(save_path)
             print(f"idx: {idx} : {os.path.basename(path)} Saved to: ", save_path)
             progress.update(idx + 1)
 
@@ -964,7 +962,7 @@ from labelme import utils
 import numpy as np
 import json
 import ast
-class EMCellFinerBatchInferWidget(Container):
+class LabelMe2Seg(Container):
     '''
         using labelme to annotate the labels first, and generate json files.
         Here, using this function we can convert those json files to semantic segmentation masks, labels are png files in P(PIL) mode.
@@ -973,7 +971,6 @@ class EMCellFinerBatchInferWidget(Container):
         super().__init__()
         self.viewer = viewer
 
-        MODEL_ZOO = ["EMCellFiner"]
 
         self.json_path = FileEdit(label="Jsons labels folder", mode="d", nullable=False)
         self.output_dir = FileEdit(label="Save mask Folder", mode="d")

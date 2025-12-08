@@ -32,31 +32,32 @@ def hat_infer_numpy(
     if device is None:
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         
-    # 先保证输入img是uint8
-    image = image.astype(np.uint8)
-        # --- Convert to float32 normalized
-    if image.dtype != np.float32:
-        img = image.astype(np.float32) / 255.0
-    else:
-        img = image.copy()
+    # 先保证输入img是float32
+    # image = image.astype(np.float32)
+    # # --- Convert to float32 normalized
+    # if image.dtype != np.float32:
+    #     img = image.astype(np.float32) / 255.0
+    # else:
+    #     img = image.copy()
         
-    img = prepare_image(img, 3, normalize=False,)
+    image = np.array(image).astype(np.float32) / 255.
+    
+    image = torch.from_numpy(image).permute(2, 0, 1).unsqueeze(0).to(device)
+    # img = prepare_image(img, 3, normalize=False,)
 
     model.eval()
     model.to(device)
 
-    img = img.to(device)
+    
     # img : B, C, H, W
-    B, _,_,_ = img.shape
+    # B, _,_,_ = img.shape
     
     preds = []
     with torch.no_grad():
-        for i in range(B):
+        output = model(image).cpu()
+        # preds.append(tensor2img(output, rgb2bgr=False, min_max=(0, 1)))
+        img_out = tensor2img(output, rgb2bgr=False, min_max=(0, 1))
 
-            out = model(img[i:i+1, :,:,:]).cpu()
-            preds.append(tensor2img(out, rgb2bgr=False, min_max=(0, 1)))
+    # final_masks = np.stack(preds, axis=0)
 
-
-    final_masks = np.stack(preds, axis=0)
-
-    return final_masks
+    return img_out
