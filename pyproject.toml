@@ -5,7 +5,7 @@ description = "Towards foundation models for EM images analysis. EMCellFiner and
 readme = "README.md"
 license = {file = "LICENSE"}
 authors = [
-  {name = "Zeyu Yu and Xuping Feng"},
+  {name = "ZeyuYu"},
   {email = "zeyu_yu@zju.edu.cn"},
 ]
 classifiers = [
