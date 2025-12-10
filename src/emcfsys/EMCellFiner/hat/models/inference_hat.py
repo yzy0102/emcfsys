@@ -41,6 +41,11 @@ def hat_infer_numpy(
     #     img = image.copy()
         
     image = np.array(image).astype(np.float32) / 255.
+    # 确保image是3通道 输入
+    if image.ndim == 2:
+        image = np.stack([image] * 3, axis=-1)
+    elif image.shape[-1] == 1:
+        image = np.repeat(image, 3, axis=-1)
     
     image = torch.from_numpy(image).permute(2, 0, 1).unsqueeze(0).to(device)
     # img = prepare_image(img, 3, normalize=False,)
