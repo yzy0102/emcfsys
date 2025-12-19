@@ -49,10 +49,10 @@ We recommend using Conda/miniconda to create an isolated environment.
 We suggest using python>=3.11 (We have successfully test the pipline in python version 3.8\3.9\3.10\3.11)
 
 ```
-    # Create a new environment named 'emcfsys' with Python> 3.11
-    conda create -n emcfsys python=3.11 -y
-    # Activate the environment
-    conda activate emcfsys
+# Create a new environment named 'emcfsys' with Python> 3.11
+conda create -n emcfsys python=3.11 -y
+# Activate the environment
+conda activate emcfsys
 ```
 
 #### 2. Install PyTorch with GPU Support
