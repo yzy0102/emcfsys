@@ -1,6 +1,6 @@
 # EMCFsys
 
-**Towards foundation models for EM images analysis.** `emcfsys` provides a comprehensive toolkit and a [napari][napari] plugin for Electron Microscopy (EM) image restoration and segmentation, featuring **EMCellFiner** and **EMCellFound**—two foundation models pre-trained on a massive dataset of 4 million EM images.
+**Towards foundation models for EM images analysis.** `emcfsys` provides a comprehensive toolkit and a [napari](https://github.com/napari/napari) plugin for Electron Microscopy (EM) image restoration and segmentation, featuring **EMCellFiner** and **EMCellFound**—two foundation models pre-trained on a massive dataset of 4 million EM images.
 
 ---
 
@@ -64,11 +64,11 @@ emcfsys requires PyTorch > 1.3. For optimal performance, we recommend PyTorch 2.
 pip install torch==2.4.1 torchvision==0.19.1 torchaudio==2.4.1 --index-url https://download.pytorch.org/whl/cu118
 ```
 
-Or follow link to select the torch version [https://pytorch.org/get-started/previous-versions/]()
+Or follow link to select the torch version [https://pytorch.org/get-started/previous-versions/](https://pytorch.org/get-started/previous-versions/)
 
 #### 3. Install napari and emcfsys
 
-    3.1 You can follow the napari GUI installation document:[https://github.com/napari/napari]()
+    3.1 You can follow the napari GUI installation document:[https://github.com/napari/napari](https://github.com/napari/napari)
 
     Or use the follow pipline
 
@@ -105,5 +105,5 @@ Towards foundation models for EM images analysis. EMCellFiner and EMCellFound ar
 
 ---
 
-[napari]: https://github.com/napari/napari
-[napari-plugin-template]: https://github.com/napari/napari-plugin-template
+[napari]: [https://github.com/napari/napari](https://github.com/napari/napari)
+[napari-plugin-template]: [https://github.com/napari/napari-plugin-template](https://github.com/napari/napari-plugin-template)
