@@ -1,6 +1,6 @@
 # EMCFsys
 
-**Towards foundation models for EM images analysis.** `emcfsys` provides a comprehensive toolkit and a [napari][napari] plugin for Electron Microscopy (EM) image restoration and segmentation, featuring **EMCellFiner** and **EMCellFound**—two foundation models pre-trained on a massive dataset of 4 million EM images.
+**Towards foundation models for EM images analysis.** `emcfsys` provides a comprehensive toolkit and a [napari](https://github.com/napari/napari) plugin for Electron Microscopy (EM) image restoration and segmentation, featuring **EMCellFiner** and **EMCellFound**—two foundation models pre-trained on a massive dataset of 4 million EM images.
 
 ---
 
@@ -19,9 +19,9 @@
   * **Continuous Evolution**: We are committed to the iterative refinement of our models. We periodically retrain **EMCellFound** using superior architectures, optimized algorithms, and larger-scale datasets to ensure the system consistently delivers peak performance.
   * **Timm Library Integration**: To provide maximum flexibility, the system fully supports a wide range of popular pre-trained models from the **timm** library, allowing users to select the most suitable backbone for their specific research needs.
 * **Segmentation Heads**: Includes **U-Net**, **PSPNet**, **DeepLabv3+**, and **UperNet**.
-* **Finetune Models**: We support to finetune the EMCellFound/Timm-model to make 特定的segmentation pipline.
+* **Finetune Models**: We support to finetune the EMCellFound/Timm-model to make specialize segmentation pipline.
 * **Inference 2D/3D images**: We support to load the Checkpoint and inference image in 2D and 3D.
-* **Tailored Training Strategies**: Detailed specifications of our training configurations can be found in `Functions.md`. Key components include:
+* **Tailored Training Strategies**: Detailed specifications of our training configurations can be found in [Functions notebook](notebooks\Functions.md). Key components include:
   * **Data Augmentation**: Robust `Dataset` class with multiple transform strategies.
   * **Loss Functions**: Integrated **CrossEntropy** and **Dice Loss** (Focal Loss coming soon).
   * **Metrics**: Real-time evaluation using **IoU**, **Accuracy**, and **F1-Score**.
@@ -29,7 +29,7 @@
 
 ### 3. Image restoration/super-resolution pipline using Foundation model
 
-* **Reraining-free**: We train the image  restoration/super-resolution model EMCellFiner on 4M+ EM images, thus EMCellFiner has robust 性能，can restore\super-resolution for most of EM images and make them finer.
+* **Reraining-free**: We train the image  restoration/super-resolution model EMCellFiner on 4M+ EM images, thus EMCellFiner has robust performance，can restore/super-resolution for most of EM images and make them finer.
 * **Single-image**: We support restore/super-resolution in the GUI using GPU/CPU, and show in the GUI.
 * **Multi-image**: We also support to restore/super-resolution the images in the folder, and output to another folder.
 
@@ -41,7 +41,7 @@
 
 ## 📖Installation
 
-To leverage the full potential of the EMCellFiner and EMCellFound foundation models, an **NVIDIA GPU**(We suggest it > RTX3090) is highly recommended.
+To leverage the full potential of the EMCellFiner and EMCellFound foundation models, an **NVIDIA GPU**(We suggest > RTX3090) is highly recommended.
 
 #### 1. Environment Preparation
 
@@ -64,11 +64,11 @@ emcfsys requires PyTorch > 1.3. For optimal performance, we recommend PyTorch 2.
 pip install torch==2.4.1 torchvision==0.19.1 torchaudio==2.4.1 --index-url https://download.pytorch.org/whl/cu118
 ```
 
-Or follow link to select the torch version [https://pytorch.org/get-started/previous-versions/]()
+Or follow link to select the torch version [https://pytorch.org/get-started/previous-versions/](https://pytorch.org/get-started/previous-versions/)
 
 #### 3. Install napari and emcfsys
 
-    3.1 You can follow the napari GUI installation document:[https://github.com/napari/napari]()
+    3.1 You can follow the napari GUI installation document:[https://github.com/napari/napari](https://github.com/napari/napari)
 
     Or use the follow pipline
 
@@ -105,5 +105,5 @@ Towards foundation models for EM images analysis. EMCellFiner and EMCellFound ar
 
 ---
 
-[napari]: https://github.com/napari/napari
-[napari-plugin-template]: https://github.com/napari/napari-plugin-template
+[napari]: [https://github.com/napari/napari](https://github.com/napari/napari)
+[napari-plugin-template]: [https://github.com/napari/napari-plugin-template](https://github.com/napari/napari-plugin-template)
