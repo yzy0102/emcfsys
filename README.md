@@ -72,6 +72,8 @@ Or follow link to select the torch version [https://pytorch.org/get-started/prev
 
     Or use the follow pipline
 
+pip install "napari[pyqt6, optional]" 
+
     ``pip install "napari[pyqt6, optional]"  ``
 
     · Then you can install`emcfsys` via [pip]:
