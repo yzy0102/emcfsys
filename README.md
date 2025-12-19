@@ -75,13 +75,13 @@ Or use the follow pipline
     pip install "napari[pyqt6, optional]" 
     ```
 
-    Then you can install`emcfsys` via [pip]:
+Then you can install`emcfsys` via [pip]:
 
     ```
     pip install emcfsys
     ```
 
-    You can also install emcfsys in the napari-plugin-store
+You can also install emcfsys in the napari-plugin-store
 
 ---
 
