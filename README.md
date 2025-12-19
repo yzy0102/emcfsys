@@ -29,7 +29,7 @@
 
 ### 3. Image restoration/super-resolution pipline using Foundation model
 
-* **Reraining-free**: We train the image  restoration/super-resolution model EMCellFiner on 4M+ EM images, thus EMCellFiner has robust performance，can restore/super-resolution for most of EM images and make them finer.
+* **Retraining-free**: We train the image  restoration/super-resolution model EMCellFiner on 4M+ EM images, thus EMCellFiner has robust performance，can restore/super-resolution for most of EM images and make them finer.
 * **Single-image**: We support restore/super-resolution in the GUI using GPU/CPU, and show in the GUI.
 * **Multi-image**: We also support to restore/super-resolution the images in the folder, and output to another folder.
 
