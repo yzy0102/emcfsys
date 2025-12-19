@@ -1,38 +1,83 @@
-# 功能开发
+# EMCFsys Development Documentation
 
-1. 支持训练Unet等分割模型，用于分割电镜数据集
+This document outlines the current functional status and future roadmap of the **EMCFsys** electron microscopy image segmentation system.
 
-   1. Loss指标
-      1. [X] 支持交叉熵 CrossEntropy
-      2. [X] 支持Dice loss
-      3. [ ] 支持多指标加权
-      4. [ ] Focal loss
-   2. Metric指标
-      1. [X] IoU Acc F1Score
-   3. 模型保存：
-      1. [X] 每次保存最优模型IoUbest  保存后删除前面的模型
-      2. [X] 训练完成后保存最终模型
-      3. [ ] 早停策略
-   4. 训练指标可视化
-      1. [X] 可视化Loss下降
-      2. [ ] 可视化IoU
-2. 支持导入模型推理分割，注意导入的权重中需要包含模型本身
+---
 
-   1. [X] 导入模型
-   2. [X] 推理分割
-3. Dataset类
+## 1. Core Segmentation Functions
 
-   1. [X] 各种transforms
-   2. [ ] 支持多类数据类型输入
-   3. [ ] 支持多种数据集标注形式
-4. 模型类
+The core engine supports pixel-wise classification tailored for high-resolution EM imagery.
 
-   1. [X] 使用timm接口导入模型训练
-   2. 分割模型：
-      1. [X] Unet
-      2. [X] PSPNet
-      3. [X] DeepLabv3+
-      4. [X] UperNet
+### 🟢 Loss Functions
 
-5. 数据标注类
-   1. Labelme 2 SemanticSeg
+- [X] **CrossEntropy Loss**: Standard categorical voxel/pixel loss.
+- [X] **Dice Loss**: Optimized for handling class imbalance in fine structures.
+- [ ] **Focal Loss**: *Planned* - To address extreme foreground-background ratio issues.
+
+### 🟢 Evaluation Metrics
+
+- [X] **IoU (Intersection over Union)**: Primary accuracy metric.
+- [X] **Accuracy**: Global pixel-level classification precision.
+- [X] **F1-Score**: Balancing precision and recall for morphological analysis.
+
+### 🟢 Checkpoint Management
+
+- [X] **Dynamic Saving**: Automatically saves the best model based on IoU and prunes inferior checkpoints.
+- [X] **Persistence**: Exports the final model state post-training.
+- [ ] **Early Stopping**: *Planned* - Monitor validation loss to prevent overfitting.
+
+### 🟢 Visualization
+
+- [X] **Loss Curve**: Real-time plotting of training/validation loss.
+- [ ] **IoU Trend**: *Planned* - Visualizing metric convergence over epochs.
+
+---
+
+## 2. Model Inference & Deployment
+
+Modular support for model loading and real-time inference.
+
+- [X] **Model Import**: Supports loading custom weights.
+- [X] **Self-Contained Serialization**: Saved weights include the model architecture for "plug-and-play" inference.
+- [X] **Inference Pipeline**: Automated processing from raw images to segmentation masks.
+
+---
+
+## 3. Dataset & Data Pipeline
+
+Robust data handling for diverse EM imaging modalities.
+
+- [X] **Advanced Transforms**: Integrated multiple data augmentation strategies (Rotation, Scaling, Noise, etc.).
+- [ ] **Multi-Dataset Support**: *Planned* - Standardized input for heterogeneous data sources.
+- [ ] **Annotation Flexibility**: *Planned* - Compatibility with multiple mask and vector formats.
+
+---
+
+## 4. Model Architectures
+
+Leveraging state-of-the-art backbones and segmentation heads.
+
+### 🏗️ Backbones
+
+- [X] **Timm Library Integration**: Full support for `pytorch-image-models` backbones (ResNet, EfficientNet, ViT, etc.).
+
+### 🏗️ Semantic Segmentation Heads
+
+- [X] **U-Net**: Specifically optimized for biomedical/EM image contexts.
+- [X] **PSPNet**: Pyramid Pooling Module for global scene parsing.
+- [X] **DeepLabv3+**: Utilizing Atrous Convolution for multi-scale feature capture.
+- [X] **UperNet**: Unified Perceptual Parsing for comprehensive feature extraction.
+
+---
+
+## 5. Pre-processing Tools
+
+Bridging the gap between manual labeling and training.
+
+- [X] **Labelme Integration**: Integrated utility for converting `Labelme` JSON annotations into standard Semantic Segmentation ground-truth masks.
+
+---
+
+## 🛠 Setup & Contribution
+
+*For information on how to set up the development environment or contribute to the roadmap, please refer to [CONTRIBUTING.md].*
