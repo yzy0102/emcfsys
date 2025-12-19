@@ -71,15 +71,15 @@ Or follow link to select the torch version [https://pytorch.org/get-started/prev
 3.1 You can follow the napari GUI installation document:[https://github.com/napari/napari](https://github.com/napari/napari)
 Or use the follow pipline
 
-    ```
-    pip install "napari[pyqt6, optional]" 
-    ```
+```
+pip install "napari[pyqt6, optional]" 
+```
 
 Then you can install`emcfsys` via [pip]:
 
-    ```
-    pip install emcfsys
-    ```
+```
+pip install emcfsys
+```
 
 You can also install emcfsys in the napari-plugin-store
 
