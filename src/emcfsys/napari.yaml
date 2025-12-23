@@ -68,7 +68,7 @@ contributions:
     - command: emcfsys.DLInferenceContainer
       display_name: Deep Learning Inference
     - command: emcfsys.DLTrainingContainer
-      display_name: Deep Learning DLTrainingContainer
+      display_name: Deep Learning Training
 
     - command: emcfsys.emcellfiner.single_infer
       display_name: EMCellFiner - Single Image Inference
