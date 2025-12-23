@@ -754,7 +754,6 @@ class EMCellFinerSingleInferWidget(Container):
         # elif img_np.shape[-1] == 1:
         #     img_np = np.repeat(img_np, 3, axis=-1)
 
-
         # ---- 在执行推理前启动进度条 ----
         progress = napari.utils.progress(total=100, desc="EMCellFiner Inference...")
 
@@ -913,7 +912,6 @@ class EMCellFinerBatchInferWidget(Container):
 
                 # 打开图片并转换成 RGB
                 img = np.array(Image.open(path).convert("RGB"))
-                # 保证img是unit8
                 out_np = hat_infer_numpy(model, img, device)
 
                 # 每张图推理完成就返回主线程处理
