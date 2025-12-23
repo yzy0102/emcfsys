@@ -170,3 +170,64 @@ def crop_border(imgs, crop_border):
             return [v[crop_border:-crop_border, crop_border:-crop_border, ...] for v in imgs]
         else:
             return imgs[crop_border:-crop_border, crop_border:-crop_border, ...]
+
+
+import numpy as np
+
+def normalize_to_uint8(
+    img,
+    method="percentile",
+    pmin=1,
+    pmax=99,
+    eps=1e-8
+):
+    """
+    Robustly normalize arbitrary numpy image to uint8 [0,255].
+
+    Parameters
+    ----------
+    img : np.ndarray
+        Input image of any dtype (uint8/16/32/float/etc.)
+    method : str
+        'minmax' or 'percentile'
+    pmin, pmax : float
+        Percentiles used when method='percentile'
+    eps : float
+        Small value to avoid division by zero
+    """
+
+    if img is None:
+        raise ValueError("Input image is None")
+
+    img = np.asarray(img)
+
+    # 1. already uint8 → return safely
+    if img.dtype == np.uint8:
+        return img
+
+    # 2. convert to float32
+    img_f = img.astype(np.float32)
+
+    # 3. handle NaN / Inf
+    img_f = np.nan_to_num(img_f, nan=0.0, posinf=0.0, neginf=0.0)
+
+    # 4. determine range
+    if method == "minmax":
+        vmin = img_f.min()
+        vmax = img_f.max()
+    elif method == "percentile":
+        vmin = np.percentile(img_f, pmin)
+        vmax = np.percentile(img_f, pmax)
+    else:
+        raise ValueError(f"Unknown method: {method}")
+
+    # 5. avoid degenerate case
+    if abs(vmax - vmin) < eps:
+        return np.zeros_like(img_f, dtype=np.uint8)
+
+    # 6. normalize
+    img_norm = (img_f - vmin) / (vmax - vmin)
+    img_norm = np.clip(img_norm, 0.0, 1.0)
+
+    # 7. map to uint8
+    return (img_norm * 255).astype(np.uint8)

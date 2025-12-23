@@ -2,7 +2,7 @@ import numpy as np
 import torch
 from PIL import Image
 from .hat_model import HATModel
-from .img_utils import tensor2img
+from .img_utils import tensor2img, normalize_to_uint8
 import time
 
 
@@ -40,7 +40,7 @@ def hat_infer_numpy(
     # else:
     #     img = image.copy()
     # 保证输入是8bit图
-    image = np.array(image).astype(np.uint8)
+    image = normalize_to_uint8(image)
     # 然后转成float32
     image = np.array(image).astype(np.float32) / 255.
     # 确保image是3通道 输入
