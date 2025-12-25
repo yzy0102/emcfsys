@@ -41,9 +41,10 @@ Provides several image processing components, including:
 
 ---
 
-## 4. 进阶工作流：EMCellFound 与 EMCellFiner 🔬
+## 4. EMCellFound function  🔬
+- Including deep learning model training and inference functions
 
-- EMCellFound 提供模型加载与推理接口（见 `src/emcfsys/EMCellFound/inference.py`），常见流程：
+
 
 ```python
 from emcfsys.EMCellFound.inference import load_model, infer_full_image
@@ -56,12 +57,22 @@ viewer.add_labels(mask, name='pred_mask')
 
 ---
 
-## 5. Example Notebook and Sample Code 📁
+## 5. EMCellFiner function 📁
 
 - Run `notebooks/tutorial.ipynb` (or `test2.ipynb`) to execute the examples interactively.
 - Check the scripts under `examples/` (such as `image_resize_example.py`) for ready-to-run script examples.
 
 ---
-## Feedback and Contact 💬
+
+
+---
+
+## 6. Example Notebook and Sample Code 📁
+
+- Run `notebooks/tutorial.ipynb` (or `test2.ipynb`) to execute the examples interactively.
+- Check the scripts under `examples/` (such as `image_resize_example.py`) for ready-to-run script examples.
+
+---
+## 7. Feedback and Contact 💬
 
 For suggestions on improving the tutorial or missing examples, please submit issues or email zeyu_yu@zju.edu.cn. Thank you!
