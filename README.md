@@ -96,7 +96,10 @@ pip install labelme timm opencv-python einops
 3. Navigate to: Plugins -> emcfsys
 4. Load your image and select EMCellFiner for instant enhancement.
 
-## Other
+## 📖 Tutorial
+
+All tutorials and feature descriptions can be found in the [tutorial documentation](./notebooks/tutorial.md) (click me!).
+
 
 ## License
 
