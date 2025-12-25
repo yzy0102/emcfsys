@@ -1,1 +1,5 @@
 torch==2.5.1+cu118
+labelme
+numpy
+opencv-python
+Pillow

@@ -83,6 +83,10 @@ pip install emcfsys
 
 You can also install emcfsys in the napari-plugin-store
 
+At last, install necessary components:
+```
+pip install labelme
+```
 ---
 
 ## 📖 Quick Start
