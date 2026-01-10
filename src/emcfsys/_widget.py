@@ -319,6 +319,8 @@ from magicgui.widgets import Container, FileEdit, FloatSpinBox, SpinBox, ComboBo
 from napari.qt.threading import thread_worker
 import torch
 import numpy as np
+from glob import glob
+import os
 from .EMCellFound.inference import load_model
 # -----------------------------
 # DL Inference Container
@@ -343,9 +345,20 @@ class DLInferenceContainer(Container):
         self.img_size = SpinBox(label="Image size to model", min=1, max=4096, step=1, value=512)
         self.slide_window_size = SpinBox(label="Slide window size", min=1, max=4096, step=1, value=512)
         
+        self.line_break = Label(value="-- OR inference in a image folder ---")
+        # if inference in a folder, using a combox to select mode
+        self.inference_from_folder_mode = CheckBox(label="Inference from folder",  value=False)
+        self.image_folder = FileEdit(label="Image folder", nullable=True, mode="d")
+        self.output_folder = FileEdit(label="Output folder", nullable=True, mode="w")
+        
+        
+        self.line_break2 = Label(value="--- Click to Full/Slide inference ---")
         self._run_button_full = PushButton(text="Run Full Inference")
         self._run_button_slide = PushButton(text="Run Slide Inference")
-
+        self._stop_button = PushButton(text="Stop Inference")
+        # 状态标志
+        self._stop_flag = False
+        
         # add widgets
         self.extend([self.model_path, 
                      self._image_layer_combo, 
@@ -353,26 +366,57 @@ class DLInferenceContainer(Container):
                      self.num_classes, self.device, 
                      self.img_size,
                      self.slide_window_size,
-                     self._run_button_full, self._run_button_slide])
+                     
+                     self.line_break,
+                     self.inference_from_folder_mode,
+                     self.image_folder, self.output_folder,
+                     self.line_break2,
+                     self._run_button_full, self._run_button_slide, self._stop_button])
 
         # connect
         self._run_button_full.clicked.connect(self._run_inference_full)
         self._run_button_slide.clicked.connect(self._run_inference_slide)
+        self._stop_button.clicked.connect(self._stop_worker)
+        
+        
+        self._worker = None
 
+# ================== UI 状态管理辅助函数 ==================
+    def _update_ui_state(self, is_running):
+        """
+        统一管理运行状态切换时的 UI 和标志位。
+        is_running: True 表示任务刚开始；False 表示任务已结束（完成或停止）。
+        """
+        self._is_running = is_running
+        
+        if is_running:
+            # 【关键点 1】：任务开始时，必须重置停止标志！
+            # 这样新的任务才不会被旧的标志误伤。
+            self._stop_flag = False  
+            print("--- Starting new task, flag reset to False ---")
+        else:
+            self._stop_flag = False 
+
+ 
+    # ==================================================
     def _run_inference_full(self):
+        self._update_ui_state(True)  # 任务开始，更新状态
         img_layer = self._image_layer_combo.value
-        if img_layer is None:
-            return
 
-        img = img_layer.data
         device = self.device.value
         dev = torch.device(device) if device != "auto" else None
         model_path = self.model_path.value
-
-        print("image_layer:", img.shape)
-
+        def check_stop():
+            if self._stop_flag:
+                print("[Frontend Checker] Stop flag detected.")
+                return True
+            return False
+        
         @thread_worker
         def _worker():
+            # 在 _worker 函数中
+
+            
             from .EMCellFound.inference import infer_full_image
             model = load_model(
                     model_name=self.model_name.value, 
@@ -382,9 +426,42 @@ class DLInferenceContainer(Container):
                     aux_on=False, 
                     device=dev)
             
-            return infer_full_image(model, img, input_size=(self.img_size.value, self.img_size.value), device=dev)
+            
+            if self.inference_from_folder_mode.value and self.image_folder.value not in [None, "", "None"]:
+                if self.output_folder.value in [None, "", "None"]:
+                    print("Please specify output folder")
+                    # warning in napari
+                    return None
+                if not os.path.exists(self.output_folder.value):
+                    os.makedirs(self.output_folder.value)
+                
 
-        worker = _worker()
+                image_files = []
+                for ext in ["*.png", "*.jpg", "*.jpeg", "*.tif", "*.tiff", "*.bmp"]:
+                    image_files.extend(glob(os.path.join(self.image_folder.value, ext)))
+                    
+                print(f"Found {len(image_files)} images in folder {self.image_folder.value}")
+                
+                for image_path in image_files:
+                    img_pil = Image.open(image_path).convert("RGB")
+                    img_np = np.array(img_pil)
+                    mask = infer_full_image(model, img_np, input_size=(self.img_size.value, self.img_size.value), 
+                                            device=dev, stop_checker=check_stop)[0]
+                    
+                    name = os.path.basename(image_path)+"_mask.png"
+                    save_path =  os.path.join(self.output_folder.value, name)
+                    _ = Image.fromarray(mask.astype(np.uint8)).save(save_path)
+                    # save to output folder
+                    
+                return None  # No single mask to return
+            else:
+                if img_layer is None:
+                    return
+                img = img_layer.data
+                return infer_full_image(model, img, input_size=(self.img_size.value, self.img_size.value), 
+                                        device=dev, stop_checker=check_stop)
+
+        self._worker = _worker()
 
         def on_result(mask: np.ndarray):
             name = img_layer.name + "_dl_mask"
@@ -393,19 +470,21 @@ class DLInferenceContainer(Container):
             else:
                 self._viewer.add_labels(mask, name=name)
 
-        worker.returned.connect(on_result)
-        worker.start()
+        self._worker.returned.connect(on_result)
+        self._worker.start()
 
     def _run_inference_slide(self):
+        self._update_ui_state(True)
         img_layer = self._image_layer_combo.value
-        if img_layer is None:
-            return
-
-        img = img_layer.data
+        
         device = self.device.value
         dev = torch.device(device) if device != "auto" else None
         model_path = self.model_path.value
-
+        def check_stop():
+            if self._stop_flag:
+                print("[Frontend Checker] Stop flag detected.")
+                return True
+            return False
 
         @thread_worker
         def _worker():
@@ -417,15 +496,49 @@ class DLInferenceContainer(Container):
                     model_path=model_path, 
                     aux_on=False, 
                     device=dev)
+            # 停止推理
+            if self._stop_flag:
+                raise StopIteration()
             
-            return infer_sliding_window(model, 
-                                        img, 
-                                        window_size=self.slide_window_size.value,
-                                        img_size=(self.img_size.value, self.img_size.value), 
-                                        out_channels = self.num_classes.value,
-                                        device=dev)
+            if self.inference_from_folder_mode.value and self.image_folder.value not in [None, "", "None"]:
+                if self.output_folder.value in [None, "", "None"]:
+                    print("Please specify output folder")
+                    # warning in napari
+                    return None
+                if not os.path.exists(self.output_folder.value):
+                    os.makedirs(self.output_folder.value)
+                
 
-        worker = _worker()
+                image_files = []
+                for ext in ["*.png", "*.jpg", "*.jpeg", "*.tif", "*.tiff", "*.bmp"]:
+                    image_files.extend(glob(os.path.join(self.image_folder.value, ext)))
+                    
+                print(f"Found {len(image_files)} images in folder {self.image_folder.value}")
+                
+                for image_path in image_files:
+                    img_pil = Image.open(image_path).convert("RGB")
+                    img_np = np.array(img_pil)
+                    mask = infer_sliding_window(model, img_np, window_size=self.slide_window_size.value,
+                                            img_size=(self.img_size.value, self.img_size.value), 
+                                            out_channels = self.num_classes.value,
+                                            device=dev, stop_checker=check_stop)[0]
+                    name = os.path.basename(image_path) + "_mask.png"
+                    save_path =  os.path.join(self.output_folder.value, name)
+                    _ = Image.fromarray(mask.astype(np.uint8)).save(save_path)
+                    # save to output folder
+                return None  # No single mask to return
+            else:
+                if img_layer is None:
+                    return
+                img = img_layer.data
+                return infer_sliding_window(model, 
+                                            img, 
+                                            window_size=self.slide_window_size.value,
+                                            img_size=(self.img_size.value, self.img_size.value), 
+                                            out_channels = self.num_classes.value,
+                                            device=dev, stop_checker=check_stop)
+
+        self._worker = _worker()
 
         def on_result(mask: np.ndarray):
             name = img_layer.name + "_slide_mask"
@@ -434,10 +547,23 @@ class DLInferenceContainer(Container):
             else:
                 self._viewer.add_labels(mask, name=name)
 
-        worker.returned.connect(on_result)
-        worker.start()
+        self._worker.returned.connect(on_result)
+        self._worker.start()
 
-from magicgui.widgets import FileEdit, FloatSpinBox, SpinBox, ComboBox, PushButton, Label, TextEdit, Widget
+    def _stop_worker(self):
+            if self._worker is not None:
+                print("Attempting to stop inference...")
+                self._stop_flag = True
+                self._worker.quit()
+            else:
+                print("No active inference worker to stop.")
+            
+
+                
+
+
+        
+from magicgui.widgets import FileEdit, FloatSpinBox, SpinBox, ComboBox, PushButton, Label, TextEdit, Widget, CheckBox
 # from magicgui import Container
 from pathlib import Path
 import torch

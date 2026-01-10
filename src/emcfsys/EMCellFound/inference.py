@@ -13,7 +13,7 @@ import numpy as np
 import torch
 from skimage.transform import resize
 from typing import Optional, Tuple, List, Union
-
+import gc
 from PIL import Image
 import time
 import functools
@@ -224,36 +224,50 @@ def infer_numpy(model, image: np.ndarray, device=None):
 def infer_full_image(model,
                      image: np.ndarray,
                      input_size=None,  # 如 (512,512)，None 则不 resize
-                     device=None):
+                     device=None, 
+                     stop_checker=None):
     """
     整图推理
     - image: HWC, HW, CHW
     - input_size: (H, W) 或 None
     """
-    if device is None:
-        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    try:
+        if device is None:
+            device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-    # 保存原尺寸
-    # H, W = image.shape[:2]
-    image = prepare_image(image, in_channels=3).to(device)
-    B,C,H,W = image.shape
+        # 保存原尺寸
+        # H, W = image.shape[:2]
+        image = prepare_image(image, in_channels=3).to(device)
+        B,C,H,W = image.shape
 
-    # 是否 resize 输入图像
-    if input_size is not None:
-        image = F.interpolate(image, size=input_size, mode='bilinear', align_corners=False)
+        # 是否 resize 输入图像
+        if input_size is not None:
+            image = F.interpolate(image, size=input_size, mode='bilinear', align_corners=False)
 
-    with torch.no_grad():
-        preds = []
-        for i in range(B):
-            out, _ = model(image[i:i+1,:,:,:])  # B,C,h,w
-            if input_size is not None:
-                out = F.interpolate(out, size=(H, W), mode='bilinear', align_corners=False)
-            pred = torch.argmax(out, dim=1)
-            preds.append(pred.cpu().numpy().squeeze())
-        preds = np.stack(preds, axis=0)
-    
-    return preds
+        with torch.no_grad():
+            preds = []
+            for i in range(B):
+                if stop_checker is not None and stop_checker():
+                    print("Inference interrupted!")
+                    raise StopIteration()
+                
+                out, _ = model(image[i:i+1,:,:,:])  # B,C,h,w
+                if input_size is not None:
+                    out = F.interpolate(out, size=(H, W), mode='bilinear', align_corners=False)
+                pred = torch.argmax(out, dim=1)
+                preds.append(pred.cpu().numpy().squeeze())
+            preds = np.stack(preds, axis=0)
+        
+        return preds
 
+    except StopIteration:
+        # ---------------- GPU CLEANUP ----------------
+        del model
+        del image
+        torch.cuda.empty_cache()
+        gc.collect()
+
+        print("GPU resources cleaned.")
 
 
 # 为了获取模型的输出通道数，我们定义一个辅助函数进行单次切片推理
@@ -304,6 +318,7 @@ def infer_sliding_window(
     out_channels: int=2,
     img_size = None, # 对应模型输入尺寸 (H_in, W_in)
     device = None,
+    stop_checker=None
 ) -> np.ndarray:
     """
     MMseg 风格的滑动窗口推理 (Logits 累加平均)。
@@ -318,80 +333,95 @@ def infer_sliding_window(
     Returns:
         np.ndarray: 最终的分割结果 mask (H x W, np.uint8)。
     """
-
-    if device is None:
-        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    
-    model.eval()
-    model.to(device)
-
-   
-    image = prepare_image(image, in_channels=3).to(device) #  return N x 3 x H x W Tensor
-    batch, C, H_img, W_img = image.shape
-    # H_img, W_img = image.shape[-2], image.shape[-1]
-    H_crop, W_crop = window_size, window_size # 假设窗口为方形
- 
-    # 2. 准备 Logits 累加图和计数图
-    preds = np.zeros((out_channels, H_img, W_img), dtype=np.float32) # CxHxW Logits
-    count_mat = np.zeros((H_img, W_img), dtype=np.float32)           # HxW 计数
-    
-    # 3. 计算步长和网格
-    # stride = window_size * (1 - overlap)
-    h_stride = int(H_crop * (1.0 - overlap))
-    w_stride = int(W_crop * (1.0 - overlap))
-    h_stride = max(1, h_stride)
-    w_stride = max(1, w_stride)
-
-    # 计算网格数量
-    h_grids = max(H_img - H_crop + h_stride - 1, 0) // h_stride + 1
-    w_grids = max(W_img - W_crop + w_stride - 1, 0) // w_stride + 1
-    
-    final_masks = []
-    for i in range(batch):
-        # 4. 滑动窗口循环
-        for h_idx in range(h_grids):
-            for w_idx in range(w_grids):
-                y1_orig = h_idx * h_stride
-                x1_orig = w_idx * w_stride
-                
-                # MMseg 风格的边界处理：确保切片不超过图像边界，且贴合边界
-                y2 = min(y1_orig + H_crop, H_img)
-                x2 = min(x1_orig + W_crop, W_img)
-                
-                # 修正起始坐标，以确保边缘切片也尽量使用完整 crop_size
-                y1 = max(y2 - H_crop, 0)
-                x1 = max(x2 - W_crop, 0)
-                
-                # 切片 (H_tile, W_tile, C) 或 (H_tile, W_tile)
-                # tile -> tensor: [b,C, H_tile, W_tile]
-                tile = image[i:i+1, :, y1:y2, x1:x2] 
-                
-                # 5. 推理并获取 Logits
-                # crop_seg_logit_resized: CxH_tilexW_tile NumPy Logits
-                crop_seg_logit_resized = _infer_tile_logits(model, tile, img_size, device)
-                
-                # 6. 累加 Logits 和 计数
-                # Logits 累加 (CxHxW)
-                preds[:, y1:y2, x1:x2] += crop_seg_logit_resized
-                
-                # 计数累加 (HxW)
-                count_mat[y1:y2, x1:x2] += 1
-
-        # 7. 计算平均 Logits
-        count_mat[count_mat == 0] = 1 # 避免除以零
+    try:
+        if device is None:
+            device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         
-        # 扩展 count_mat 维度以进行逐通道平均
-        count_mat_expanded = np.expand_dims(count_mat, axis=0) # 1xHxW
-        avg_seg_logits = preds / count_mat_expanded             # CxHxW
+        model.eval()
+        model.to(device)
 
-        # 8. 最终 Argmax
-        # Argmax on channel dimension to get final prediction mask (HxW)
-        final_mask = np.argmax(avg_seg_logits, axis=0).astype(np.uint8)
-        final_masks.append(final_mask)
-        
-    final_masks = np.stack(final_masks, axis=0)
     
-    return final_masks
+        image = prepare_image(image, in_channels=3).to(device) #  return N x 3 x H x W Tensor
+        batch, C, H_img, W_img = image.shape
+        # H_img, W_img = image.shape[-2], image.shape[-1]
+        H_crop, W_crop = window_size, window_size # 假设窗口为方形
+    
+        # 2. 准备 Logits 累加图和计数图
+        preds = np.zeros((out_channels, H_img, W_img), dtype=np.float32) # CxHxW Logits
+        count_mat = np.zeros((H_img, W_img), dtype=np.float32)           # HxW 计数
+        
+        # 3. 计算步长和网格
+        # stride = window_size * (1 - overlap)
+        h_stride = int(H_crop * (1.0 - overlap))
+        w_stride = int(W_crop * (1.0 - overlap))
+        h_stride = max(1, h_stride)
+        w_stride = max(1, w_stride)
+
+        # 计算网格数量
+        h_grids = max(H_img - H_crop + h_stride - 1, 0) // h_stride + 1
+        w_grids = max(W_img - W_crop + w_stride - 1, 0) // w_stride + 1
+        
+        final_masks = []
+        for i in range(batch):
+            # 4. 滑动窗口循环
+            for h_idx in range(h_grids):
+                for w_idx in range(w_grids):
+                    if stop_checker is not None and stop_checker():
+                        print("Inference interrupted!")
+                        raise StopIteration()
+                        # return None # 或者抛出异常
+                    
+                    y1_orig = h_idx * h_stride
+                    x1_orig = w_idx * w_stride
+                    
+                    # MMseg 风格的边界处理：确保切片不超过图像边界，且贴合边界
+                    y2 = min(y1_orig + H_crop, H_img)
+                    x2 = min(x1_orig + W_crop, W_img)
+                    
+                    # 修正起始坐标，以确保边缘切片也尽量使用完整 crop_size
+                    y1 = max(y2 - H_crop, 0)
+                    x1 = max(x2 - W_crop, 0)
+                    
+                    # 切片 (H_tile, W_tile, C) 或 (H_tile, W_tile)
+                    # tile -> tensor: [b,C, H_tile, W_tile]
+                    tile = image[i:i+1, :, y1:y2, x1:x2] 
+                    
+                    # 5. 推理并获取 Logits
+                    # crop_seg_logit_resized: CxH_tilexW_tile NumPy Logits
+                    crop_seg_logit_resized = _infer_tile_logits(model, tile, img_size, device)
+                    
+                    # 6. 累加 Logits 和 计数
+                    # Logits 累加 (CxHxW)
+                    preds[:, y1:y2, x1:x2] += crop_seg_logit_resized
+                    
+                    # 计数累加 (HxW)
+                    count_mat[y1:y2, x1:x2] += 1
+
+            # 7. 计算平均 Logits
+            count_mat[count_mat == 0] = 1 # 避免除以零
+            
+            # 扩展 count_mat 维度以进行逐通道平均
+            count_mat_expanded = np.expand_dims(count_mat, axis=0) # 1xHxW
+            avg_seg_logits = preds / count_mat_expanded             # CxHxW
+
+            # 8. 最终 Argmax
+            # Argmax on channel dimension to get final prediction mask (HxW)
+            final_mask = np.argmax(avg_seg_logits, axis=0).astype(np.uint8)
+            final_masks.append(final_mask)
+            
+        final_masks = np.stack(final_masks, axis=0)
+        
+        return final_masks
+    except StopIteration:
+        # ---------------- GPU CLEANUP ----------------
+        del model
+        del image
+        del final_masks
+        
+        torch.cuda.empty_cache()
+        gc.collect()
+
+        print("GPU resources cleaned.")
 
 
 
