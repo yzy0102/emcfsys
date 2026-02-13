@@ -76,7 +76,7 @@ backbone_zoom = [   "emcellfound_vit_base",
                     "vit_large_patch16_dinov3.lvd1689m", "vit_huge_patch16_dinov3.lvd1689m"]
 
 
-model_zoom = ["deeplabv3plus", "unet", "pspnet", "upernet"]
+model_zoom = ["deeplabv3plus", "unet", "pspnet", "upernet", "orgsegnetv2"]
 
 class ImageResize(Container):
     """Container widget for resizing images with different interpolation algorithms."""
@@ -816,6 +816,7 @@ import numpy as np
 from magicgui.widgets import create_widget, ComboBox, Container, FileEdit, PushButton
 from napari.qt.threading import thread_worker
 from napari.layers import Image as ImageLayer
+from napari.layers import Labels as LabelsLayer
 import napari
 
 class EMCellFinerSingleInferWidget(Container):
@@ -1254,3 +1255,225 @@ class LabelMe2Seg(Container):
             pass
 
         raise ValueError("无法解析标签映射文件，请检查文件格式。")
+
+from emcfsys.PhenotypeAnalysis.functions import analyze_phenotypes
+# class PhenotypeAnalysis(Container):
+#     def __init__(self, viewer: "napari.viewer.Viewer"):
+#         super().__init__()
+#         self.viewer = viewer
+        
+#         self._image_layer = create_widget(
+#             label="Image",
+#             annotation=ImageLayer
+#         )
+        
+#         self._label_layer = create_widget(
+#             label="Label",
+#             annotation=LabelsLayer
+#         )
+
+#         self.label = Label(value="Select features to analyze:")
+#         self.Area_box = CheckBox(label="Area",  value=True)
+#         self.Perimeter_box = CheckBox(label="Perimeter",  value=True)
+#         self.Elongation_box = CheckBox(label="Elongation",  value=True)
+#         self.Roundness_box = CheckBox(label="Roundness",  value=True)
+#         self.Shape_Complexity_box = CheckBox(label="Shape Complexity",  value=True)
+#         self.Electron_Density_box = CheckBox(label="Electron Density",  value=True)
+        
+    
+#         self.start_button = PushButton(text="Run Phenotype Analysis")
+#         self.start_button.clicked.connect(self._run_phenotype_analysis)
+        
+#         self.extend([
+#             self._image_layer, self._label_layer,
+#             self.label,
+#             self.Area_box, self.Perimeter_box, self.Elongation_box,
+#             self.Roundness_box, self.Shape_Complexity_box, self.Electron_Density_box,
+            
+#         ])
+
+
+#     def _run_phenotype_analysis(self):
+#         img_layer = self._image_layer.value
+#         label_layer = self._label_layer.value
+        
+#         if img_layer is None or label_layer is None:
+#             print("Please select both image and label layers.")
+#             return
+        
+#         img = img_layer.data
+#         label = label_layer.data
+        
+#         features = {
+#             "Area": self.Area_box.value,
+#             "Perimeter": self.Perimeter_box.value,
+#             "Elongation": self.Elongation_box.value,
+#             "Roundness": self.Roundness_box.value,
+#             "ShapeComplexity": self.Shape_Complexity_box.value,
+#             "ElectronDensity": self.Electron_Density_box.value
+#         }
+#         results = analyze_phenotypes(img, label, features)
+#         return results
+    
+import pandas as pd
+from qtpy.QtWidgets import QFileDialog
+from magicgui.widgets import Table, PushButton, Container, CheckBox, Label, create_widget
+from napari.layers import Image, Labels
+import numpy as np
+
+class PhenotypeAnalysis(Container):
+    def __init__(self, viewer: "napari.viewer.Viewer"):
+        super().__init__()
+        self.viewer = viewer
+        self.results_df = None  # 用于存储分析结果的 DataFrame
+        
+        # --- 原有 UI 组件 ---
+        self._image_layer = create_widget(label="Image", annotation=Image)
+        self._label_layer = create_widget(label="Label", annotation=Labels)
+        
+        # ... (此处省略你原有的 CheckBox 初始化) ...
+        self.label = Label(value="Select features to analyze:")
+        self.Area_box = CheckBox(label="Area",  value=True)
+        self.Perimeter_box = CheckBox(label="Perimeter",  value=True)
+        self.Elongation_box = CheckBox(label="Elongation",  value=True)
+        self.Roundness_box = CheckBox(label="Roundness",  value=True)
+        self.Shape_Complexity_box = CheckBox(label="Shape Complexity",  value=True)
+        self.Electron_Density_box = CheckBox(label="Electron Density",  value=True)
+        # (假设其他 Box 也已定义)
+
+        # --- 新增 UI 组件 ---
+        self.start_button = PushButton(text="Run Analysis")
+        self.export_button = PushButton(text="Export to CSV")
+        self.export_button.enabled = False  # 初始状态禁用导出
+        
+        # 创建表格组件
+        self.result_table = Table(label="Results")
+        
+        # 信号连接
+        self.start_button.clicked.connect(self._run_phenotype_analysis)
+        self.export_button.clicked.connect(self._export_csv)
+        
+        # 将表格的点击事件连接到定位函数
+        # magicgui Table 的 native 控件是 QTableWidget
+        self.result_table.native.cellClicked.connect(self._on_table_click)
+
+        self.extend([
+            self._image_layer, self._label_layer, self.label,
+            self.Area_box, self.Perimeter_box, self.Elongation_box,
+            self.Roundness_box, self.Shape_Complexity_box, self.Electron_Density_box,
+            self.start_button,
+            self.result_table,
+            self.export_button
+        ])
+
+    def _run_phenotype_analysis(self):
+            img_layer = self._image_layer.value
+            label_layer = self._label_layer.value
+            features = {
+                "Area": self.Area_box.value,
+                "Perimeter": self.Perimeter_box.value,
+                "Elongation": self.Elongation_box.value,
+                "Roundness": self.Roundness_box.value,
+                "ShapeComplexity": self.Shape_Complexity_box.value,
+                "ElectronDensity": self.Electron_Density_box.value
+                }
+            # 调用新版分析函数
+            # results_df, instance_mask = analyze_phenotypes(img_layer.data, label_layer.data, features)
+            
+            # # 将生成的实例图作为一个新图层添加，或者替换原有图层
+            # # 建议添加一个新图层，方便对比
+            # instance_layer_name = f"{label_layer.name}_instances"
+            # if instance_layer_name in self.viewer.layers:
+            #     self.viewer.layers[instance_layer_name].data = instance_mask
+            # else:
+            #     self.viewer.add_labels(instance_mask, name=instance_layer_name)
+            
+            # # 更新表格和数据绑定
+            # self.results_df = results_df
+            # self.result_table.value = results_df
+            # # 绑定到新生成的实例图层上
+            # self.viewer.layers[instance_layer_name].features = results_df
+            
+            results_df, instance_mask = analyze_phenotypes(img_layer.data, label_layer.data, features)
+                    
+            instance_layer_name = f"{label_layer.name}_instances"
+            if instance_layer_name in self.viewer.layers:
+                inst_layer = self.viewer.layers[instance_layer_name]
+                inst_layer.data = instance_mask
+            else:
+                inst_layer = self.viewer.add_labels(instance_mask, name=instance_layer_name)
+            
+            # 将结果存入类属性
+            self.results_df = results_df
+            # 更新表格显示
+            self.result_table.value = results_df
+            # 将属性绑定到图层（这一步对很多 Napari 插件互操作很重要）
+            inst_layer.features = results_df
+            
+            # 激活导出按钮
+            self.export_button.enabled = True
+            
+    def _on_table_click(self, row, col):
+            """点击表格行，利用预计算好的质心自动定位"""
+            if self.results_df is None or row < 0:
+                return
+                
+            # 1. 安全地获取数据
+            # 使用 iloc[row] 获取当前点击行的数据字典
+            item_data = self.results_df.iloc[row]
+            label_id = int(item_data['label'])
+            
+            # 2. 找到实例图层 (重要：不要找原始的 label_layer)
+            instance_layer_name = f"{self._label_layer.value.name}_instances"
+            if instance_layer_name not in self.viewer.layers:
+                return
+            inst_layer = self.viewer.layers[instance_layer_name]
+            
+            # 3. 更新选中状态
+            inst_layer.selected_label = label_id
+            
+            # 4. 直接利用 analyze_phenotypes 算好的质心定位
+            # 注意：regionprops 的 centroid 返回的是 (row, col)，即 (y, x)
+            center_y = item_data['centroid-0']
+            center_x = item_data['centroid-1']
+            
+            # 移动相机
+            self.viewer.camera.center = (center_y, center_x)
+            self.viewer.camera.zoom = 2.0  # 稍微放大一点看清楚
+            
+            
+    # def _on_table_click(self, row, col):
+    #     """点击表格行，自动缩放并定位到对应的 Label"""
+    #     if self.results_df is None:
+    #         return
+            
+    #     # 获取点击行对应的 Label ID
+    #     label_id = self.results_df.iloc[row]['label']
+    #     label_layer = self._label_layer.value
+        
+    #     # 更新图层的选中状态
+    #     label_layer.selected_label = int(label_id)
+        
+    #     # --- 自动定位逻辑 ---
+    #     # 计算该 label 的质心 (Centroid)
+    #     # 注意：如果你的 analyze_phenotypes 已经返回了 centroid 坐标，直接用即可
+    #     coords = np.argwhere(label_layer.data == label_id)
+    #     if coords.size > 0:
+    #         centroid = coords.mean(axis=0)
+    #         # 移动视角到该中心点
+    #         self.viewer.camera.center = centroid
+    #         # 适当放大视角 (可选)
+    #         self.viewer.camera.zoom = 1.5 
+
+    def _export_csv(self):
+        """弹出文件对话框并保存 CSV"""
+        if self.results_df is None:
+            return
+            
+        filepath, _ = QFileDialog.getSaveFileName(
+            None, "Save Analysis Results", "phenotype_results.csv", "CSV Files (*.csv)"
+        )
+        
+        if filepath:
+            self.results_df.to_csv(filepath, index=False)
+            print(f"Results saved to: {filepath}")

@@ -47,6 +47,11 @@ contributions:
       title: DatasetConverter - Convert labelme 2 semantic segmentation masks
 
 
+    - id: emcfsys.phenotypeanalysis
+      python_name: emcfsys._widget:PhenotypeAnalysis
+      title: PhenotypeAnalysis
+
+
   readers:
     - command: emcfsys.get_reader
       accepts_directories: false
@@ -77,3 +82,6 @@ contributions:
 
     - command: emcfsys.labelme_2_semseg
       display_name: DatasetConverter - Convert labelme 2 semantic segmentation masks
+
+    - command: emcfsys.phenotypeanalysis
+      display_name: PhenotypeAnalysis

@@ -12,6 +12,7 @@ from ._widget import (
     DLTrainingContainer,
     EMCellFinerSingleInferWidget,
     EMCellFinerBatchInferWidget,
+    PhenotypeAnalysis,
     
 )
 
@@ -27,4 +28,5 @@ __all__ = (
     "DLTrainingContainer",
     "EMCellFinerSingleInferWidget",
     "EMCellFinerBatchInferWidget",
+    "PhenotypeAnalysis",
 )
