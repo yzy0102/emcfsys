@@ -30,13 +30,11 @@ Replace code below according to your needs.
 """
 
 from typing import TYPE_CHECKING
-
+from PIL import Image as PILImage
 import numpy as np
 from magicgui import magic_factory
 from magicgui.widgets import CheckBox, ComboBox, Container, create_widget, PushButton
 from qtpy.QtWidgets import QHBoxLayout, QPushButton, QWidget, QVBoxLayout
-
-
 from scipy import ndimage
 from skimage.transform import resize
 from skimage.util import img_as_float
@@ -48,7 +46,6 @@ if TYPE_CHECKING:
 from labelme import utils as labelme_utils
 import json
 import os
-from PIL import Image
 import numpy as np
 
 # the magic_factory decorator lets us customize aspects of our widget
@@ -322,6 +319,7 @@ import numpy as np
 from glob import glob
 import os
 from .EMCellFound.inference import load_model
+
 # -----------------------------
 # DL Inference Container
 # -----------------------------
@@ -443,14 +441,14 @@ class DLInferenceContainer(Container):
                 print(f"Found {len(image_files)} images in folder {self.image_folder.value}")
                 
                 for image_path in image_files:
-                    img_pil = Image.open(image_path).convert("RGB")
+                    img_pil = PILImage.open(image_path).convert("RGB")
                     img_np = np.array(img_pil)
                     mask = infer_full_image(model, img_np, input_size=(self.img_size.value, self.img_size.value), 
                                             device=dev, stop_checker=check_stop)[0]
                     
                     name = os.path.basename(image_path)+"_mask.png"
                     save_path =  os.path.join(self.output_folder.value, name)
-                    _ = Image.fromarray(mask.astype(np.uint8)).save(save_path)
+                    _ = PILImage.fromarray(mask.astype(np.uint8)).save(save_path)
                     # save to output folder
                     
                 return None  # No single mask to return
@@ -516,7 +514,7 @@ class DLInferenceContainer(Container):
                 print(f"Found {len(image_files)} images in folder {self.image_folder.value}")
                 
                 for image_path in image_files:
-                    img_pil = Image.open(image_path).convert("RGB")
+                    img_pil = PILImage.open(image_path).convert("RGB")
                     img_np = np.array(img_pil)
                     mask = infer_sliding_window(model, img_np, window_size=self.slide_window_size.value,
                                             img_size=(self.img_size.value, self.img_size.value), 
@@ -524,7 +522,7 @@ class DLInferenceContainer(Container):
                                             device=dev, stop_checker=check_stop)[0]
                     name = os.path.basename(image_path) + "_mask.png"
                     save_path =  os.path.join(self.output_folder.value, name)
-                    _ = Image.fromarray(mask.astype(np.uint8)).save(save_path)
+                    _ = PILImage.fromarray(mask.astype(np.uint8)).save(save_path)
                     # save to output folder
                 return None  # No single mask to return
             else:
@@ -809,7 +807,7 @@ from magicgui import magicgui
 from .EMCellFiner.hat.models.hat_model import HATModel
 from .EMCellFiner.hat.models.img_utils import tensor2img
 from .EMCellFiner.hat.models.inference_hat import hat_infer_numpy
-from PIL import Image
+
 import numpy as np
 import torch
 import numpy as np
@@ -926,7 +924,7 @@ from qtpy.QtWidgets import QWidget, QVBoxLayout, QGroupBox
 from magicgui import magicgui
 import os
 import numpy as np
-from PIL import Image
+
 
 
 from qtpy.QtWidgets import QWidget, QVBoxLayout, QGroupBox
@@ -934,7 +932,7 @@ from magicgui import magicgui
 import os
 import numpy as np
 from glob import glob
-from PIL import Image
+
 from magicgui.widgets import create_widget, ComboBox, Container, FileEdit, PushButton, LineEdit
 from napari.qt.threading import thread_worker
 import napari
@@ -1038,7 +1036,7 @@ class EMCellFinerBatchInferWidget(Container):
                     break
 
                 # 打开图片并转换成 RGB
-                img = np.array(Image.open(path).convert("RGB"))
+                img = np.array(PILImage.open(path).convert("RGB"))
                 out_np = hat_infer_numpy(model, img, device)
 
                 # 每张图推理完成就返回主线程处理
@@ -1054,7 +1052,7 @@ class EMCellFinerBatchInferWidget(Container):
         def _on_each(args):
             path, out_np, idx = args
             save_path = os.path.join(output_dir, os.path.basename(path))
-            _ = Image.fromarray(out_np).convert("RGB").save(save_path)
+            _ = PILImage.fromarray(out_np).convert("RGB").save(save_path)
             print(f"idx: {idx} : {os.path.basename(path)} Saved to: ", save_path)
             progress.update(idx + 1)
 
@@ -1082,7 +1080,6 @@ import json
 import os
 import os.path as osp
 import imgviz
-import PIL.Image
 from labelme import utils
 import numpy as np
 import json
@@ -1189,9 +1186,9 @@ class LabelMe2Seg(Container):
             
             
             
-            PIL.Image.fromarray(img).convert("RGB").save(osp.join(img_save_path, osp.splitext(data['imagePath'])[0]+".tif"))
+            PILImage.fromarray(img).convert("RGB").save(osp.join(img_save_path, osp.splitext(data['imagePath'])[0]+".tif"))
             utils.lblsave(os.path.join(labels_save_path, osp.splitext(data['imagePath'])[0] + ".png"), lbl)
-            PIL.Image.fromarray(lbl_viz).save(osp.join(vis_save_path, osp.splitext(data['imagePath'])[0]+ "_labelviz" + ".png"))
+            PILImage.fromarray(lbl_viz).save(osp.join(vis_save_path, osp.splitext(data['imagePath'])[0]+ "_labelviz" + ".png"))
             
         print(f"All jsons converted to masks! saved to {labels_save_path}")
 
