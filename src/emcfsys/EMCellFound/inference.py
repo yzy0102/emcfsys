@@ -80,7 +80,7 @@ class Normalize:
 
 
 
-def load_model(model_name: str, backbone_name: str, num_classes: int, model_path: str, aux_on=True, device=None):
+def load_model(img_size:int, model_name: str, backbone_name: str, num_classes: int, model_path: str, aux_on=True, device=None):
     """
     加载训练好的模型权重（state_dict）到指定模型
     """
@@ -88,7 +88,7 @@ def load_model(model_name: str, backbone_name: str, num_classes: int, model_path
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     
     # 构建模型
-    model = get_model(model_name, backbone_name, num_classes=num_classes, aux_on=aux_on, pretrained=False)
+    model = get_model(model_name, backbone_name, img_size=img_size,num_classes=num_classes, aux_on=aux_on, pretrained=False)
     
     # 加载权重
     state_dict = torch.load(model_path, map_location=device)

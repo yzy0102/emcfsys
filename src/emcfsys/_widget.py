@@ -413,12 +413,11 @@ class DLInferenceContainer(Container):
         @thread_worker
         def _worker():
             # 在 _worker 函数中
-
-            
             from .EMCellFound.inference import infer_full_image
             model = load_model(
                     model_name=self.model_name.value, 
                     backbone_name=self.backbone_name.value, 
+                    img_size=self.img_size.value,
                     num_classes=self.num_classes.value, 
                     model_path=model_path, 
                     aux_on=False, 
@@ -490,6 +489,7 @@ class DLInferenceContainer(Container):
             model = load_model(
                     model_name=self.model_name.value, 
                     backbone_name=self.backbone_name.value, 
+                    img_size=self.img_size.value,
                     num_classes=self.num_classes.value, 
                     model_path=model_path, 
                     aux_on=False, 
