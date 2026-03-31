@@ -1313,7 +1313,7 @@ class PhenotypeAnalysis(Container):
                 "Perimeter": self.Perimeter_box.value,
                 "Elongation": self.Elongation_box.value,
                 "Roundness": self.Roundness_box.value,
-                "ShapeComplexity": self.Shape_Complexity_box.value,
+                "Shape Complexity": self.Shape_Complexity_box.value,
                 "Electron Density": self.Electron_Density_box.value,
 
                 }

@@ -3,6 +3,7 @@ import pandas as pd
 from skimage.measure import regionprops, regionprops_table
 from PIL import Image # 虽然主要用skimage，但保留PIL以防你需要处理特殊格式
 from scipy.stats import norm
+from shapely.geometry import Polygon, LineString
 
 
 from skimage.measure import label as sk_label  # 用于连通域标记
@@ -52,7 +53,18 @@ def analyze_phenotypes(img, label_data, features_to_compute):
         else:
             print("Warning: Label count mismatch. Electron density might be misaligned.")
             df['electron_density'] = np.nan # 如果长度不匹配，先填入 nan 防止报错
-    
+            
+# 5. 计算形状复杂度 (Shape Complexity)
+    if features_to_compute.get("Shape Complexity", True):
+        complexities = []
+        # 遍历每一个被标记的细胞器
+        for label in df['label'].values:
+            single_mask = (instance_mask == label)
+            # 默认使用 50 个采样点，可以根据需要调整以平衡速度和精度
+            complexity_val = calculate_shape_complexity(single_mask, num_points=50)
+            complexities.append(complexity_val)
+            
+        df['shape_complexity'] = complexities
     
     # 5. 准备返回的列
     column_mapping = {
@@ -63,6 +75,7 @@ def analyze_phenotypes(img, label_data, features_to_compute):
         "centroid-0": "centroid-0", 
         "centroid-1": "centroid-1",  
         "Electron Density": "electron_density", 
+        "Shape Complexity": "shape_complexity",
     }
     
     # 始终包含 label 和 centroid 以便交互
@@ -129,3 +142,59 @@ def Cal_intensity_test(Organelle_Instance, gray_img):
 
     return intensity
 
+
+
+def calculate_shape_complexity(instance_mask, num_points=50):
+    """
+    计算基于可见性图的形状复杂度
+    公式: Complexity = 2m / (n * (n - 1))
+    :param instance_mask: 单个实例的二值化掩码 (0和1)
+    :param num_points: 轮廓上等间距采样的有效点数 n，默认50点
+    """
+    # 1. 提取外部轮廓
+    mask_uint8 = np.uint8(instance_mask) * 255
+    contours, _ = cv2.findContours(mask_uint8, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
+    if not contours:
+        return np.nan
+        
+    # 获取最大轮廓（过滤掉可能的噪点）
+    contour = max(contours, key=cv2.contourArea).squeeze()
+    
+    # 如果轮廓点太少构不成多边形
+    if len(contour.shape) < 2 or len(contour) < 3:
+        return np.nan
+        
+    # 2. 构建多边形并处理潜在的自交叉无效几何体
+    poly = Polygon(contour)
+    if not poly.is_valid:
+        poly = poly.buffer(0)
+        
+    # 3. 在多边形边界上等间距采样 n 个有效点
+    perimeter = poly.length
+    if perimeter == 0:
+        return np.nan
+        
+    n = num_points
+    distances = np.linspace(0, perimeter, n, endpoint=False)
+    points = [poly.boundary.interpolate(d) for d in distances]
+    
+    m = 0  # 记录可见边的数量
+    
+    # 4. 两两连线并判断可见性 (遍历所有可能的点对)
+    for i in range(n):
+        for j in range(i + 1, n):
+            line = LineString([points[i], points[j]])
+            
+            # 使用 difference 求线段与多边形的差异部分。
+            # 差异部分长度接近 0，说明线段完全在多边形内部或边界上（即可见边）
+            if line.difference(poly).length < 1e-5:
+                m += 1
+                
+    # 5. 根据新公式计算复杂度
+    # 防止 n 较小时除以零的错误
+    if n <= 1:
+        return np.nan
+        
+    complexity = (2 * m) / (n * (n - 1))
+    
+    return complexity
