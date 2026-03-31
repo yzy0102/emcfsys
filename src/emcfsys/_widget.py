@@ -1314,7 +1314,8 @@ class PhenotypeAnalysis(Container):
                 "Elongation": self.Elongation_box.value,
                 "Roundness": self.Roundness_box.value,
                 "ShapeComplexity": self.Shape_Complexity_box.value,
-                "ElectronDensity": self.Electron_Density_box.value
+                "Electron Density": self.Electron_Density_box.value,
+
                 }
         
             results_df, instance_mask = analyze_phenotypes(img_layer.data, label_layer.data, features)
