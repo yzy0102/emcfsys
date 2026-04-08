@@ -47,6 +47,8 @@ from labelme import utils as labelme_utils
 import json
 import os
 import numpy as np
+from ._io_utils import collect_image_files, ensure_directory, normalize_optional_path
+from ._viewer_ops import upsert_image_layer, upsert_labels_layer
 
 # the magic_factory decorator lets us customize aspects of our widget
 # we specify a widget type for the threshold parameter
@@ -300,10 +302,7 @@ class ImageResize(Container):
 
             # Add resized image as new layer
             name = image_layer.name + "_resized"
-            if name in self._viewer.layers:
-                self._viewer.layers[name].data = resized
-            else:
-                self._viewer.add_image(resized, name=name)
+            upsert_image_layer(self._viewer, resized, name)
 
         except Exception as e:
             print(f"Error resizing image: {e}")
@@ -403,7 +402,7 @@ class DLInferenceContainer(Container):
 
         device = self.device.value
         dev = torch.device(device) if device != "auto" else None
-        model_path = self.model_path.value
+        model_path = normalize_optional_path(self.model_path.value)
         def check_stop():
             if self._stop_flag:
                 print("[Frontend Checker] Stop flag detected.")
@@ -424,20 +423,18 @@ class DLInferenceContainer(Container):
                     device=dev)
             
             
-            if self.inference_from_folder_mode.value and self.image_folder.value not in [None, "", "None"]:
-                if self.output_folder.value in [None, "", "None"]:
+            image_folder = normalize_optional_path(self.image_folder.value)
+            output_folder = normalize_optional_path(self.output_folder.value)
+
+            if self.inference_from_folder_mode.value and image_folder is not None:
+                if output_folder is None:
                     print("Please specify output folder")
                     # warning in napari
                     return None
-                if not os.path.exists(self.output_folder.value):
-                    os.makedirs(self.output_folder.value)
-                
+                ensure_directory(output_folder)
+                image_files = collect_image_files(image_folder)
 
-                image_files = []
-                for ext in ["*.png", "*.jpg", "*.jpeg", "*.tif", "*.tiff", "*.bmp"]:
-                    image_files.extend(glob(os.path.join(self.image_folder.value, ext)))
-                    
-                print(f"Found {len(image_files)} images in folder {self.image_folder.value}")
+                print(f"Found {len(image_files)} images in folder {image_folder}")
                 
                 for image_path in image_files:
                     img_pil = PILImage.open(image_path).convert("RGB")
@@ -446,7 +443,7 @@ class DLInferenceContainer(Container):
                                             device=dev, stop_checker=check_stop)[0]
                     
                     name = os.path.basename(image_path)+"_mask.png"
-                    save_path =  os.path.join(self.output_folder.value, name)
+                    save_path = os.path.join(output_folder, name)
                     _ = PILImage.fromarray(mask.astype(np.uint8)).save(save_path)
                     # save to output folder
                     
@@ -462,10 +459,7 @@ class DLInferenceContainer(Container):
 
         def on_result(mask: np.ndarray):
             name = img_layer.name + "_dl_mask"
-            if name in self._viewer.layers:
-                self._viewer.layers[name].data = mask
-            else:
-                self._viewer.add_labels(mask, name=name)
+            upsert_labels_layer(self._viewer, mask, name)
 
         self._worker.returned.connect(on_result)
         self._worker.start()
@@ -476,7 +470,7 @@ class DLInferenceContainer(Container):
         
         device = self.device.value
         dev = torch.device(device) if device != "auto" else None
-        model_path = self.model_path.value
+        model_path = normalize_optional_path(self.model_path.value)
         def check_stop():
             if self._stop_flag:
                 print("[Frontend Checker] Stop flag detected.")
@@ -498,20 +492,18 @@ class DLInferenceContainer(Container):
             if self._stop_flag:
                 raise StopIteration()
             
-            if self.inference_from_folder_mode.value and self.image_folder.value not in [None, "", "None"]:
-                if self.output_folder.value in [None, "", "None"]:
+            image_folder = normalize_optional_path(self.image_folder.value)
+            output_folder = normalize_optional_path(self.output_folder.value)
+
+            if self.inference_from_folder_mode.value and image_folder is not None:
+                if output_folder is None:
                     print("Please specify output folder")
                     # warning in napari
                     return None
-                if not os.path.exists(self.output_folder.value):
-                    os.makedirs(self.output_folder.value)
-                
+                ensure_directory(output_folder)
+                image_files = collect_image_files(image_folder)
 
-                image_files = []
-                for ext in ["*.png", "*.jpg", "*.jpeg", "*.tif", "*.tiff", "*.bmp"]:
-                    image_files.extend(glob(os.path.join(self.image_folder.value, ext)))
-                    
-                print(f"Found {len(image_files)} images in folder {self.image_folder.value}")
+                print(f"Found {len(image_files)} images in folder {image_folder}")
                 
                 for image_path in image_files:
                     img_pil = PILImage.open(image_path).convert("RGB")
@@ -521,7 +513,7 @@ class DLInferenceContainer(Container):
                                             out_channels = self.num_classes.value,
                                             device=dev, stop_checker=check_stop)[0]
                     name = os.path.basename(image_path) + "_mask.png"
-                    save_path =  os.path.join(self.output_folder.value, name)
+                    save_path = os.path.join(output_folder, name)
                     _ = PILImage.fromarray(mask.astype(np.uint8)).save(save_path)
                     # save to output folder
                 return None  # No single mask to return
@@ -540,10 +532,7 @@ class DLInferenceContainer(Container):
 
         def on_result(mask: np.ndarray):
             name = img_layer.name + "_slide_mask"
-            if name in self._viewer.layers:
-                self._viewer.layers[name].data = mask
-            else:
-                self._viewer.add_labels(mask, name=name)
+            upsert_labels_layer(self._viewer, mask, name)
 
         self._worker.returned.connect(on_result)
         self._worker.start()
@@ -864,16 +853,13 @@ class EMCellFinerSingleInferWidget(Container):
 
 
         # 读取 UI 参数
-        model_path = self.model_path.value
+        model_path = normalize_optional_path(self.model_path.value)
         scale = self.scale.value
         tile_size = self.tile_size.value
         device = self.device.value
         if device == "auto":
             device = "cuda" if torch.cuda.is_available() else "cpu"
         
-        if model_path in ["None", "", None]:
-            model_path = None
-
         img_np = img_layer.data
         
         # # 单通道 -> 3通道
@@ -908,10 +894,7 @@ class EMCellFinerSingleInferWidget(Container):
         @worker.returned.connect
         def _on_result(output_np):
             progress.close()
-            self.viewer.add_image(
-                output_np,
-                name=f"{img_layer.name}_EMCFiner_SR",
-            )
+            upsert_image_layer(self.viewer, output_np, f"{img_layer.name}_EMCFiner_SR")
             print("✔ Inference Finished")
 
         # ---- 推理出错处理 ----
@@ -991,27 +974,23 @@ class EMCellFinerBatchInferWidget(Container):
     #               多张图推理的多线程函数
     # ==================================================
     def _run_batch_inference(self):
-        input_dir = self.input_dir.value
-        output_dir = self.output_dir.value
-        model_path = self.model_path.value
-        
-        if model_path in ["None", "", ".", None]:
-            model_path = None
+        input_dir = normalize_optional_path(self.input_dir.value)
+        output_dir = normalize_optional_path(self.output_dir.value)
+        model_path = normalize_optional_path(self.model_path.value)
             
             
         if not (input_dir and os.path.isdir(input_dir)):
             print("❌ Invalid Input Folder")
             return
 
-        if not (output_dir and os.path.isdir(output_dir)):
+        if not output_dir:
             print("❌ Invalid Output Folder")
             return
 
         # 搜索所有图像
-        img_files = []
-        for ext in ["*.png", "*.jpg", "*.jpeg", "*.tif", "*.tiff", "*.bmp"]:
-            img_files.extend(glob(os.path.join(input_dir, ext)))
+        img_files = collect_image_files(input_dir)
 
+        ensure_directory(output_dir)
         if len(img_files) == 0:
             print("❌ No images found in folder")
             return
@@ -1327,11 +1306,7 @@ class PhenotypeAnalysis(Container):
             results_df, instance_mask = analyze_phenotypes(img_layer.data, label_layer.data, features)
                     
             instance_layer_name = f"{label_layer.name}_instances"
-            if instance_layer_name in self.viewer.layers:
-                inst_layer = self.viewer.layers[instance_layer_name]
-                inst_layer.data = instance_mask
-            else:
-                inst_layer = self.viewer.add_labels(instance_mask, name=instance_layer_name)
+            inst_layer = upsert_labels_layer(self.viewer, instance_mask, instance_layer_name)
             
             # 将结果存入类属性
             self.results_df = results_df
