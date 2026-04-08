@@ -836,13 +836,16 @@ class EMCellFinerSingleInferWidget(Container):
         self.scale = ComboBox(label="Scale", choices=[1, 2, 4], value=4)
         self.tile_size = ComboBox(label="Tile Size", choices=[256, 384, 512, 640], value=512)
         self.model_choice = ComboBox(label="Model", choices=MODEL_ZOO, value="EMCellFiner")
-        
+        self.label_model = Label(value="(If left blank, the model will be automatically downloaded from the cloud. Manual loading is also supported.")
         self._run_button = PushButton(text="Run Inference")
+        self.label_info = Label(value="(For large images, it may take a while when using CPU. GPU is recommended.)")
+        
         
         self.extend([
-            self.model_choice, self.model_path, 
+            self.model_choice, self.model_path, self.label_model,
             self._image_layer_combo, self.scale, 
-            self.tile_size, self.device, self._run_button
+            self.tile_size, self.device, self._run_button,
+            self.label_info
         ])
 
         # 修复：不加括号，绑定函数本体
@@ -957,12 +960,15 @@ class EMCellFinerBatchInferWidget(Container):
 
         self._run_button = PushButton(text="Run Batch Inference")
         self._stop_button = PushButton(text="Stop Inference")
+        self.label_model = Label(value="(If left blank, the model will be automatically downloaded from the cloud. Manual loading is also supported.")
+        
+        self.label_info = Label(value="(For large images, it may take a while when using CPU. GPU is recommended.)")
         
         self.extend([
-            self.model_choice, self.model_path,
+            self.model_choice, self.model_path,self.label_model,
             self.input_dir, self.output_dir,
             self.scale, self.tile_size, self.device,
-            self._run_button, self._stop_button
+            self._run_button, self._stop_button,self.label_info
         ])
 
         # 按钮绑定
