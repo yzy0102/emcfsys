@@ -29,26 +29,56 @@ References:
 Replace code below according to your needs.
 """
 
-from typing import TYPE_CHECKING
-from PIL import Image as PILImage
-import numpy as np
-from magicgui import magic_factory
-from magicgui.widgets import CheckBox, ComboBox, Container, create_widget, PushButton
-from qtpy.QtWidgets import QHBoxLayout, QPushButton, QWidget, QVBoxLayout
-from scipy import ndimage
-from skimage.transform import resize
-from skimage.util import img_as_float
-import os
-if TYPE_CHECKING:
-    import napari
-    
-
-from labelme import utils as labelme_utils
+import ast
+import base64
 import json
 import os
+import os.path as osp
+
+import imgviz
+import matplotlib.pyplot as plt
+import napari
 import numpy as np
-from ._inference_tasks import run_full_inference_task, run_sliding_inference_task
+import pandas as pd
+import torch
+from labelme import utils, utils as labelme_utils
+from magicgui.widgets import (
+    CheckBox,
+    ComboBox,
+    Container,
+    FileEdit,
+    FloatSpinBox,
+    Label,
+    PushButton,
+    SpinBox,
+    Table,
+    TextEdit,
+    create_widget,
+)
+from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
+from napari.layers import Image, Image as ImageLayer, Labels
+from napari.qt.threading import thread_worker
+from PIL import Image as PILImage
+from qtpy.QtWidgets import QFileDialog, QWidget, QVBoxLayout
+from scipy import ndimage
+from skimage.transform import resize
+
+from emcfsys.PhenotypeAnalysis.functions import analyze_phenotypes
+
+from ._inference_tasks import (
+    SegmentationInferenceRequest,
+    SlidingWindowInferenceRequest,
+    run_full_inference_task,
+    run_sliding_inference_task,
+)
+from ._emcellfiner_tasks import (
+    EMCellFinerRequest,
+    iter_emcellfiner_batch_inference,
+    resolve_emcellfiner_device,
+    run_emcellfiner_single_inference,
+)
 from ._io_utils import collect_image_files, ensure_directory, normalize_optional_path
+from ._training_tasks import SegmentationTrainingRequest, run_training_task
 from ._viewer_ops import upsert_image_layer, upsert_labels_layer
 
 # the magic_factory decorator lets us customize aspects of our widget
@@ -308,16 +338,6 @@ class ImageResize(Container):
         except Exception as e:
             print(f"Error resizing image: {e}")
 
-
-
-#-----------model test
-from magicgui.widgets import Container, FileEdit, FloatSpinBox, SpinBox, ComboBox, PushButton, Label, TextEdit, SpinBox
-# from qtpy.QtWidgets import QTextEdit
-from napari.qt.threading import thread_worker
-import torch
-import numpy as np
-from glob import glob
-import os
 # -----------------------------
 # DL Inference Container
 # -----------------------------
@@ -377,6 +397,39 @@ class DLInferenceContainer(Container):
         
         self._worker = None
 
+    def _build_full_inference_request(self, img_layer, device, model_path, stop_checker):
+        image_folder = normalize_optional_path(self.image_folder.value)
+        output_folder = normalize_optional_path(self.output_folder.value)
+        return SegmentationInferenceRequest(
+            model_name=self.model_name.value,
+            backbone_name=self.backbone_name.value,
+            img_size=self.img_size.value,
+            num_classes=self.num_classes.value,
+            model_path=model_path,
+            device=device,
+            image=None if img_layer is None else img_layer.data,
+            image_folder=image_folder if self.inference_from_folder_mode.value else None,
+            output_folder=output_folder,
+            stop_checker=stop_checker,
+        )
+
+    def _build_sliding_inference_request(self, img_layer, device, model_path, stop_checker):
+        image_folder = normalize_optional_path(self.image_folder.value)
+        output_folder = normalize_optional_path(self.output_folder.value)
+        return SlidingWindowInferenceRequest(
+            model_name=self.model_name.value,
+            backbone_name=self.backbone_name.value,
+            img_size=self.img_size.value,
+            num_classes=self.num_classes.value,
+            model_path=model_path,
+            device=device,
+            image=None if img_layer is None else img_layer.data,
+            image_folder=image_folder if self.inference_from_folder_mode.value else None,
+            output_folder=output_folder,
+            stop_checker=stop_checker,
+            window_size=self.slide_window_size.value,
+        )
+
 # ================== UI 状态管理辅助函数 ==================
     def _update_ui_state(self, is_running):
         """
@@ -411,21 +464,8 @@ class DLInferenceContainer(Container):
         @thread_worker
         def _worker():
             # 在 _worker 函数中
-            image_folder = normalize_optional_path(self.image_folder.value)
-            output_folder = normalize_optional_path(self.output_folder.value)
-
-            return run_full_inference_task(
-                model_name=self.model_name.value,
-                backbone_name=self.backbone_name.value,
-                img_size=self.img_size.value,
-                num_classes=self.num_classes.value,
-                model_path=model_path,
-                device=dev,
-                image=None if img_layer is None else img_layer.data,
-                image_folder=image_folder if self.inference_from_folder_mode.value else None,
-                output_folder=output_folder,
-                stop_checker=check_stop,
-            )
+            request = self._build_full_inference_request(img_layer, dev, model_path, check_stop)
+            return run_full_inference_task(request)
 
         self._worker = _worker()
 
@@ -455,22 +495,8 @@ class DLInferenceContainer(Container):
             if self._stop_flag:
                 raise StopIteration()
             
-            image_folder = normalize_optional_path(self.image_folder.value)
-            output_folder = normalize_optional_path(self.output_folder.value)
-
-            return run_sliding_inference_task(
-                model_name=self.model_name.value,
-                backbone_name=self.backbone_name.value,
-                img_size=self.img_size.value,
-                window_size=self.slide_window_size.value,
-                num_classes=self.num_classes.value,
-                model_path=model_path,
-                device=dev,
-                image=None if img_layer is None else img_layer.data,
-                image_folder=image_folder if self.inference_from_folder_mode.value else None,
-                output_folder=output_folder,
-                stop_checker=check_stop,
-            )
+            request = self._build_sliding_inference_request(img_layer, dev, model_path, check_stop)
+            return run_sliding_inference_task(request)
 
         self._worker = _worker()
 
@@ -491,17 +517,6 @@ class DLInferenceContainer(Container):
             
 
                 
-
-
-        
-from magicgui.widgets import FileEdit, FloatSpinBox, SpinBox, ComboBox, PushButton, Label, TextEdit, Widget, CheckBox
-# from magicgui import Container
-from pathlib import Path
-import torch
-from napari.qt.threading import thread_worker
-import matplotlib.pyplot as plt
-from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
-from qtpy.QtWidgets import QWidget, QVBoxLayout
 
 
 class DLTrainingContainer(Container):
@@ -572,9 +587,6 @@ class DLTrainingContainer(Container):
             self._viewer.window.add_dock_widget(self._canvas_widget, name="Loss Curve", area="right")
 
         # 用于绘制曲线
-        self._x_values = []
-        self._y_values = []
-
 
     def _log(self, s):
         try:
@@ -601,119 +613,70 @@ class DLTrainingContainer(Container):
         self._fig.tight_layout()
         self._canvas.draw_idle()
     # ------------------------ TRAINING LOGIC --------------------------
-    
-    
-    def _start_training(self):
-        if self._viewer is None:
-            return
 
-        self._stop_flag = False  # 重置停止标志
+    def _reset_training_plot(self):
         self._ax.cla()
         self._canvas.draw()
-        
-        # -------✔ 完整重置 loss 曲线 -------
         self._x_values = []
         self._y_values = []
-
         self._ax.clear()
         self._ax.set_xlabel("Epoch")
         self._ax.set_ylabel("Loss")
         self._ax.set_title("Training Loss Curve")
         self._fig.tight_layout()
         self._canvas.draw()
-        
-        images_dir = self.images_dir.value
-        masks_dir = self.masks_dir.value
-        save_path = self.save_path.value
-        pretrained_model = self.pretrained_model.value
-        backbone_name = self.backbone_name.value
-        model_name = self.model_name.value
-        lr = self.lr.value
-        batch_size = self.batch_size.value
-        epochs = self.epochs.value
-        device = self.device.value
-        # in_channels = self.in_channels.value
-        classes_num = self.classes_num.value
-        target_size = self.target_size.value
-        ignore_index = self.ignore_index.value
-        dev = torch.device(device) if device != "auto" else torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-        from .EMCellFound.train import train_loop  # 自己的训练函数
-        
-        
+    def _build_training_request(self):
+        device = self.device.value
+        dev = torch.device(device) if device != "auto" else torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        return SegmentationTrainingRequest(
+            images_dir=self.images_dir.value,
+            masks_dir=self.masks_dir.value,
+            save_path=self.save_path.value,
+            backbone_name=self.backbone_name.value,
+            model_name=self.model_name.value,
+            lr=self.lr.value,
+            batch_size=self.batch_size.value,
+            epochs=self.epochs.value,
+            device=dev,
+            classes_num=self.classes_num.value,
+            target_size=self.target_size.value,
+            ignore_index=self.ignore_index.value,
+            pretrained_model=normalize_optional_path(self.pretrained_model.value),
+        )
+
+    def _start_training(self):
+        if self._viewer is None:
+            return
+
+        self._stop_flag = False  # Reset stop flag before each training session
+        self._reset_training_plot()
+        request = self._build_training_request()
+
         @thread_worker
         def _worker():
-            logs = []
-            epoch_times = []
-            metrics_all = []
-            def cb(epoch, batch, n_batches, loss, finished_epoch=False, epoch_time=None, model_dict=None, metrics=None):
-                # 更新 loss 曲线
-                if finished_epoch:
-                    self._update_loss_curve(loss, epoch=epoch)
-                # else:
-                #     self._update_loss_curve(loss, epoch=epoch)
-
-                # 保存 epoch 时间
-                if finished_epoch and epoch_time is not None:
-                    epoch_times.append(epoch_time)
-                    if len(epoch_times) == 1:
-                        estimated_total = epoch_times[0] * epochs
-                        self._log(f"Estimated total training time: {estimated_total:.2f}s (~{estimated_total/60:.1f} min)")
-
-                if metrics is not None:
-                    metrics_all.append(metrics)
-                    
-                # 保存 batch/epoch 日志
-                logs.append((epoch, batch, n_batches, loss, finished_epoch, epoch_time, metrics))
-
-                # 输出日志
-                if batch == 0 and finished_epoch:
-                    if epoch_time is not None:
-                        self._log(f"Epoch {epoch} finished, avg loss {loss:.4f}, time {epoch_time:.2f}s, metric {metrics}" )
-                #     else:
-                #         self._log(f"Epoch {epoch} finished, avg loss {loss:.4f}")
-                # else:
-                #     self._log(f"Epoch {epoch} batch {batch}/{n_batches} loss {loss:.4f}")
-
-                # 停止训练
-                if self._stop_flag and model_dict is not None:
-                    interrupted_path = os.path.join(save_path, "interrupted_model.pth")
-                    torch.save(model_dict, interrupted_path)
-                    self._log(f"Training stopped. Model saved to {interrupted_path}")
-                    raise StopIteration()
-
-            try:
-                train_loop(images_dir, masks_dir, save_path,
-                        model_name=model_name,
-                        backbone_name=backbone_name,
-                        pretrained = True,
-                        pretrained_model=pretrained_model,
-                        lr=lr, batch_size=batch_size, epochs=epochs,
-                        device=dev, callback=cb,
-                        target_size=(target_size, target_size),
-                        classes_num=classes_num,
-                        ignore_index = ignore_index,
-                        stop_flag_fn=lambda: self._stop_flag
-                    )
-            except StopIteration:
-                self._log("Training stopped by user.")
-
-            return logs
+            return run_training_task(
+                request,
+                update_loss_curve=self._update_loss_curve,
+                log=self._log,
+                stop_flag_fn=lambda: self._stop_flag,
+            )
 
         worker = _worker()
 
         def on_returned(logs):
-            for t in logs:
-                epoch, batch, n_batches, loss, finished, epoch_time, metrics_info = t
+            for epoch, batch, n_batches, loss, finished, epoch_time, metrics_info in logs:
                 if batch == 0:
                     if epoch_time is not None:
-                        self._log(f"Epoch {epoch} finished, avg loss {loss:.4f}, time {epoch_time:.2f}s, metric {metrics_info}")
+                        self._log(
+                            f"Epoch {epoch} finished, avg loss {loss:.4f}, time {epoch_time:.2f}s, metric {metrics_info}"
+                        )
                     else:
                         self._log(f"Epoch {epoch} finished, avg loss {loss:.4f}")
                 else:
                     self._log(f"Epoch {epoch} batch {batch}/{n_batches} loss {loss:.4f}")
             if not self._stop_flag:
-                self._log(f"Training finished. Model saved to: {save_path}")
+                self._log(f"Training finished. Model saved to: {request.save_path}")
 
         worker.returned.connect(on_returned)
         worker.start()
@@ -734,37 +697,19 @@ class DLTrainingContainer(Container):
 
 #------------EMCellFiner=------
 #------------EMCellFiner=------
-
-from qtpy.QtWidgets import QWidget, QVBoxLayout, QGroupBox
-from magicgui import magicgui
-from .EMCellFiner.hat.models.hat_model import HATModel
-from .EMCellFiner.hat.models.img_utils import tensor2img
-from .EMCellFiner.hat.models.inference_hat import hat_infer_numpy
-
-import numpy as np
-import torch
-import numpy as np
-from magicgui.widgets import create_widget, ComboBox, Container, FileEdit, PushButton
-from napari.qt.threading import thread_worker
-from napari.layers import Image as ImageLayer
-from napari.layers import Labels as LabelsLayer
-import napari
-
 class EMCellFinerSingleInferWidget(Container):
     def __init__(self, viewer: "napari.viewer.Viewer"):
         super().__init__()
         self.viewer = viewer
 
         MODEL_ZOO = ["EMCellFiner"]
-        
+
         self.model_path = FileEdit(label="Model (.pth)", nullable=True, mode="r")
-        
-        # 修复：annotation 必须是类型，不是字符串
         self._image_layer_combo = create_widget(
             label="Image",
             annotation=ImageLayer
         )
-        
+
         self.device = ComboBox(label="Device", choices=["auto", "cpu", "cuda"], value="auto")
         self.scale = ComboBox(label="Scale", choices=[1, 2, 4], value=4)
         self.tile_size = ComboBox(label="Tile Size", choices=[256, 384, 512, 640], value=512)
@@ -772,101 +717,52 @@ class EMCellFinerSingleInferWidget(Container):
         self.label_model = Label(value="(If left blank, the model will be automatically downloaded from the cloud. Manual loading is also supported.")
         self._run_button = PushButton(text="Run Inference")
         self.label_info = Label(value="(For large images, it may take a while when using CPU. GPU is recommended.)")
-        
-        
+
         self.extend([
             self.model_choice, self.model_path, self.label_model,
-            self._image_layer_combo, self.scale, 
+            self._image_layer_combo, self.scale,
             self.tile_size, self.device, self._run_button,
             self.label_info
         ])
 
-        # 修复：不加括号，绑定函数本体
         self._run_button.clicked.connect(self._run_inference)
-            
 
-    # ==================================================
-    #                 深度学习推理（多线程）
-    # ==================================================
+    def _build_request(self, img_layer):
+        return EMCellFinerRequest(
+            model_path=normalize_optional_path(self.model_path.value),
+            scale=self.scale.value,
+            tile_size=self.tile_size.value,
+            device=resolve_emcellfiner_device(self.device.value),
+            image=None if img_layer is None else img_layer.data,
+        )
+
     def _run_inference(self):
         img_layer = self._image_layer_combo.value
         if img_layer is None:
             print("No layer selected")
             return
-        
 
-
-        # 读取 UI 参数
-        model_path = normalize_optional_path(self.model_path.value)
-        scale = self.scale.value
-        tile_size = self.tile_size.value
-        device = self.device.value
-        if device == "auto":
-            device = "cuda" if torch.cuda.is_available() else "cpu"
-        
-        img_np = img_layer.data
-        
-        # # 单通道 -> 3通道
-        # if img_np.ndim == 2:
-        #     img_np = np.stack([img_np] * 3, axis=-1)
-        # elif img_np.shape[-1] == 1:
-        #     img_np = np.repeat(img_np, 3, axis=-1)
-
-        # ---- 在执行推理前启动进度条 ----
+        request = self._build_request(img_layer)
         progress = napari.utils.progress(total=100, desc="EMCellFiner Inference...")
 
-
-        # ---- 启动线程 ----
         @thread_worker
         def _worker():
-            # 模型加载
-            model = HATModel(
-                local_path=model_path,
-                scale=scale,
-                tile_size=tile_size,
-            )
-
-            # 推理（你自己的函数）
-            # 在推理中调用 progress.update(x) 也可以
-            output_np = hat_infer_numpy(model, img_np, device)
-
-            return output_np
+            return run_emcellfiner_single_inference(request)
 
         worker = _worker()
 
-        # ---- 推理完成后回到主线程处理结果 ----
         @worker.returned.connect
         def _on_result(output_np):
             progress.close()
             upsert_image_layer(self.viewer, output_np, f"{img_layer.name}_EMCFiner_SR")
-            print("✔ Inference Finished")
+            print("Inference Finished")
 
-        # ---- 推理出错处理 ----
         @worker.errored.connect
         def _on_error(err):
             progress.close()
-            print("❌ Inference Error:", err)
+            print("Inference Error:", err)
 
         worker.start()
-
-
-from qtpy.QtWidgets import QWidget, QVBoxLayout, QGroupBox
-from magicgui import magicgui
-import os
-import numpy as np
-
-
-
-from qtpy.QtWidgets import QWidget, QVBoxLayout, QGroupBox
-from magicgui import magicgui
-import os
-import numpy as np
-from glob import glob
-
-from magicgui.widgets import create_widget, ComboBox, Container, FileEdit, PushButton, LineEdit
-from napari.qt.threading import thread_worker
-import napari
-
 
 class EMCellFinerBatchInferWidget(Container):
     def __init__(self, viewer: "napari.viewer.Viewer"):
@@ -876,143 +772,100 @@ class EMCellFinerBatchInferWidget(Container):
         MODEL_ZOO = ["EMCellFiner"]
 
         self.model_path = FileEdit(label="Model (.pth)", mode="r", nullable=True)
-
         self.input_dir = FileEdit(label="Input Folder", mode="d")
         self.output_dir = FileEdit(label="Save Folder", mode="d")
-
         self.scale = ComboBox(label="Scale", choices=[1, 2, 4], value=4)
         self.tile_size = ComboBox(label="Tile Size", choices=[256, 384, 512, 640, 1024], value=512)
         self.device = ComboBox(label="Device", choices=["auto", "cpu", "cuda"], value="auto")
         self.model_choice = ComboBox(label="Model", choices=MODEL_ZOO, value="EMCellFiner")
-
         self._run_button = PushButton(text="Run Batch Inference")
         self._stop_button = PushButton(text="Stop Inference")
         self.label_model = Label(value="(If left blank, the model will be automatically downloaded from the cloud. Manual loading is also supported.")
-        
         self.label_info = Label(value="(For large images, it may take a while when using CPU. GPU is recommended.)")
-        
+
         self.extend([
-            self.model_choice, self.model_path,self.label_model,
+            self.model_choice, self.model_path, self.label_model,
             self.input_dir, self.output_dir,
             self.scale, self.tile_size, self.device,
-            self._run_button, self._stop_button,self.label_info
+            self._run_button, self._stop_button, self.label_info
         ])
 
-        # 按钮绑定
         self._run_button.clicked.connect(self._run_batch_inference)
         self._stop_button.clicked.connect(self._stop_worker)
-        
 
-        # 保存 worker 对象和 stop flag
         self._worker = None
         self._stop_flag = False
 
-        
+    def _build_request(self):
+        return EMCellFinerRequest(
+            model_path=normalize_optional_path(self.model_path.value),
+            scale=self.scale.value,
+            tile_size=self.tile_size.value,
+            device=resolve_emcellfiner_device(self.device.value),
+            input_dir=normalize_optional_path(self.input_dir.value),
+            output_dir=normalize_optional_path(self.output_dir.value),
+        )
+
     def _stop_worker(self):
         self._stop_flag = True
         if self._worker is not None:
             self._worker.quit()
-            print("⚠ Batch inference stopped by user.")
-            
-    # ==================================================
-    #               多张图推理的多线程函数
-    # ==================================================
+            print("Batch inference stopped by user.")
+
     def _run_batch_inference(self):
-        input_dir = normalize_optional_path(self.input_dir.value)
-        output_dir = normalize_optional_path(self.output_dir.value)
-        model_path = normalize_optional_path(self.model_path.value)
-            
-            
-        if not (input_dir and os.path.isdir(input_dir)):
-            print("❌ Invalid Input Folder")
+        request = self._build_request()
+
+        if not (request.input_dir and os.path.isdir(request.input_dir)):
+            print("Invalid Input Folder")
             return
 
-        if not output_dir:
-            print("❌ Invalid Output Folder")
+        if not request.output_dir:
+            print("Invalid Output Folder")
             return
 
-        # 搜索所有图像
-        img_files = collect_image_files(input_dir)
-
-        ensure_directory(output_dir)
+        img_files = collect_image_files(request.input_dir)
+        ensure_directory(request.output_dir)
         if len(img_files) == 0:
-            print("❌ No images found in folder")
+            print("No images found in folder")
             return
 
-        scale = self.scale.value
-        tile_size = self.tile_size.value
-        device = self.device.value
-        device = "cuda" if torch.cuda.is_available() else "cpu" if device == "auto" else device
-        
-        # 重置 stop flag
         self._stop_flag = False
-
-        # napari 进度条
         progress = napari.utils.progress(range(len(img_files)), desc="Batch Inference...")
 
         @thread_worker
         def _worker():
-            # 加载模型一次
-            model = HATModel(
-                local_path=model_path,
-                scale=scale,
-                tile_size=tile_size,
+            yield from iter_emcellfiner_batch_inference(
+                request,
+                stop_checker=lambda: self._stop_flag,
             )
-
-            for idx, path in enumerate(img_files):
-                if self._stop_flag:
-                    print("⚠ Worker stopped by user")
-                    break
-
-                # 打开图片并转换成 RGB
-                img = np.array(PILImage.open(path).convert("RGB"))
-                out_np = hat_infer_numpy(model, img, device)
-
-                # 每张图推理完成就返回主线程处理
-                yield path, out_np, idx
 
         self._worker = _worker()
         worker = self._worker
 
-        # ----------------------------
-        # 每张图推理完成回调
-        # ----------------------------
         @worker.yielded.connect
         def _on_each(args):
-            path, out_np, idx = args
-            save_path = os.path.join(output_dir, os.path.basename(path))
-            _ = PILImage.fromarray(out_np).convert("RGB").save(save_path)
+            path, save_path, out_np, idx = args
             print(f"idx: {idx} : {os.path.basename(path)} Saved to: ", save_path)
             progress.update(idx + 1)
 
         @worker.errored.connect
         def _on_err(err):
             progress.close()
-            print("❌ Error:", err)
+            print("Error:", err)
 
         @worker.finished.connect
         def _on_finished():
             progress.close()
-            print("✔ Batch Inference Finished")
-            self._worker = None  # 清理 worker 对象
+            print("Batch Inference Finished")
+            self._worker = None
             self._stop_flag = False
+
         worker.start()
-
-
 
 
 #----------------------------
 # labelme2semantci segmentation mask
 #----------------------------
-import base64
-import json
-import os
-import os.path as osp
-import imgviz
-from labelme import utils
-import numpy as np
-import json
-import ast
 class LabelMe2Seg(Container):
     '''
         using labelme to annotate the labels first, and generate json files.
@@ -1113,15 +966,11 @@ class LabelMe2Seg(Container):
             )
         
             
-            
-            
             PILImage.fromarray(img).convert("RGB").save(osp.join(img_save_path, osp.splitext(data['imagePath'])[0]+".tif"))
             utils.lblsave(os.path.join(labels_save_path, osp.splitext(data['imagePath'])[0] + ".png"), lbl)
             PILImage.fromarray(lbl_viz).save(osp.join(vis_save_path, osp.splitext(data['imagePath'])[0]+ "_labelviz" + ".png"))
             
         print(f"All jsons converted to masks! saved to {labels_save_path}")
-
-
 
 
 
@@ -1181,14 +1030,6 @@ class LabelMe2Seg(Container):
             pass
 
         raise ValueError("无法解析标签映射文件，请检查文件格式。")
-
-from emcfsys.PhenotypeAnalysis.functions import analyze_phenotypes
-import pandas as pd
-from qtpy.QtWidgets import QFileDialog
-from magicgui.widgets import Table, PushButton, Container, CheckBox, Label, create_widget
-from napari.layers import Image, Labels
-import numpy as np
-
 class PhenotypeAnalysis(Container):
     def __init__(self, viewer: "napari.viewer.Viewer"):
         super().__init__()

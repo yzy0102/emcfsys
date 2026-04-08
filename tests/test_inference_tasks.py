@@ -1,7 +1,12 @@
 import numpy as np
 from PIL import Image
 
-from emcfsys._inference_tasks import run_full_inference_task, run_sliding_inference_task
+from emcfsys._inference_tasks import (
+    SegmentationInferenceRequest,
+    SlidingWindowInferenceRequest,
+    run_full_inference_task,
+    run_sliding_inference_task,
+)
 
 
 def test_run_full_inference_task_single_image(monkeypatch):
@@ -25,7 +30,7 @@ def test_run_full_inference_task_single_image(monkeypatch):
     monkeypatch.setattr("emcfsys._inference_tasks.infer_full_image", fake_infer_full_image)
 
     image = np.zeros((4, 4), dtype=np.uint8)
-    result = run_full_inference_task(
+    request = SegmentationInferenceRequest(
         model_name="deeplabv3plus",
         backbone_name="resnet34",
         img_size=512,
@@ -34,6 +39,7 @@ def test_run_full_inference_task_single_image(monkeypatch):
         device="cpu",
         image=image,
     )
+    result = run_full_inference_task(request)
 
     assert result.shape == (1, 4, 4)
     assert calls["load_model"]["model_name"] == "deeplabv3plus"
@@ -67,7 +73,7 @@ def test_run_sliding_inference_task_folder(monkeypatch, tmp_path):
     monkeypatch.setattr("emcfsys._inference_tasks.load_model", fake_load_model)
     monkeypatch.setattr("emcfsys._inference_tasks.infer_sliding_window", fake_infer_sliding_window)
 
-    result = run_sliding_inference_task(
+    request = SlidingWindowInferenceRequest(
         model_name="deeplabv3plus",
         backbone_name="resnet34",
         img_size=512,
@@ -78,6 +84,7 @@ def test_run_sliding_inference_task_folder(monkeypatch, tmp_path):
         image_folder=str(tmp_path),
         output_folder=str(output_dir),
     )
+    result = run_sliding_inference_task(request)
 
     assert result is None
     assert calls["infer_count"] == 1
