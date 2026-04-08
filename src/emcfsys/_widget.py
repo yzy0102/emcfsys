@@ -47,6 +47,7 @@ from labelme import utils as labelme_utils
 import json
 import os
 import numpy as np
+from ._inference_tasks import run_full_inference_task, run_sliding_inference_task
 from ._io_utils import collect_image_files, ensure_directory, normalize_optional_path
 from ._viewer_ops import upsert_image_layer, upsert_labels_layer
 
@@ -317,8 +318,6 @@ import torch
 import numpy as np
 from glob import glob
 import os
-from .EMCellFound.inference import load_model
-
 # -----------------------------
 # DL Inference Container
 # -----------------------------
@@ -412,48 +411,21 @@ class DLInferenceContainer(Container):
         @thread_worker
         def _worker():
             # 在 _worker 函数中
-            from .EMCellFound.inference import infer_full_image
-            model = load_model(
-                    model_name=self.model_name.value, 
-                    backbone_name=self.backbone_name.value, 
-                    img_size=self.img_size.value,
-                    num_classes=self.num_classes.value, 
-                    model_path=model_path, 
-                    aux_on=False, 
-                    device=dev)
-            
-            
             image_folder = normalize_optional_path(self.image_folder.value)
             output_folder = normalize_optional_path(self.output_folder.value)
 
-            if self.inference_from_folder_mode.value and image_folder is not None:
-                if output_folder is None:
-                    print("Please specify output folder")
-                    # warning in napari
-                    return None
-                ensure_directory(output_folder)
-                image_files = collect_image_files(image_folder)
-
-                print(f"Found {len(image_files)} images in folder {image_folder}")
-                
-                for image_path in image_files:
-                    img_pil = PILImage.open(image_path).convert("RGB")
-                    img_np = np.array(img_pil)
-                    mask = infer_full_image(model, img_np, input_size=(self.img_size.value, self.img_size.value), 
-                                            device=dev, stop_checker=check_stop)[0]
-                    
-                    name = os.path.basename(image_path)+"_mask.png"
-                    save_path = os.path.join(output_folder, name)
-                    _ = PILImage.fromarray(mask.astype(np.uint8)).save(save_path)
-                    # save to output folder
-                    
-                return None  # No single mask to return
-            else:
-                if img_layer is None:
-                    return
-                img = img_layer.data
-                return infer_full_image(model, img, input_size=(self.img_size.value, self.img_size.value), 
-                                        device=dev, stop_checker=check_stop)
+            return run_full_inference_task(
+                model_name=self.model_name.value,
+                backbone_name=self.backbone_name.value,
+                img_size=self.img_size.value,
+                num_classes=self.num_classes.value,
+                model_path=model_path,
+                device=dev,
+                image=None if img_layer is None else img_layer.data,
+                image_folder=image_folder if self.inference_from_folder_mode.value else None,
+                output_folder=output_folder,
+                stop_checker=check_stop,
+            )
 
         self._worker = _worker()
 
@@ -479,15 +451,6 @@ class DLInferenceContainer(Container):
 
         @thread_worker
         def _worker():
-            from .EMCellFound.inference import infer_sliding_window
-            model = load_model(
-                    model_name=self.model_name.value, 
-                    backbone_name=self.backbone_name.value, 
-                    img_size=self.img_size.value,
-                    num_classes=self.num_classes.value, 
-                    model_path=model_path, 
-                    aux_on=False, 
-                    device=dev)
             # 停止推理
             if self._stop_flag:
                 raise StopIteration()
@@ -495,38 +458,19 @@ class DLInferenceContainer(Container):
             image_folder = normalize_optional_path(self.image_folder.value)
             output_folder = normalize_optional_path(self.output_folder.value)
 
-            if self.inference_from_folder_mode.value and image_folder is not None:
-                if output_folder is None:
-                    print("Please specify output folder")
-                    # warning in napari
-                    return None
-                ensure_directory(output_folder)
-                image_files = collect_image_files(image_folder)
-
-                print(f"Found {len(image_files)} images in folder {image_folder}")
-                
-                for image_path in image_files:
-                    img_pil = PILImage.open(image_path).convert("RGB")
-                    img_np = np.array(img_pil)
-                    mask = infer_sliding_window(model, img_np, window_size=self.slide_window_size.value,
-                                            img_size=(self.img_size.value, self.img_size.value), 
-                                            out_channels = self.num_classes.value,
-                                            device=dev, stop_checker=check_stop)[0]
-                    name = os.path.basename(image_path) + "_mask.png"
-                    save_path = os.path.join(output_folder, name)
-                    _ = PILImage.fromarray(mask.astype(np.uint8)).save(save_path)
-                    # save to output folder
-                return None  # No single mask to return
-            else:
-                if img_layer is None:
-                    return
-                img = img_layer.data
-                return infer_sliding_window(model, 
-                                            img, 
-                                            window_size=self.slide_window_size.value,
-                                            img_size=(self.img_size.value, self.img_size.value), 
-                                            out_channels = self.num_classes.value,
-                                            device=dev, stop_checker=check_stop)
+            return run_sliding_inference_task(
+                model_name=self.model_name.value,
+                backbone_name=self.backbone_name.value,
+                img_size=self.img_size.value,
+                window_size=self.slide_window_size.value,
+                num_classes=self.num_classes.value,
+                model_path=model_path,
+                device=dev,
+                image=None if img_layer is None else img_layer.data,
+                image_folder=image_folder if self.inference_from_folder_mode.value else None,
+                output_folder=output_folder,
+                stop_checker=check_stop,
+            )
 
         self._worker = _worker()
 
