@@ -1,4 +1,4 @@
-from emcfsys._io_utils import collect_image_files, ensure_directory, normalize_optional_path
+from emcfsys.utils.io_utils import collect_image_files, ensure_directory, normalize_optional_path
 
 
 def test_normalize_optional_path():

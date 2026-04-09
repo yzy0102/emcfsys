@@ -1,4 +1,4 @@
-from emcfsys._training_tasks import SegmentationTrainingRequest, run_training_task
+from emcfsys.utils.training_tasks import SegmentationTrainingRequest, run_training_task
 
 
 def test_run_training_task(monkeypatch):
@@ -19,7 +19,7 @@ def test_run_training_task(monkeypatch):
         )
         return save_path
 
-    monkeypatch.setattr("emcfsys._training_tasks.train_loop", fake_train_loop)
+    monkeypatch.setattr("emcfsys.utils.training_tasks.train_loop", fake_train_loop)
 
     request = SegmentationTrainingRequest(
         images_dir="images",

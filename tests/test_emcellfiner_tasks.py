@@ -1,7 +1,7 @@
 import numpy as np
 from PIL import Image
 
-from emcfsys._emcellfiner_tasks import (
+from emcfsys.utils.emcellfiner_tasks import (
     EMCellFinerRequest,
     iter_emcellfiner_batch_inference,
     resolve_emcellfiner_device,
@@ -10,7 +10,7 @@ from emcfsys._emcellfiner_tasks import (
 
 
 def test_resolve_emcellfiner_device(monkeypatch):
-    monkeypatch.setattr("emcfsys._emcellfiner_tasks.torch.cuda.is_available", lambda: False)
+    monkeypatch.setattr("emcfsys.utils.emcellfiner_tasks.torch.cuda.is_available", lambda: False)
     assert resolve_emcellfiner_device("auto") == "cpu"
     assert resolve_emcellfiner_device("cuda") == "cuda"
 
@@ -26,8 +26,8 @@ def test_run_emcellfiner_single_inference(monkeypatch):
         calls["infer"] = (model, image.shape, device)
         return np.ones((8, 8, 3), dtype=np.uint8)
 
-    monkeypatch.setattr("emcfsys._emcellfiner_tasks.HATModel", fake_model)
-    monkeypatch.setattr("emcfsys._emcellfiner_tasks.hat_infer_numpy", fake_infer)
+    monkeypatch.setattr("emcfsys.utils.emcellfiner_tasks.HATModel", fake_model)
+    monkeypatch.setattr("emcfsys.utils.emcellfiner_tasks.hat_infer_numpy", fake_infer)
 
     request = EMCellFinerRequest(
         model_path="model.pth",
@@ -57,8 +57,8 @@ def test_iter_emcellfiner_batch_inference(monkeypatch, tmp_path):
         calls["count"] += 1
         return np.ones((4, 4, 3), dtype=np.uint8)
 
-    monkeypatch.setattr("emcfsys._emcellfiner_tasks.HATModel", fake_model)
-    monkeypatch.setattr("emcfsys._emcellfiner_tasks.hat_infer_numpy", fake_infer)
+    monkeypatch.setattr("emcfsys.utils.emcellfiner_tasks.HATModel", fake_model)
+    monkeypatch.setattr("emcfsys.utils.emcellfiner_tasks.hat_infer_numpy", fake_infer)
 
     request = EMCellFinerRequest(
         model_path=None,

@@ -5,9 +5,9 @@ import numpy as np
 import torch
 from PIL import Image as PILImage
 
-from ._io_utils import collect_image_files, ensure_directory
-from .EMCellFiner.hat.models.hat_model import HATModel
-from .EMCellFiner.hat.models.inference_hat import hat_infer_numpy
+from ..EMCellFiner.hat.models.hat_model import HATModel
+from ..EMCellFiner.hat.models.inference_hat import hat_infer_numpy
+from .io_utils import collect_image_files, ensure_directory
 
 
 @dataclass(slots=True)

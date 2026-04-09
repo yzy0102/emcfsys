@@ -71,14 +71,14 @@ contributions:
     - command: emcfsys.make_resize_widget
       display_name: Image Resize
     - command: emcfsys.DLInferenceContainer
-      display_name: Deep Learning Inference
+      display_name: EMCellFound(Segment model) - Inference
     - command: emcfsys.DLTrainingContainer
-      display_name: Deep Learning Training
+      display_name: EMCellFound(Segment model) - Training
 
     - command: emcfsys.emcellfiner.single_infer
-      display_name: EMCellFiner - Single Image Inference
+      display_name: EMCellFiner(Super Resolution) - Single Image Inference
     - command: emcfsys.emcellfiner.batch_infer
-      display_name: EMCellFiner - Batch Inference
+      display_name: EMCellFiner(Super Resolution) - Batch Inference
 
     - command: emcfsys.labelme_2_semseg
       display_name: DatasetConverter - Convert labelme 2 semantic segmentation masks

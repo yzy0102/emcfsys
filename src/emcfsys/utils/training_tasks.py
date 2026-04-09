@@ -3,7 +3,7 @@ from dataclasses import dataclass
 
 import torch
 
-from .EMCellFound.train import train_loop
+from ..EMCellFound.train import train_loop
 
 
 @dataclass(slots=True)

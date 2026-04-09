@@ -59,27 +59,26 @@ from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 from napari.layers import Image, Image as ImageLayer, Labels
 from napari.qt.threading import thread_worker
 from PIL import Image as PILImage
-from qtpy.QtWidgets import QFileDialog, QWidget, QVBoxLayout
-from scipy import ndimage
-from skimage.transform import resize
+from qtpy.QtWidgets import QFileDialog, QSizePolicy, QWidget, QVBoxLayout
 
 from emcfsys.PhenotypeAnalysis.functions import analyze_phenotypes
 
-from ._inference_tasks import (
+from .utils.image_resize_ops import resize_array, spatial_shape, target_size_from_mode
+from .utils.inference_tasks import (
     SegmentationInferenceRequest,
     SlidingWindowInferenceRequest,
     run_full_inference_task,
     run_sliding_inference_task,
 )
-from ._emcellfiner_tasks import (
+from .utils.emcellfiner_tasks import (
     EMCellFinerRequest,
     iter_emcellfiner_batch_inference,
     resolve_emcellfiner_device,
     run_emcellfiner_single_inference,
 )
-from ._io_utils import collect_image_files, ensure_directory, normalize_optional_path
-from ._training_tasks import SegmentationTrainingRequest, run_training_task
-from ._viewer_ops import upsert_image_layer, upsert_labels_layer
+from .utils.io_utils import collect_image_files, ensure_directory, normalize_optional_path
+from .utils.training_tasks import SegmentationTrainingRequest, run_training_task
+from .utils.viewer_ops import upsert_image_layer, upsert_labels_layer
 
 # the magic_factory decorator lets us customize aspects of our widget
 # we specify a widget type for the threshold parameter
@@ -107,6 +106,17 @@ backbone_zoom = [   "emcellfound_vit_base",
 
 
 model_zoom = ["deeplabv3plus", "unet", "pspnet", "upernet", "orgsegnetv2"]
+
+
+def _configure_wrapped_label(widget: Label):
+    native = widget.native
+    native.setWordWrap(True)
+    native.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+
+
+def _configure_wrapped_labels(*widgets: Label):
+    for widget in widgets:
+        _configure_wrapped_label(widget)
 
 class ImageResize(Container):
     """Container widget for resizing images with different interpolation algorithms."""
@@ -202,46 +212,59 @@ class ImageResize(Container):
         # Initialize visibility
         self._on_mode_changed()
 
+    def _selected_image_layer(self):
+        return self._image_layer_combo.value
+
+    def _selected_image_data(self):
+        image_layer = self._selected_image_layer()
+        if image_layer is None or not hasattr(image_layer, "data"):
+            return None
+        return image_layer.data
+
+    def _selected_spatial_shape(self):
+        image = self._selected_image_data()
+        return spatial_shape(image)
+
+    def _set_resize_mode_visibility(self, absolute_size_mode):
+        self._width_spinbox.visible = absolute_size_mode
+        self._height_spinbox.visible = absolute_size_mode
+        self._scale_x_spinbox.visible = not absolute_size_mode
+        self._scale_y_spinbox.visible = not absolute_size_mode
+
+    def _target_size_from_mode(self, image):
+        return target_size_from_mode(
+            image=image,
+            mode=self._mode_combo.value,
+            width=self._width_spinbox.value,
+            height=self._height_spinbox.value,
+            scale_x=self._scale_x_spinbox.value,
+            scale_y=self._scale_y_spinbox.value,
+        )
+
     # -------------------
     # Callback methods
     # -------------------
     def _on_image_changed(self):
         """Update size spinboxes when image is selected."""
-        image_layer = self._image_layer_combo.value
-        if image_layer is not None and hasattr(image_layer, "data"):
-            shape = image_layer.data.shape
-            if len(shape) >= 2:
-                self._height_spinbox.value = shape[-2]
-                self._width_spinbox.value = shape[-1]
+        spatial_shape = self._selected_spatial_shape()
+        if spatial_shape is None:
+            return
+        self._height_spinbox.value, self._width_spinbox.value = spatial_shape
 
     def _on_mode_changed(self):
         """Toggle visibility of size/scale widgets based on mode."""
-        mode = self._mode_combo.value
-        if mode == "Absolute Size":
-            self._width_spinbox.show()
-            self._height_spinbox.show()
-            self._scale_x_spinbox.hide()
-            self._scale_y_spinbox.hide()
-        else:  # Scale Factor
-            self._width_spinbox.hide()
-            self._height_spinbox.hide()
-            self._scale_x_spinbox.show()
-            self._scale_y_spinbox.show()
+        self._set_resize_mode_visibility(self._mode_combo.value == "Absolute Size")
 
     def _on_size_changed(self):
         """Maintain aspect ratio in absolute size mode."""
         if not self._maintain_aspect_checkbox.value:
             return
 
-        image_layer = self._image_layer_combo.value
-        if image_layer is None or not hasattr(image_layer, "data"):
+        spatial_shape = self._selected_spatial_shape()
+        if spatial_shape is None:
             return
 
-        shape = image_layer.data.shape
-        if len(shape) < 2:
-            return
-
-        original_height, original_width = shape[-2], shape[-1]
+        original_height, original_width = spatial_shape
         aspect_ratio = original_width / original_height
 
         sender = self.sender()
@@ -258,83 +281,21 @@ class ImageResize(Container):
     # Resize operation
     # -------------------
     def _resize_image(self):
-        image_layer = self._image_layer_combo.value
+        image_layer = self._selected_image_layer()
         if image_layer is None:
             return
 
         image = image_layer.data
-        mode = self._mode_combo.value
-        algorithm = self._algorithm_combo.value
-
-        # Determine output shape
-        if mode == "Absolute Size":
-            output_height = self._height_spinbox.value
-            output_width = self._width_spinbox.value
-        else:  # Scale Factor
-            scale_y = self._scale_y_spinbox.value
-            scale_x = self._scale_x_spinbox.value
-            original_shape = image.shape
-            output_height = int(original_shape[-2] * scale_y)
-            output_width = int(original_shape[-1] * scale_x)
-
-        # Map algorithm names
-        algorithm_map = {"Nearest Neighbor": 0, "Bilinear": 1, "Bicubic": 3, "Lanczos": None}
+        output_height, output_width = self._target_size_from_mode(image)
 
         try:
-            # Determine output shape for different dimensions
-            if len(image.shape) == 2:
-                output_shape = (output_height, output_width)
-            elif len(image.shape) == 3:
-                if image.shape[-1] in [3, 4]:  # RGB / RGBA
-                    output_shape = (output_height, output_width, image.shape[-1])
-                else:  # 3D grayscale
-                    output_shape = (
-                        int(image.shape[0] * (output_height / image.shape[-2])),
-                        output_height,
-                        output_width,
-                    )
-            else:
-                scale_factors = [1.0] * len(image.shape)
-                scale_factors[-2] = output_height / image.shape[-2]
-                scale_factors[-1] = output_width / image.shape[-1]
-                output_shape = tuple(
-                    int(s * f) for s, f in zip(image.shape, scale_factors)
-                )
-
-            # Perform resize
-            if algorithm == "Lanczos":
-                resized = resize(
-                    image, output_shape, order=3, mode="reflect", anti_aliasing=True
-                )
-            else:
-                order = algorithm_map[algorithm]
-                if len(image.shape) == 2:
-                    resized = ndimage.zoom(
-                        image,
-                        (output_height / image.shape[0], output_width / image.shape[1]),
-                        order=order,
-                    )
-                elif len(image.shape) == 3 and image.shape[-1] in [3, 4]:
-                    resized = np.zeros(output_shape, dtype=image.dtype)
-                    for i in range(image.shape[-1]):
-                        resized[..., i] = ndimage.zoom(
-                            image[..., i],
-                            (
-                                output_height / image.shape[0],
-                                output_width / image.shape[1],
-                            ),
-                            order=order,
-                        )
-                else:
-                    zoom_factors = [
-                        out_s / in_s for out_s, in_s in zip(output_shape, image.shape)
-                    ]
-                    resized = ndimage.zoom(image, zoom_factors, order=order)
-
-            # Add resized image as new layer
-            name = image_layer.name + "_resized"
-            upsert_image_layer(self._viewer, resized, name)
-
+            resized = resize_array(
+                image,
+                output_height,
+                output_width,
+                self._algorithm_combo.value,
+            )
+            upsert_image_layer(self._viewer, resized, image_layer.name + "_resized")
         except Exception as e:
             print(f"Error resizing image: {e}")
 
@@ -345,61 +306,105 @@ class DLInferenceContainer(Container):
     def __init__(self, viewer: "napari.viewer.Viewer"):
         super().__init__()
         self._viewer = viewer
-        # widgets
+
         self.model_path = FileEdit(label="Model (.pt/.pth/.ptscript)")
-        
-        # 使用 create_widget 支持直接选择 napari Image layer
-        self._image_layer_combo = create_widget(
-            label="Image", annotation="napari.layers.Image"
-        )
-        
+        self._image_layer_combo = create_widget(label="Image", annotation="napari.layers.Image")
         self.num_classes = SpinBox(label="num classes", min=2, max=1000, step=1, value=2)
-        
         self.device = ComboBox(label="Device", choices=["auto", "cpu", "cuda"], value="auto")
         self.backbone_name = ComboBox(label="Backbone", choices=backbone_zoom, value="emcellfound_vit_base")
         self.model_name = ComboBox(label="Model", choices=model_zoom, value="deeplabv3plus")
         self.img_size = SpinBox(label="Image size to model", min=1, max=4096, step=1, value=512)
         self.slide_window_size = SpinBox(label="Slide window size", min=1, max=4096, step=1, value=512)
-        
+
         self.line_break = Label(value="-- OR inference in a image folder ---")
-        # if inference in a folder, using a combox to select mode
-        self.inference_from_folder_mode = CheckBox(label="Inference from folder",  value=False)
+        self.inference_from_folder_mode = CheckBox(label="Inference from folder", value=False)
         self.image_folder = FileEdit(label="Image folder", nullable=True, mode="d")
-        self.output_folder = FileEdit(label="Output folder", nullable=True, mode="w")
-        
-        
+        self.output_folder = FileEdit(label="Label mask output folder", nullable=True, mode="w")
+        self.save_visualization = CheckBox(label="Save visualization mask", value=True)
+        self.visualization_output_folder = FileEdit(label="Visualization output folder", nullable=True, mode="w")
+        self.save_stacked_visualization = CheckBox(label="Save stacked image + visualization", value=False)
+        self.stacked_visualization_output_folder = FileEdit(label="Stacked visualization output folder", nullable=True, mode="w")
+
         self.line_break2 = Label(value="--- Click to Full/Slide inference ---")
+        _configure_wrapped_labels(self.line_break, self.line_break2)
         self._run_button_full = PushButton(text="Run Full Inference")
         self._run_button_slide = PushButton(text="Run Slide Inference")
         self._stop_button = PushButton(text="Stop Inference")
-        # 状态标志
-        self._stop_flag = False
-        
-        # add widgets
-        self.extend([self.model_path, 
-                     self._image_layer_combo, 
-                     self.backbone_name, self.model_name,
-                     self.num_classes, self.device, 
-                     self.img_size,
-                     self.slide_window_size,
-                     
-                     self.line_break,
-                     self.inference_from_folder_mode,
-                     self.image_folder, self.output_folder,
-                     self.line_break2,
-                     self._run_button_full, self._run_button_slide, self._stop_button])
 
-        # connect
+        self.extend([
+            self.model_path,
+            self._image_layer_combo,
+            self.backbone_name,
+            self.model_name,
+            self.num_classes,
+            self.device,
+            self.img_size,
+            self.slide_window_size,
+            self.line_break,
+            self.inference_from_folder_mode,
+            self.image_folder,
+            self.output_folder,
+            self.save_visualization,
+            self.visualization_output_folder,
+            self.save_stacked_visualization,
+            self.stacked_visualization_output_folder,
+            self.line_break2,
+            self._run_button_full,
+            self._run_button_slide,
+            self._stop_button,
+        ])
+
         self._run_button_full.clicked.connect(self._run_inference_full)
         self._run_button_slide.clicked.connect(self._run_inference_slide)
         self._stop_button.clicked.connect(self._stop_worker)
-        
-        
-        self._worker = None
+        self.inference_from_folder_mode.changed.connect(self._update_folder_inference_state)
+        self.save_visualization.changed.connect(self._update_visualization_output_state)
+        self.save_stacked_visualization.changed.connect(self._update_stacked_visualization_output_state)
 
-    def _build_full_inference_request(self, img_layer, device, model_path, stop_checker):
+        self._worker = None
+        self._stop_flag = False
+        self._update_folder_inference_state()
+        self._update_visualization_output_state()
+        self._update_stacked_visualization_output_state()
+
+    def _resolve_device(self):
+        device = self.device.value
+        return torch.device(device) if device != "auto" else None
+
+    def _stop_checker(self):
+        if self._stop_flag:
+            print("[Frontend Checker] Stop flag detected.")
+            return True
+        return False
+
+    def _prepare_run(self):
+        self._stop_flag = False
+        print("--- Starting new task, flag reset to False ---")
+
+    def _update_folder_inference_state(self):
+        folder_mode = self.inference_from_folder_mode.value
+        self.image_folder.visible = folder_mode
+        self.output_folder.visible = folder_mode
+        self.save_visualization.visible = folder_mode
+        self.save_stacked_visualization.visible = folder_mode
+        self._update_visualization_output_state()
+        self._update_stacked_visualization_output_state()
+
+    def _update_visualization_output_state(self):
+        self.visualization_output_folder.visible = (
+            self.inference_from_folder_mode.value and self.save_visualization.value
+        )
+
+    def _update_stacked_visualization_output_state(self):
+        self.stacked_visualization_output_folder.visible = (
+            self.inference_from_folder_mode.value and self.save_stacked_visualization.value
+        )
+
+    def _build_full_inference_request(self, image_data, device, model_path, stop_checker):
         image_folder = normalize_optional_path(self.image_folder.value)
-        output_folder = normalize_optional_path(self.output_folder.value)
+        label_output_folder = normalize_optional_path(self.output_folder.value)
+        visualization_output_folder = normalize_optional_path(self.visualization_output_folder.value)
+        stacked_visualization_output_folder = normalize_optional_path(self.stacked_visualization_output_folder.value)
         return SegmentationInferenceRequest(
             model_name=self.model_name.value,
             backbone_name=self.backbone_name.value,
@@ -407,15 +412,21 @@ class DLInferenceContainer(Container):
             num_classes=self.num_classes.value,
             model_path=model_path,
             device=device,
-            image=None if img_layer is None else img_layer.data,
+            image=image_data,
             image_folder=image_folder if self.inference_from_folder_mode.value else None,
-            output_folder=output_folder,
+            label_output_folder=label_output_folder,
+            visualization_output_folder=visualization_output_folder if self.save_visualization.value else None,
+            save_visualization=self.save_visualization.value,
+            stacked_visualization_output_folder=stacked_visualization_output_folder if self.save_stacked_visualization.value else None,
+            save_stacked_visualization=self.save_stacked_visualization.value,
             stop_checker=stop_checker,
         )
 
-    def _build_sliding_inference_request(self, img_layer, device, model_path, stop_checker):
+    def _build_sliding_inference_request(self, image_data, device, model_path, stop_checker):
         image_folder = normalize_optional_path(self.image_folder.value)
-        output_folder = normalize_optional_path(self.output_folder.value)
+        label_output_folder = normalize_optional_path(self.output_folder.value)
+        visualization_output_folder = normalize_optional_path(self.visualization_output_folder.value)
+        stacked_visualization_output_folder = normalize_optional_path(self.stacked_visualization_output_folder.value)
         return SlidingWindowInferenceRequest(
             model_name=self.model_name.value,
             backbone_name=self.backbone_name.value,
@@ -423,100 +434,63 @@ class DLInferenceContainer(Container):
             num_classes=self.num_classes.value,
             model_path=model_path,
             device=device,
-            image=None if img_layer is None else img_layer.data,
+            image=image_data,
             image_folder=image_folder if self.inference_from_folder_mode.value else None,
-            output_folder=output_folder,
+            label_output_folder=label_output_folder,
+            visualization_output_folder=visualization_output_folder if self.save_visualization.value else None,
+            save_visualization=self.save_visualization.value,
+            stacked_visualization_output_folder=stacked_visualization_output_folder if self.save_stacked_visualization.value else None,
+            save_stacked_visualization=self.save_stacked_visualization.value,
             stop_checker=stop_checker,
             window_size=self.slide_window_size.value,
         )
 
-# ================== UI 状态管理辅助函数 ==================
-    def _update_ui_state(self, is_running):
-        """
-        统一管理运行状态切换时的 UI 和标志位。
-        is_running: True 表示任务刚开始；False 表示任务已结束（完成或停止）。
-        """
-        self._is_running = is_running
-        
-        if is_running:
-            # 【关键点 1】：任务开始时，必须重置停止标志！
-            # 这样新的任务才不会被旧的标志误伤。
-            self._stop_flag = False  
-            print("--- Starting new task, flag reset to False ---")
-        else:
-            self._stop_flag = False 
-
- 
-    # ==================================================
-    def _run_inference_full(self):
-        self._update_ui_state(True)  # 任务开始，更新状态
+    def _start_inference_worker(self, request_builder, task_runner, suffix):
+        self._prepare_run()
         img_layer = self._image_layer_combo.value
+        image_data = None if img_layer is None else img_layer.data
+        request = request_builder(
+            image_data,
+            self._resolve_device(),
+            normalize_optional_path(self.model_path.value),
+            self._stop_checker,
+        )
 
-        device = self.device.value
-        dev = torch.device(device) if device != "auto" else None
-        model_path = normalize_optional_path(self.model_path.value)
-        def check_stop():
-            if self._stop_flag:
-                print("[Frontend Checker] Stop flag detected.")
-                return True
-            return False
-        
         @thread_worker
         def _worker():
-            # 在 _worker 函数中
-            request = self._build_full_inference_request(img_layer, dev, model_path, check_stop)
-            return run_full_inference_task(request)
+            return task_runner(request)
 
         self._worker = _worker()
 
         def on_result(mask: np.ndarray):
-            name = img_layer.name + "_dl_mask"
-            upsert_labels_layer(self._viewer, mask, name)
+            if img_layer is None or mask is None:
+                return
+            upsert_labels_layer(self._viewer, mask, f"{img_layer.name}{suffix}")
 
         self._worker.returned.connect(on_result)
         self._worker.start()
+
+    def _run_inference_full(self):
+        self._start_inference_worker(
+            self._build_full_inference_request,
+            run_full_inference_task,
+            "_dl_mask",
+        )
 
     def _run_inference_slide(self):
-        self._update_ui_state(True)
-        img_layer = self._image_layer_combo.value
-        
-        device = self.device.value
-        dev = torch.device(device) if device != "auto" else None
-        model_path = normalize_optional_path(self.model_path.value)
-        def check_stop():
-            if self._stop_flag:
-                print("[Frontend Checker] Stop flag detected.")
-                return True
-            return False
-
-        @thread_worker
-        def _worker():
-            # 停止推理
-            if self._stop_flag:
-                raise StopIteration()
-            
-            request = self._build_sliding_inference_request(img_layer, dev, model_path, check_stop)
-            return run_sliding_inference_task(request)
-
-        self._worker = _worker()
-
-        def on_result(mask: np.ndarray):
-            name = img_layer.name + "_slide_mask"
-            upsert_labels_layer(self._viewer, mask, name)
-
-        self._worker.returned.connect(on_result)
-        self._worker.start()
+        self._start_inference_worker(
+            self._build_sliding_inference_request,
+            run_sliding_inference_task,
+            "_slide_mask",
+        )
 
     def _stop_worker(self):
-            if self._worker is not None:
-                print("Attempting to stop inference...")
-                self._stop_flag = True
-                self._worker.quit()
-            else:
-                print("No active inference worker to stop.")
-            
-
-                
+        if self._worker is not None:
+            print("Attempting to stop inference...")
+            self._stop_flag = True
+            self._worker.quit()
+        else:
+            print("No active inference worker to stop.")
 
 
 class DLTrainingContainer(Container):
@@ -525,8 +499,7 @@ class DLTrainingContainer(Container):
         super().__init__()
         self._viewer = viewer
         self._stop_flag = False
-        
-        # widgets
+
         self.images_dir = FileEdit(label="Images folder", mode="d")
         self.masks_dir = FileEdit(label="Masks folder", mode="d")
         self.save_path = FileEdit(label="Save model as (.pth)", mode="d")
@@ -541,94 +514,87 @@ class DLTrainingContainer(Container):
         self.device = ComboBox(label="Device", choices=["auto", "cpu", "cuda"], value="auto")
 
         self.classes_num = SpinBox(label="Classes num", min=2, max=1000, step=1, value=2)
-        # self.in_channels = SpinBox(label="Image channels", min=1, max=3, step=1, value=3)
         self.target_size = SpinBox(label="Target size", min=1, max=10**8, value=512)
         self.ignore_index = SpinBox(label="Ignore the index in mask", min=-1, max=10**8, value=-1)
 
         self._train_button = PushButton(text="Start Training")
         self._stop_button = PushButton(text="Stop Training")
         self._log_label = Label(value="Training log:")
-        
+        _configure_wrapped_label(self._log_label)
         self._log_widget = TextEdit()
         self._log_widget.read_only = True
         self._log_widget.native.setMinimumHeight(180)
 
-        # add widgets
         self.extend([
-            self.images_dir, self.masks_dir, self.save_path, self.pretrained_model,
-            self.backbone_name, self.model_name,
-            self.lr, self.batch_size, self.epochs, self.device,
-            self.classes_num,  self.target_size,
+            self.images_dir,
+            self.masks_dir,
+            self.save_path,
+            self.pretrained_model,
+            self.backbone_name,
+            self.model_name,
+            self.lr,
+            self.batch_size,
+            self.epochs,
+            self.device,
+            self.classes_num,
+            self.target_size,
             self.ignore_index,
-            self._train_button, self._stop_button, self._log_label, 
-            self._log_widget
+            self._train_button,
+            self._stop_button,
+            self._log_label,
+            self._log_widget,
         ])
 
-        # connect signals
         self._train_button.clicked.connect(self._start_training)
         self._stop_button.clicked.connect(self._stop_training)
 
-
-        # ---------------- Loss Curve ----------------
-        # ---------------- Loss Curve ----------------
         self._fig, self._ax = plt.subplots()
-        self._ax.set_xlabel("Epoch")
-        self._ax.set_ylabel("Loss")
-        self._ax.set_title("Training Loss Curve")
         self._canvas = FigureCanvas(self._fig)
+        self._x_values = []
+        self._y_values = []
 
-        # 用 QWidget 包装 FigureCanvas
         self._canvas_widget = QWidget()
         v_layout = QVBoxLayout()
         v_layout.addWidget(self._canvas)
         self._canvas_widget.setLayout(v_layout)
-        # 添加到 Napari dock
         if self._viewer is not None:
             self._viewer.window.add_dock_widget(self._canvas_widget, name="Loss Curve", area="right")
 
-        # 用于绘制曲线
+        self._reset_training_plot()
 
-    def _log(self, s):
+    def _log(self, message):
         try:
-            self._log_widget.append(s)
+            self._log_widget.append(message)
         except Exception:
-            print(s)
-            
-            
-    # --------------------------- LOSS CURVE ---------------------------
+            print(message)
+
+    def _render_training_plot(self):
+        self._ax.clear()
+        self._ax.set_xlabel("Epoch")
+        self._ax.set_ylabel("Loss")
+        self._ax.set_title("Training Loss Curve")
+        self._ax.plot(self._x_values, self._y_values, color="blue")
+        self._fig.tight_layout()
+        self._canvas.draw_idle()
+
     def _update_loss_curve(self, loss, epoch=None):
-        # 支持 batch 或 epoch 级别绘制
         if epoch is not None:
             self._x_values.append(epoch)
             self._y_values.append(loss)
-        # else:
-        #     # batch 级别直接追加
-        #     self._x_values.append(len(self._x_values)+1)
-        #     self._y_values.append(loss)
-        self._ax.clear()
-        self._ax.set_xlabel("Epoch")
-        self._ax.set_ylabel("Loss")
-        self._ax.set_title("Training Loss Curve")
-        self._ax.plot(self._x_values, self._y_values, color='blue')
-        self._fig.tight_layout()
-        self._canvas.draw_idle()
-    # ------------------------ TRAINING LOGIC --------------------------
+        self._render_training_plot()
 
     def _reset_training_plot(self):
-        self._ax.cla()
-        self._canvas.draw()
         self._x_values = []
         self._y_values = []
-        self._ax.clear()
-        self._ax.set_xlabel("Epoch")
-        self._ax.set_ylabel("Loss")
-        self._ax.set_title("Training Loss Curve")
-        self._fig.tight_layout()
-        self._canvas.draw()
+        self._render_training_plot()
+
+    def _resolve_training_device(self):
+        device = self.device.value
+        if device != "auto":
+            return torch.device(device)
+        return torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     def _build_training_request(self):
-        device = self.device.value
-        dev = torch.device(device) if device != "auto" else torch.device("cuda" if torch.cuda.is_available() else "cpu")
         return SegmentationTrainingRequest(
             images_dir=self.images_dir.value,
             masks_dir=self.masks_dir.value,
@@ -638,21 +604,14 @@ class DLTrainingContainer(Container):
             lr=self.lr.value,
             batch_size=self.batch_size.value,
             epochs=self.epochs.value,
-            device=dev,
+            device=self._resolve_training_device(),
             classes_num=self.classes_num.value,
             target_size=self.target_size.value,
             ignore_index=self.ignore_index.value,
             pretrained_model=normalize_optional_path(self.pretrained_model.value),
         )
 
-    def _start_training(self):
-        if self._viewer is None:
-            return
-
-        self._stop_flag = False  # Reset stop flag before each training session
-        self._reset_training_plot()
-        request = self._build_training_request()
-
+    def _create_training_worker(self, request):
         @thread_worker
         def _worker():
             return run_training_task(
@@ -662,37 +621,36 @@ class DLTrainingContainer(Container):
                 stop_flag_fn=lambda: self._stop_flag,
             )
 
-        worker = _worker()
+        return _worker()
 
-        def on_returned(logs):
-            for epoch, batch, n_batches, loss, finished, epoch_time, metrics_info in logs:
-                if batch == 0:
-                    if epoch_time is not None:
-                        self._log(
-                            f"Epoch {epoch} finished, avg loss {loss:.4f}, time {epoch_time:.2f}s, metric {metrics_info}"
-                        )
-                    else:
-                        self._log(f"Epoch {epoch} finished, avg loss {loss:.4f}")
+    def _on_training_returned(self, logs, request):
+        for epoch, batch, n_batches, loss, finished, epoch_time, metrics_info in logs:
+            if batch == 0:
+                if epoch_time is not None:
+                    self._log(
+                        f"Epoch {epoch} finished, avg loss {loss:.4f}, time {epoch_time:.2f}s, metric {metrics_info}"
+                    )
                 else:
-                    self._log(f"Epoch {epoch} batch {batch}/{n_batches} loss {loss:.4f}")
-            if not self._stop_flag:
-                self._log(f"Training finished. Model saved to: {request.save_path}")
+                    self._log(f"Epoch {epoch} finished, avg loss {loss:.4f}")
+            else:
+                self._log(f"Epoch {epoch} batch {batch}/{n_batches} loss {loss:.4f}")
+        if not self._stop_flag:
+            self._log(f"Training finished. Model saved to: {request.save_path}")
 
-        worker.returned.connect(on_returned)
+    def _start_training(self):
+        if self._viewer is None:
+            return
+
+        self._stop_flag = False
+        self._reset_training_plot()
+        request = self._build_training_request()
+        worker = self._create_training_worker(request)
+        worker.returned.connect(lambda logs: self._on_training_returned(logs, request))
         worker.start()
 
     def _stop_training(self):
         self._stop_flag = True
         self._log("Stop button clicked. Stopping training...")
-
-    def _cleanup_gpu(self):
-        import gc
-        torch.cuda.empty_cache()
-        gc.collect()
-        self._log("GPU memory released.")
-
-
-
 
 
 #------------EMCellFiner=------
@@ -717,6 +675,7 @@ class EMCellFinerSingleInferWidget(Container):
         self.label_model = Label(value="(If left blank, the model will be automatically downloaded from the cloud. Manual loading is also supported.")
         self._run_button = PushButton(text="Run Inference")
         self.label_info = Label(value="(For large images, it may take a while when using CPU. GPU is recommended.)")
+        _configure_wrapped_labels(self.label_model, self.label_info)
 
         self.extend([
             self.model_choice, self.model_path, self.label_model,
@@ -782,6 +741,7 @@ class EMCellFinerBatchInferWidget(Container):
         self._stop_button = PushButton(text="Stop Inference")
         self.label_model = Label(value="(If left blank, the model will be automatically downloaded from the cloud. Manual loading is also supported.")
         self.label_info = Label(value="(For large images, it may take a while when using CPU. GPU is recommended.)")
+        _configure_wrapped_labels(self.label_model, self.label_info)
 
         self.extend([
             self.model_choice, self.model_path, self.label_model,
@@ -1030,6 +990,7 @@ class LabelMe2Seg(Container):
             pass
 
         raise ValueError("无法解析标签映射文件，请检查文件格式。")
+    
 class PhenotypeAnalysis(Container):
     def __init__(self, viewer: "napari.viewer.Viewer"):
         super().__init__()
@@ -1042,6 +1003,7 @@ class PhenotypeAnalysis(Container):
         
         # ... (此处省略你原有的 CheckBox 初始化) ...
         self.label = Label(value="Select features to analyze:")
+        _configure_wrapped_label(self.label)
         self.Area_box = CheckBox(label="Area",  value=True)
         self.Perimeter_box = CheckBox(label="Perimeter",  value=True)
         self.Elongation_box = CheckBox(label="Elongation",  value=True)
