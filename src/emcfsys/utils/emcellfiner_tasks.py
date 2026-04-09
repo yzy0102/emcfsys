@@ -7,7 +7,10 @@ from PIL import Image as PILImage
 
 from ..EMCellFiner.hat.models.hat_model import HATModel
 from ..EMCellFiner.hat.models.inference_hat import hat_infer_numpy
+from .image_resize_ops import resize_array
 from .io_utils import collect_image_files, ensure_directory
+
+MIN_EMCELLFINER_INPUT_SIZE = 16
 
 
 @dataclass(slots=True)
@@ -19,6 +22,9 @@ class EMCellFinerRequest:
     image: np.ndarray | None = None
     input_dir: str | None = None
     output_dir: str | None = None
+    resize_before_inference: bool = False
+    resize_factor: float = 0.25
+    resize_algorithm: str = "Bilinear"
 
 
 def resolve_emcellfiner_device(device: str) -> str:
@@ -35,12 +41,24 @@ def _load_emcellfiner_model(request: EMCellFinerRequest) -> HATModel:
     )
 
 
+def _maybe_resize_input(image: np.ndarray, request: EMCellFinerRequest) -> np.ndarray:
+    if not request.resize_before_inference:
+        return image
+
+    output_height = max(MIN_EMCELLFINER_INPUT_SIZE, int(image.shape[-3] * request.resize_factor))
+    output_width = max(MIN_EMCELLFINER_INPUT_SIZE, int(image.shape[-2] * request.resize_factor))
+    resized = resize_array(image, output_height, output_width, request.resize_algorithm)
+    if resized.dtype != image.dtype:
+        resized = np.clip(resized, 0, 255).astype(image.dtype)
+    return resized
+
+
 def run_emcellfiner_single_inference(request: EMCellFinerRequest):
     if request.image is None:
         return None
 
     model = _load_emcellfiner_model(request)
-    return hat_infer_numpy(model, request.image, request.device)
+    return hat_infer_numpy(model, _maybe_resize_input(request.image, request), request.device)
 
 
 def iter_emcellfiner_batch_inference(request: EMCellFinerRequest, stop_checker=None):
@@ -56,6 +74,7 @@ def iter_emcellfiner_batch_inference(request: EMCellFinerRequest, stop_checker=N
             break
 
         img = np.array(PILImage.open(path).convert("RGB"))
+        img = _maybe_resize_input(img, request)
         out_np = hat_infer_numpy(model, img, request.device)
         save_path = os.path.join(request.output_dir, os.path.basename(path))
         PILImage.fromarray(out_np).convert("RGB").save(save_path)

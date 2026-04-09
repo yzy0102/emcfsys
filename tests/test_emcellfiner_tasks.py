@@ -43,6 +43,34 @@ def test_run_emcellfiner_single_inference(monkeypatch):
     assert calls["infer"] == ("model", (4, 4), "cpu")
 
 
+def test_run_emcellfiner_single_inference_with_resize(monkeypatch):
+    calls = {}
+
+    def fake_model(local_path=None, scale=None, tile_size=None):
+        return "model"
+
+    def fake_infer(model, image, device):
+        calls["infer"] = (model, image.shape, device)
+        return np.ones((8, 8, 3), dtype=np.uint8)
+
+    monkeypatch.setattr("emcfsys.utils.emcellfiner_tasks.HATModel", fake_model)
+    monkeypatch.setattr("emcfsys.utils.emcellfiner_tasks.hat_infer_numpy", fake_infer)
+
+    request = EMCellFinerRequest(
+        model_path="model.pth",
+        scale=4,
+        tile_size=512,
+        device="cpu",
+        image=np.zeros((8, 8, 3), dtype=np.uint8),
+        resize_before_inference=True,
+        resize_factor=0.25,
+        resize_algorithm="Bilinear",
+    )
+
+    run_emcellfiner_single_inference(request)
+    assert calls["infer"] == ("model", (16, 16, 3), "cpu")
+
+
 def test_iter_emcellfiner_batch_inference(monkeypatch, tmp_path):
     image_path = tmp_path / "sample.png"
     Image.fromarray(np.zeros((4, 4), dtype=np.uint8)).save(image_path)
@@ -78,3 +106,72 @@ def test_iter_emcellfiner_batch_inference(monkeypatch, tmp_path):
     assert out_np.shape == (4, 4, 3)
     assert idx == 0
     assert calls["count"] == 1
+
+
+def test_iter_emcellfiner_batch_inference_with_resize(monkeypatch, tmp_path):
+    image_path = tmp_path / "sample.png"
+    Image.fromarray(np.zeros((8, 8, 3), dtype=np.uint8)).save(image_path)
+    output_dir = tmp_path / "out"
+
+    calls = {"shapes": []}
+
+    def fake_model(local_path=None, scale=None, tile_size=None):
+        return "model"
+
+    def fake_infer(model, image, device):
+        calls["shapes"].append(image.shape)
+        return np.ones((4, 4, 3), dtype=np.uint8)
+
+    monkeypatch.setattr("emcfsys.utils.emcellfiner_tasks.HATModel", fake_model)
+    monkeypatch.setattr("emcfsys.utils.emcellfiner_tasks.hat_infer_numpy", fake_infer)
+
+    request = EMCellFinerRequest(
+        model_path=None,
+        scale=4,
+        tile_size=512,
+        device="cpu",
+        input_dir=str(tmp_path),
+        output_dir=str(output_dir),
+        resize_before_inference=True,
+        resize_factor=0.25,
+        resize_algorithm="Bilinear",
+    )
+
+    results = list(iter_emcellfiner_batch_inference(request))
+
+    assert len(results) == 1
+    assert calls["shapes"] == [(16, 16, 3)]
+
+
+def test_iter_emcellfiner_batch_inference_resize_preserves_larger_images(monkeypatch, tmp_path):
+    image_path = tmp_path / "sample.png"
+    Image.fromarray(np.zeros((128, 96, 3), dtype=np.uint8)).save(image_path)
+    output_dir = tmp_path / "out"
+
+    calls = {"shape": None}
+
+    def fake_model(local_path=None, scale=None, tile_size=None):
+        return "model"
+
+    def fake_infer(model, image, device):
+        calls["shape"] = image.shape
+        return np.ones((4, 4, 3), dtype=np.uint8)
+
+    monkeypatch.setattr("emcfsys.utils.emcellfiner_tasks.HATModel", fake_model)
+    monkeypatch.setattr("emcfsys.utils.emcellfiner_tasks.hat_infer_numpy", fake_infer)
+
+    request = EMCellFinerRequest(
+        model_path=None,
+        scale=4,
+        tile_size=512,
+        device="cpu",
+        input_dir=str(tmp_path),
+        output_dir=str(output_dir),
+        resize_before_inference=True,
+        resize_factor=0.25,
+        resize_algorithm="Bilinear",
+    )
+
+    list(iter_emcellfiner_batch_inference(request))
+
+    assert calls["shape"] == (32, 24, 3)

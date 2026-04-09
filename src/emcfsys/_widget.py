@@ -736,6 +736,13 @@ class EMCellFinerBatchInferWidget(Container):
         self.scale = ComboBox(label="Scale", choices=[1, 2, 4], value=4)
         self.tile_size = ComboBox(label="Tile Size", choices=[256, 384, 512, 640, 1024], value=512)
         self.device = ComboBox(label="Device", choices=["auto", "cpu", "cuda"], value="auto")
+        self.resize_before_inference = CheckBox(label="Resize input before inference", value=False)
+        self.resize_factor = FloatSpinBox(label="Resize factor", min=0.01, max=100.0, step=0.05, value=0.25)
+        self.resize_algorithm = ComboBox(
+            label="Resize algorithm",
+            choices=["Nearest Neighbor", "Bilinear", "Bicubic", "Lanczos"],
+            value="Bilinear",
+        )
         self.model_choice = ComboBox(label="Model", choices=MODEL_ZOO, value="EMCellFiner")
         self._run_button = PushButton(text="Run Batch Inference")
         self._stop_button = PushButton(text="Stop Inference")
@@ -747,14 +754,22 @@ class EMCellFinerBatchInferWidget(Container):
             self.model_choice, self.model_path, self.label_model,
             self.input_dir, self.output_dir,
             self.scale, self.tile_size, self.device,
+            self.resize_before_inference, self.resize_factor, self.resize_algorithm,
             self._run_button, self._stop_button, self.label_info
         ])
 
         self._run_button.clicked.connect(self._run_batch_inference)
         self._stop_button.clicked.connect(self._stop_worker)
+        self.resize_before_inference.changed.connect(self._update_resize_controls_state)
 
         self._worker = None
         self._stop_flag = False
+        self._update_resize_controls_state()
+
+    def _update_resize_controls_state(self):
+        enabled = self.resize_before_inference.value
+        self.resize_factor.visible = enabled
+        self.resize_algorithm.visible = enabled
 
     def _build_request(self):
         return EMCellFinerRequest(
@@ -764,6 +779,9 @@ class EMCellFinerBatchInferWidget(Container):
             device=resolve_emcellfiner_device(self.device.value),
             input_dir=normalize_optional_path(self.input_dir.value),
             output_dir=normalize_optional_path(self.output_dir.value),
+            resize_before_inference=self.resize_before_inference.value,
+            resize_factor=self.resize_factor.value,
+            resize_algorithm=self.resize_algorithm.value,
         )
 
     def _stop_worker(self):
