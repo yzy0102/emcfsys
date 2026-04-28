@@ -75,7 +75,7 @@ Or use the follow pipline
 pip install "napari[pyqt6, optional]" 
 ```
 
-Then you can install`emcfsys` via [pip]:
+Then you can install `emcfsys` via [pip]:
 
 ```
 pip install emcfsys 
@@ -84,9 +84,11 @@ pip install emcfsys
 You can also install emcfsys in the napari-plugin-store
 
 At last, install necessary components:
+
 ```
-pip install labelme timm opencv-python einops
+pip install labelme timm opencv-python einops shapely albumentations
 ```
+
 ---
 
 ## 📖 Quick Start
@@ -99,7 +101,6 @@ pip install labelme timm opencv-python einops
 ## 📖 Tutorial
 
 All tutorials and feature descriptions can be found in the [tutorial documentation](./notebooks/tutorial.md) (click me!).
-
 
 ## License
 

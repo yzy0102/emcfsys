@@ -6,3 +6,4 @@ timm
 opencv-python 
 einops
 shapely
+albumentations
