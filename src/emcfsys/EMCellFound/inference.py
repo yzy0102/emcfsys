@@ -37,7 +37,7 @@ def timer(func):
         
         # 计算并打印持续时间
         duration = end_time - start_time
-        print(f"🕒 函数 '{func.__name__}' 执行完成，耗时: {duration:.4f} 秒。")
+        print(f"🕒 Function '{func.__name__}'done，timed: {duration:.4f} s。")
         
         # 返回原函数的执行结果
         return result
