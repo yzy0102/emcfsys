@@ -10,6 +10,7 @@ from ._writer import write_multiple, write_single_image
 
 _WIDGET_EXPORTS = {
     "ImageResize",
+    "ModelManagerContainer",
     "DLInferenceContainer",
     "DLTrainingContainer",
     "ClassificationTrainingContainer",
@@ -40,6 +41,7 @@ __all__ = (
     "write_multiple",
     "make_sample_data",
     "ImageResize",
+    "ModelManagerContainer",
     "DLInferenceContainer",
     "DLTrainingContainer",
     "ClassificationTrainingContainer",

@@ -24,6 +24,7 @@ from ..EMCellFound.models.classifier import (
     EMCellFoundLinearClassifier,
 )
 from .io_utils import collect_image_files, ensure_directory
+from .training_artifacts import export_training_artifacts
 
 
 HEAD_KNN = "knn"
@@ -257,6 +258,18 @@ def run_classification_training_task(
         if log is not None:
             log(message)
 
+    def export_artifacts():
+        artifacts = export_training_artifacts(
+            save_path,
+            request,
+            "classification",
+            logs,
+        )
+        emit(
+            "Training artifacts exported: "
+            f"{artifacts['config']}, {artifacts['training_log']}, {artifacts['metrics']}"
+        )
+
     base_dataset, train_dataset, val_dataset = _build_datasets(
         request.dataset_dir,
         request.img_size,
@@ -310,6 +323,7 @@ def run_classification_training_task(
         metric_text = "n/a" if val_acc is None else f"{val_acc:.4f}"
         emit(f"KNN memory bank saved to {save_file}; val accuracy: {metric_text}")
         logs.append((1, 0, 1, 0.0, True, 0.0, {"Val_Accuracy": val_acc}))
+        export_artifacts()
         return logs
 
     if head_name != HEAD_LINEAR:
@@ -357,6 +371,7 @@ def run_classification_training_task(
                         interrupted_path,
                     )
                     emit(f"Training stopped. Model saved to {interrupted_path}")
+                    export_artifacts()
                     return logs
 
                 images = images.to(device)
@@ -428,6 +443,7 @@ def run_classification_training_task(
             final_path,
         )
         emit(f"Final classification model saved to {final_path}")
+        export_artifacts()
         return logs
     finally:
         del model

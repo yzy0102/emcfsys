@@ -16,6 +16,7 @@ from emcfsys._widget import (
     InstanceSegmentationInferenceContainer,
     InstanceSegmentationTrainingContainer,
     LabelMe2COCOInstance,
+    ModelManagerContainer,
     threshold_autogenerate_widget,
     threshold_magic_widget,
 )
@@ -500,3 +501,185 @@ def test_instance_segmentation_widgets_are_in_manifest():
     assert "COCOInstanceDatasetInspector" in manifest
     assert "emcfsys.labelme_2_coco_instance" in manifest
     assert "LabelMe2COCOInstance" in manifest
+
+
+def test_model_manager_widget_scans_and_registers_training_run(tmp_path):
+    run_dir = tmp_path / "semantic_run"
+    run_dir.mkdir()
+    (run_dir / "config.json").write_text(
+        """
+        {
+          "task": "semantic_segmentation",
+          "version": 1,
+          "parameters": {
+            "model_name": "unet",
+            "backbone_name": "resnet34",
+            "target_size": 256,
+            "classes_num": 2
+          }
+        }
+        """,
+        encoding="utf-8",
+    )
+    (run_dir / "metrics.json").write_text(
+        '{"final": {"val_IoU": 0.8}}',
+        encoding="utf-8",
+    )
+    (run_dir / "training_log.csv").write_text("epoch,loss\n1,0.1\n", encoding="utf-8")
+    (run_dir / "best_model_epoch1_IoU=0.8000.pth").write_bytes(b"checkpoint")
+
+    widget = ModelManagerContainer(None)
+    widget.registry_path.value = tmp_path / "registry.json"
+    widget.scan_root.value = tmp_path
+    widget._scan_folder()
+    widget._show_selected_model()
+
+    assert len(widget._registry["models"]) == 1
+    assert "unet" in widget.model_list.value
+    assert "best_model_epoch1_IoU=0.8000.pth" in widget.model_details.value
+
+
+def test_model_manager_manual_registration_is_collapsible():
+    widget = ModelManagerContainer(None)
+
+    assert widget.manual_registration.value is False
+    assert widget.manual_name.native.isHidden()
+    assert widget.manual_checkpoint.native.isHidden()
+    assert widget._add_manual_button.native.isHidden()
+
+    widget.manual_registration.value = True
+
+    assert not widget.manual_name.native.isHidden()
+    assert not widget.manual_checkpoint.native.isHidden()
+    assert not widget._add_manual_button.native.isHidden()
+
+
+def test_model_manager_fills_semantic_inference_widget(tmp_path):
+    run_dir = tmp_path / "semantic_run"
+    run_dir.mkdir()
+    checkpoint = run_dir / "final_model.pth"
+    checkpoint.write_bytes(b"checkpoint")
+    config = run_dir / "config.json"
+    config.write_text(
+        """
+        {
+          "task": "semantic_segmentation",
+          "version": 1,
+          "parameters": {
+            "model_name": "unet",
+            "backbone_name": "resnet34",
+            "target_size": 384,
+            "classes_num": 4
+          }
+        }
+        """,
+        encoding="utf-8",
+    )
+
+    manager = ModelManagerContainer(None)
+    manager._registry = {
+        "version": 1,
+        "models": [
+            {
+                "name": "semantic",
+                "task": "semantic_segmentation",
+                "checkpoint_path": str(checkpoint),
+                "config_path": str(config),
+                "summary": {},
+                "status": "available",
+            }
+        ],
+    }
+    manager._refresh_model_list()
+
+    inference = manager._fill_selected_inference_widget()
+
+    assert isinstance(inference, DLInferenceContainer)
+    assert inference.model_path.value == checkpoint
+    assert inference.config_path.value == config
+    assert inference.model_name.value == "unet"
+    assert inference.backbone_name.value == "resnet34"
+    assert inference.img_size.value == 384
+    assert inference.num_classes.value == 4
+
+
+def test_model_manager_fills_classification_inference_widget(tmp_path):
+    checkpoint = tmp_path / "classification_knn.pth"
+    checkpoint.write_bytes(b"checkpoint")
+    config = tmp_path / "config.json"
+    config.write_text('{"task": "classification", "parameters": {}}', encoding="utf-8")
+
+    manager = ModelManagerContainer(None)
+    manager._registry = {
+        "version": 1,
+        "models": [
+            {
+                "name": "classification",
+                "task": "classification",
+                "checkpoint_path": str(checkpoint),
+                "config_path": str(config),
+                "summary": {},
+                "status": "available",
+            }
+        ],
+    }
+    manager._refresh_model_list()
+
+    inference = manager._fill_selected_inference_widget()
+
+    assert isinstance(inference, ClassificationInferenceContainer)
+    assert inference.checkpoint_path.value == checkpoint
+
+
+def test_model_manager_fills_instance_inference_widget(tmp_path):
+    checkpoint = tmp_path / "final_instance_segmentation.pth"
+    checkpoint.write_bytes(b"checkpoint")
+    config = tmp_path / "config.json"
+    config.write_text(
+        """
+        {
+          "task": "instance_segmentation",
+          "version": 1,
+          "parameters": {
+            "model_name": "mask_rcnn_instance",
+            "backbone_name": "resnet50",
+            "img_size": 640,
+            "num_classes": 3
+          }
+        }
+        """,
+        encoding="utf-8",
+    )
+
+    manager = ModelManagerContainer(None)
+    manager._registry = {
+        "version": 1,
+        "models": [
+            {
+                "name": "instance",
+                "task": "instance_segmentation",
+                "checkpoint_path": str(checkpoint),
+                "config_path": str(config),
+                "summary": {},
+                "status": "available",
+            }
+        ],
+    }
+    manager._refresh_model_list()
+
+    inference = manager._fill_selected_inference_widget()
+
+    assert isinstance(inference, InstanceSegmentationInferenceContainer)
+    assert inference.checkpoint_path.value == checkpoint
+    assert inference.model_name.value == "mask_rcnn_instance"
+    assert inference.backbone_name.value == "resnet50"
+    assert inference.img_size.value == 640
+    assert inference.num_classes.value == 3
+
+
+def test_model_manager_is_in_manifest():
+    manifest = Path("src/emcfsys/napari.yaml").read_text(encoding="utf-8")
+
+    assert "emcfsys.model_manager" in manifest
+    assert "ModelManagerContainer" in manifest
+    assert "Model Manager | Registry" in manifest

@@ -100,6 +100,16 @@ from .utils.labelme_coco_tasks import (
     LabelMeInstanceToCOCORequest,
     convert_labelme_instance_folder_to_coco,
 )
+from .utils.model_registry import (
+    add_or_update_model_entry,
+    build_model_entry,
+    default_model_registry_path,
+    format_registry_summary,
+    load_model_registry,
+    refresh_registry_status,
+    save_model_registry,
+    scan_experiment_folder,
+)
 from .utils.training_tasks import SegmentationTrainingRequest, run_training_task
 from .utils.training_artifacts import load_training_config, save_training_config
 from .utils.viewer_ops import upsert_image_layer, upsert_labels_layer
@@ -377,6 +387,301 @@ class ExampleQWidget(QWidget):
 
     def _on_click(self):
         print(f"napari has {len(self._viewer.layers)} layers")
+
+
+class ModelManagerContainer(Container):
+    """Persistent model registry for trained EMCFsys models."""
+
+    def __init__(self, viewer: "napari.viewer.Viewer"):
+        super().__init__()
+        self._viewer = viewer
+        self._registry = load_model_registry()
+
+        self.header = Label(value="Model Manager: persistent registry + training result scanner")
+        _configure_wrapped_label(self.header)
+
+        self.registry_path = FileEdit(label="Registry JSON", mode="w", nullable=True)
+        self.registry_path.value = default_model_registry_path()
+        self._load_registry_button = PushButton(text="Load Registry")
+        self._save_registry_button = PushButton(text="Save Registry")
+
+        self.scan_root = FileEdit(label="Training result root", mode="d", nullable=True)
+        self._scan_button = PushButton(text="Scan Folder and Register")
+
+        self.manual_registration = CheckBox(label="Manual registration", value=False)
+        self.manual_name = create_widget(label="Model name", annotation=str)
+        self.manual_task = ComboBox(
+            label="Task",
+            choices=["semantic_segmentation", "instance_segmentation", "classification"],
+            value="semantic_segmentation",
+        )
+        self.manual_checkpoint = FileEdit(label="Checkpoint (.pth)", mode="r", nullable=True)
+        self.manual_config = FileEdit(label="Config JSON", mode="r", nullable=True)
+        self.manual_metrics = FileEdit(label="Metrics JSON", mode="r", nullable=True)
+        self.manual_log = FileEdit(label="Training log CSV", mode="r", nullable=True)
+        self.manual_notes = TextEdit(label="Notes", value="")
+        self.manual_notes.native.setMinimumHeight(70)
+        self._add_manual_button = PushButton(text="Register / Update Model")
+
+        self.list_header = Label(value="Registered models")
+        _configure_wrapped_label(self.list_header)
+        self.selected_index = SpinBox(label="Selected index", min=0, max=0, step=1, value=0)
+        self._refresh_button = PushButton(text="Refresh List")
+        self._show_details_button = PushButton(text="Show Selected Details")
+        self._fill_inference_button = PushButton(text="Open / Fill Inference Widget")
+        self.model_list = TextEdit(value="")
+        self.model_list.read_only = True
+        self.model_list.native.setMinimumHeight(180)
+        self.model_details = TextEdit(value="")
+        self.model_details.read_only = True
+        self.model_details.native.setMinimumHeight(180)
+        self._inference_widgets = {}
+
+        self.extend(
+            [
+                self.header,
+                self.registry_path,
+                self._load_registry_button,
+                self._save_registry_button,
+                self.scan_root,
+                self._scan_button,
+                self.manual_registration,
+                self.manual_name,
+                self.manual_task,
+                self.manual_checkpoint,
+                self.manual_config,
+                self.manual_metrics,
+                self.manual_log,
+                self.manual_notes,
+                self._add_manual_button,
+                self.list_header,
+                self.selected_index,
+                self._refresh_button,
+                self._show_details_button,
+                self._fill_inference_button,
+                self.model_list,
+                self.model_details,
+            ]
+        )
+
+        self._load_registry_button.clicked.connect(self._load_registry)
+        self._save_registry_button.clicked.connect(self._save_registry)
+        self._scan_button.clicked.connect(self._scan_folder)
+        self.manual_registration.changed.connect(self._update_manual_registration_state)
+        self._add_manual_button.clicked.connect(self._add_manual_model)
+        self._refresh_button.clicked.connect(self._refresh_model_list)
+        self._show_details_button.clicked.connect(self._show_selected_model)
+        self._fill_inference_button.clicked.connect(self._fill_selected_inference_widget)
+        self._update_manual_registration_state()
+        self._refresh_model_list()
+
+    def _log(self, message):
+        text = str(message)
+        self.model_details.value = text
+        print(text)
+
+    def _registry_path(self):
+        return normalize_optional_path(self.registry_path.value) or default_model_registry_path()
+
+    def _load_registry(self):
+        try:
+            self._registry = load_model_registry(self._registry_path())
+            self._refresh_model_list()
+            self._log(f"Loaded model registry: {self._registry_path()}")
+        except Exception as error:
+            self._log(f"Failed to load model registry: {error}")
+
+    def _save_registry(self):
+        try:
+            self._registry = refresh_registry_status(self._registry)
+            self._registry = save_model_registry(self._registry, self._registry_path())
+            self._refresh_model_list()
+            self._log(f"Saved model registry: {self._registry_path()}")
+        except Exception as error:
+            self._log(f"Failed to save model registry: {error}")
+
+    def _scan_folder(self):
+        scan_root = normalize_optional_path(self.scan_root.value)
+        if not scan_root:
+            self._log("Please choose a training result root folder before scanning.")
+            return
+        try:
+            entries = scan_experiment_folder(scan_root)
+            added = 0
+            updated = 0
+            for entry in entries:
+                self._registry, action = add_or_update_model_entry(self._registry, entry)
+                if action == "added":
+                    added += 1
+                else:
+                    updated += 1
+            self._registry = save_model_registry(self._registry, self._registry_path())
+            self._refresh_model_list()
+            self._log(
+                f"Scan finished: {len(entries)} training runs found, "
+                f"{added} added, {updated} updated."
+            )
+        except Exception as error:
+            self._log(f"Failed to scan training result folder: {error}")
+
+    def _update_manual_registration_state(self):
+        visible = self.manual_registration.value
+        for widget in (
+            self.manual_name,
+            self.manual_task,
+            self.manual_checkpoint,
+            self.manual_config,
+            self.manual_metrics,
+            self.manual_log,
+            self.manual_notes,
+            self._add_manual_button,
+        ):
+            widget.visible = visible
+
+    def _add_manual_model(self):
+        try:
+            entry = build_model_entry(
+                checkpoint_path=normalize_optional_path(self.manual_checkpoint.value),
+                config_path=normalize_optional_path(self.manual_config.value),
+                metrics_path=normalize_optional_path(self.manual_metrics.value),
+                training_log_path=normalize_optional_path(self.manual_log.value),
+                task=self.manual_task.value,
+                name=str(self.manual_name.value).strip() or None,
+                notes=self.manual_notes.value,
+            )
+            self._registry, action = add_or_update_model_entry(self._registry, entry)
+            self._registry = save_model_registry(self._registry, self._registry_path())
+            self._refresh_model_list()
+            self._log(f"Model {action}: {entry['name']}")
+        except Exception as error:
+            self._log(f"Failed to register model: {error}")
+
+    def _refresh_model_list(self):
+        self._registry = refresh_registry_status(self._registry)
+        self.model_list.value = format_registry_summary(self._registry)
+        max_index = max(len(self._registry.get("models", [])) - 1, 0)
+        self.selected_index.max = max_index
+        if self.selected_index.value > max_index:
+            self.selected_index.value = max_index
+
+    def _selected_model(self):
+        models = self._registry.get("models", [])
+        if not models:
+            return None
+        index = min(max(int(self.selected_index.value), 0), len(models) - 1)
+        return models[index]
+
+    def _show_selected_model(self):
+        entry = self._selected_model()
+        if entry is None:
+            self.model_details.value = "No registered model selected."
+            return
+        self.model_details.value = json.dumps(entry, indent=2, ensure_ascii=False)
+
+    def _entry_parameters(self, entry):
+        config_path = entry.get("config_path")
+        params = {}
+        if config_path:
+            try:
+                config = load_training_config(config_path)
+                params = dict(config.get("parameters", {}))
+            except Exception:
+                params = {}
+        summary = entry.get("summary", {}) if isinstance(entry.get("summary"), dict) else {}
+        merged = dict(summary)
+        merged.update({key: value for key, value in params.items() if value is not None})
+        return merged
+
+    def _safe_set_widget_value(self, widget, value):
+        if value in (None, ""):
+            return
+        try:
+            _set_widget_value(widget, value)
+        except Exception:
+            return
+
+    def _get_or_create_inference_widget(self, task):
+        if task in self._inference_widgets:
+            return self._inference_widgets[task]
+
+        mapping = {
+            "semantic_segmentation": (
+                DLInferenceContainer,
+                "Semantic Segmentation | Inference",
+            ),
+            "classification": (
+                ClassificationInferenceContainer,
+                "Classification | Inference",
+            ),
+            "instance_segmentation": (
+                InstanceSegmentationInferenceContainer,
+                "Instance Segmentation | Inference",
+            ),
+        }
+        if task not in mapping:
+            raise ValueError(f"Unsupported model task: {task}")
+
+        widget_cls, dock_name = mapping[task]
+        widget = widget_cls(self._viewer)
+        self._inference_widgets[task] = widget
+        if self._viewer is not None:
+            self._viewer.window.add_dock_widget(widget, name=dock_name, area="right")
+        return widget
+
+    def _fill_selected_inference_widget(self):
+        entry = self._selected_model()
+        if entry is None:
+            self._log("No registered model selected.")
+            return None
+        if entry.get("status") != "available":
+            self._log(
+                f"Selected model is not fully available: {entry.get('status')}. "
+                "Please check missing files before inference."
+            )
+            return None
+
+        task = entry.get("task")
+        widget = self._get_or_create_inference_widget(task)
+        params = self._entry_parameters(entry)
+        checkpoint_path = entry.get("checkpoint_path")
+
+        if task == "semantic_segmentation":
+            self._fill_semantic_inference_widget(widget, entry, params, checkpoint_path)
+        elif task == "classification":
+            self._fill_classification_inference_widget(widget, checkpoint_path)
+        elif task == "instance_segmentation":
+            self._fill_instance_inference_widget(widget, params, checkpoint_path)
+        else:
+            self._log(f"Unsupported model task: {task}")
+            return None
+
+        self._log(f"Filled {task} inference widget from registry model: {entry.get('name')}")
+        return widget
+
+    def _fill_semantic_inference_widget(self, widget, entry, params, checkpoint_path):
+        self._safe_set_widget_value(widget.model_path, checkpoint_path)
+        self._safe_set_widget_value(widget.config_path, entry.get("config_path"))
+        self._safe_set_widget_value(widget.backbone_name, params.get("backbone_name"))
+        self._safe_set_widget_value(widget.model_name, params.get("model_name"))
+        self._safe_set_widget_value(
+            widget.num_classes,
+            params.get("num_classes", params.get("classes_num")),
+        )
+        self._safe_set_widget_value(
+            widget.img_size,
+            params.get("img_size", params.get("target_size")),
+        )
+
+    def _fill_classification_inference_widget(self, widget, checkpoint_path):
+        self._safe_set_widget_value(widget.checkpoint_path, checkpoint_path)
+
+    def _fill_instance_inference_widget(self, widget, params, checkpoint_path):
+        self._safe_set_widget_value(widget.checkpoint_path, checkpoint_path)
+        self._safe_set_widget_value(widget.backbone_name, params.get("backbone_name"))
+        self._safe_set_widget_value(widget.model_name, params.get("model_name"))
+        self._safe_set_widget_value(widget.img_size, params.get("img_size"))
+        self._safe_set_widget_value(widget.num_classes, params.get("num_classes"))
+
 
 class ImageResize(Container):
     """Container widget for resizing images with different interpolation algorithms."""

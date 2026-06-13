@@ -26,6 +26,10 @@ contributions:
       python_name: emcfsys:ImageResize
       title: Make image resize widget    
 
+    - id: emcfsys.model_manager
+      python_name: emcfsys._widget:ModelManagerContainer
+      title: Model Manager Registry Widget
+
     - id: emcfsys.DLInferenceContainer
       python_name: emcfsys._widget:DLInferenceContainer
       title: Deep Learning DLInferenceContainer Widget
@@ -93,6 +97,8 @@ contributions:
   widgets:
     - command: emcfsys.make_resize_widget
       display_name: Utility | Image Resize
+    - command: emcfsys.model_manager
+      display_name: Model Manager | Registry
     - command: emcfsys.DLTrainingContainer
       display_name: Semantic Segmentation | Training
     - command: emcfsys.DLInferenceContainer

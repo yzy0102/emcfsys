@@ -137,6 +137,9 @@ def test_classification_training_knn_saves_checkpoint(monkeypatch, tmp_path):
 
     assert logs
     assert (save_dir / "classification_knn.pth").exists()
+    assert (save_dir / "config.json").exists()
+    assert (save_dir / "training_log.csv").exists()
+    assert (save_dir / "metrics.json").exists()
 
 
 def test_classification_training_linear_saves_checkpoint(monkeypatch, tmp_path):
@@ -165,6 +168,9 @@ def test_classification_training_linear_saves_checkpoint(monkeypatch, tmp_path):
     assert logs
     assert (save_dir / "best_classification_epoch1_Acc=1.0000.pth").exists()
     assert (save_dir / "final_classification.pth").exists()
+    assert (save_dir / "config.json").exists()
+    assert (save_dir / "training_log.csv").exists()
+    assert (save_dir / "metrics.json").exists()
 
 
 def test_classification_inference_loads_checkpoint_and_predicts(tmp_path, monkeypatch):
