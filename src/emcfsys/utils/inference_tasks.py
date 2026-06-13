@@ -152,7 +152,7 @@ def _run_folder_inference(
         if save_stacked_visualization_flag:
             stacked_save_path = os.path.join(
                 stacked_visualization_output_folder,
-                os.path.basename(image_path) + "_mask_stack.jpg",
+                os.path.basename(image_path) + "_mask_stack.png",
             )
             save_stacked_visualization(img_np, mask, stacked_save_path)
 

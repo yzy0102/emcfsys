@@ -6,17 +6,33 @@ except ImportError:
 
 from ._reader import napari_get_reader
 from ._sample_data import make_sample_data
-from ._widget import (
-    ImageResize,
-    DLInferenceContainer,
-    DLTrainingContainer,
-    EMCellFinerSingleInferWidget,
-    EMCellFinerBatchInferWidget,
-    PhenotypeAnalysis,
-    
-)
-
 from ._writer import write_multiple, write_single_image
+
+_WIDGET_EXPORTS = {
+    "ImageResize",
+    "DLInferenceContainer",
+    "DLTrainingContainer",
+    "ClassificationTrainingContainer",
+    "ClassificationInferenceContainer",
+    "InstanceSegmentationTrainingContainer",
+    "InstanceSegmentationInferenceContainer",
+    "COCOInstanceDatasetInspector",
+    "EMCellFinerSingleInferWidget",
+    "EMCellFinerBatchInferWidget",
+    "LabelMe2COCOInstance",
+    "PhenotypeAnalysis",
+}
+
+
+def __getattr__(name):
+    if name in _WIDGET_EXPORTS:
+        from . import _widget
+
+        value = getattr(_widget, name)
+        globals()[name] = value
+        return value
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
 
 __all__ = (
     "napari_get_reader",
@@ -26,7 +42,13 @@ __all__ = (
     "ImageResize",
     "DLInferenceContainer",
     "DLTrainingContainer",
+    "ClassificationTrainingContainer",
+    "ClassificationInferenceContainer",
+    "InstanceSegmentationTrainingContainer",
+    "InstanceSegmentationInferenceContainer",
+    "COCOInstanceDatasetInspector",
     "EMCellFinerSingleInferWidget",
     "EMCellFinerBatchInferWidget",
+    "LabelMe2COCOInstance",
     "PhenotypeAnalysis",
 )

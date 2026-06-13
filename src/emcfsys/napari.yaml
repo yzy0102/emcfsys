@@ -34,6 +34,26 @@ contributions:
       python_name: emcfsys._widget:DLTrainingContainer
       title: Deep Learning DLTrainingContainer Widget
 
+    - id: emcfsys.classification.training
+      python_name: emcfsys._widget:ClassificationTrainingContainer
+      title: Classification Training Widget
+
+    - id: emcfsys.classification.inference
+      python_name: emcfsys._widget:ClassificationInferenceContainer
+      title: Classification Inference Widget
+
+    - id: emcfsys.instance_segmentation.training
+      python_name: emcfsys._widget:InstanceSegmentationTrainingContainer
+      title: Instance Segmentation Training Widget
+
+    - id: emcfsys.instance_segmentation.inference
+      python_name: emcfsys._widget:InstanceSegmentationInferenceContainer
+      title: Instance Segmentation Inference Widget
+
+    - id: emcfsys.instance_segmentation.dataset_inspector
+      python_name: emcfsys._widget:COCOInstanceDatasetInspector
+      title: Instance Segmentation COCO Dataset Inspector Widget
+
     - id: emcfsys.emcellfiner.single_infer
       python_name:  emcfsys._widget:EMCellFinerSingleInferWidget
       title: EMCellFiner - Single Image Inference Widget
@@ -46,6 +66,9 @@ contributions:
       python_name: emcfsys._widget:LabelMe2Seg
       title: DatasetConverter - Convert labelme 2 semantic segmentation masks
 
+    - id: emcfsys.labelme_2_coco_instance
+      python_name: emcfsys._widget:LabelMe2COCOInstance
+      title: DatasetConverter - Convert labelme to COCO instance segmentation JSON
 
     - id: emcfsys.phenotypeanalysis
       python_name: emcfsys._widget:PhenotypeAnalysis
@@ -69,19 +92,37 @@ contributions:
       key: unique_id.1
   widgets:
     - command: emcfsys.make_resize_widget
-      display_name: Image Resize
-    - command: emcfsys.DLInferenceContainer
-      display_name: EMCellFound(Segment model) - Inference
+      display_name: Utility | Image Resize
     - command: emcfsys.DLTrainingContainer
-      display_name: EMCellFound(Segment model) - Training
+      display_name: Semantic Segmentation | Training
+    - command: emcfsys.DLInferenceContainer
+      display_name: Semantic Segmentation | Inference
+
+    - command: emcfsys.classification.training
+      display_name: Classification | Training
+
+    - command: emcfsys.classification.inference
+      display_name: Classification | Inference
+
+    - command: emcfsys.instance_segmentation.training
+      display_name: Instance Segmentation | Training
+
+    - command: emcfsys.instance_segmentation.inference
+      display_name: Instance Segmentation | Inference
+
+    - command: emcfsys.instance_segmentation.dataset_inspector
+      display_name: Instance Segmentation | COCO Dataset Inspector
 
     - command: emcfsys.emcellfiner.single_infer
-      display_name: EMCellFiner(Super Resolution) - Single Image Inference
+      display_name: Super Resolution | Single Image Inference
     - command: emcfsys.emcellfiner.batch_infer
-      display_name: EMCellFiner(Super Resolution) - Batch Inference
+      display_name: Super Resolution | Batch Inference
 
     - command: emcfsys.labelme_2_semseg
-      display_name: DatasetConverter - Convert labelme 2 semantic segmentation masks
+      display_name: Dataset Converter | LabelMe to Semantic Masks
+
+    - command: emcfsys.labelme_2_coco_instance
+      display_name: Dataset Converter | LabelMe to COCO Instance
 
     - command: emcfsys.phenotypeanalysis
-      display_name: PhenotypeAnalysis
+      display_name: Analysis | Phenotype Analysis

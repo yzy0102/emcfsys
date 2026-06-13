@@ -208,3 +208,9 @@ __marimo__/
 
 # ignore the test notebook
 /test2.ipynb
+
+# ignore local datasets
+/datasets/
+
+# ignore local training outputs
+/save_logs/

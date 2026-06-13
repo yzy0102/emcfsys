@@ -57,9 +57,9 @@ from magicgui.widgets import (
 )
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 from napari.layers import Image, Image as ImageLayer, Labels
-from napari.qt.threading import thread_worker
 from PIL import Image as PILImage
-from qtpy.QtWidgets import QFileDialog, QSizePolicy, QWidget, QVBoxLayout
+from qtpy.QtCore import QObject, Signal
+from qtpy.QtWidgets import QFileDialog, QSizePolicy, QTextEdit, QWidget, QVBoxLayout
 
 from emcfsys.PhenotypeAnalysis.functions import analyze_phenotypes
 
@@ -76,8 +76,32 @@ from .utils.emcellfiner_tasks import (
     resolve_emcellfiner_device,
     run_emcellfiner_single_inference,
 )
+from .utils.classification_tasks import (
+    ClassificationInferenceRequest,
+    ClassificationTrainingRequest,
+    run_classification_inference_task,
+    run_classification_training_task,
+)
+from .utils.coco_instance_inspector import (
+    check_coco_instance_dataset,
+    format_coco_instance_check_report,
+    load_coco_instance_preview,
+)
+from .utils.instance_segmentation_tasks import (
+    INSTANCE_MODEL_CHOICES,
+    InstanceSegmentationInferenceRequest,
+    InstanceSegmentationTrainingRequest,
+    iter_instance_segmentation_training_task,
+    prediction_to_instance_mask,
+    run_instance_segmentation_inference_task,
+)
 from .utils.io_utils import collect_image_files, ensure_directory, normalize_optional_path
+from .utils.labelme_coco_tasks import (
+    LabelMeInstanceToCOCORequest,
+    convert_labelme_instance_folder_to_coco,
+)
 from .utils.training_tasks import SegmentationTrainingRequest, run_training_task
+from .utils.training_artifacts import load_training_config, save_training_config
 from .utils.viewer_ops import upsert_image_layer, upsert_labels_layer
 
 # the magic_factory decorator lets us customize aspects of our widget
@@ -106,6 +130,137 @@ backbone_zoom = [   "emcellfound_vit_base",
 
 
 model_zoom = ["deeplabv3plus", "unet", "pspnet", "upernet", "orgsegnetv2"]
+classification_head_zoom = ["knn", "linear"]
+TRAINING_PRESET_CHOICES = [
+    "Custom",
+    "Balanced Default",
+    "Fast Debug",
+    "Small Organelle",
+    "Boundary Sensitive",
+    "Class Imbalance",
+]
+
+
+SEMANTIC_TRAINING_PRESETS = {
+    "Balanced Default": {
+        "lr": 1e-4,
+        "batch_size": 8,
+        "epochs": 100,
+        "target_size": 512,
+        "use_advanced_losses": True,
+        "dice_loss_weight": 1.0,
+        "focal_loss_weight": 0.0,
+        "tversky_loss_weight": 0.0,
+        "boundary_loss_weight": 0.0,
+        "lovasz_loss_weight": 0.0,
+        "ohem_ce_loss_weight": 0.0,
+    },
+    "Fast Debug": {
+        "lr": 3e-4,
+        "batch_size": 2,
+        "epochs": 3,
+        "target_size": 256,
+        "use_advanced_losses": True,
+        "dice_loss_weight": 0.5,
+        "focal_loss_weight": 0.0,
+        "tversky_loss_weight": 0.0,
+        "boundary_loss_weight": 0.0,
+        "lovasz_loss_weight": 0.0,
+        "ohem_ce_loss_weight": 0.0,
+    },
+    "Small Organelle": {
+        "lr": 1e-4,
+        "batch_size": 4,
+        "epochs": 150,
+        "target_size": 768,
+        "use_advanced_losses": True,
+        "dice_loss_weight": 1.0,
+        "focal_loss_weight": 1.0,
+        "tversky_loss_weight": 1.0,
+        "boundary_loss_weight": 0.3,
+        "lovasz_loss_weight": 0.2,
+        "ohem_ce_loss_weight": 0.2,
+    },
+    "Boundary Sensitive": {
+        "lr": 8e-5,
+        "batch_size": 4,
+        "epochs": 150,
+        "target_size": 768,
+        "use_advanced_losses": True,
+        "dice_loss_weight": 1.0,
+        "focal_loss_weight": 0.3,
+        "tversky_loss_weight": 0.5,
+        "boundary_loss_weight": 1.0,
+        "lovasz_loss_weight": 0.3,
+        "ohem_ce_loss_weight": 0.0,
+    },
+    "Class Imbalance": {
+        "lr": 1e-4,
+        "batch_size": 4,
+        "epochs": 180,
+        "target_size": 640,
+        "use_advanced_losses": True,
+        "dice_loss_weight": 1.0,
+        "focal_loss_weight": 1.5,
+        "tversky_loss_weight": 1.0,
+        "boundary_loss_weight": 0.2,
+        "lovasz_loss_weight": 0.5,
+        "ohem_ce_loss_weight": 0.5,
+    },
+}
+
+INSTANCE_TRAINING_PRESETS = {
+    "Balanced Default": {
+        "lr": 1e-4,
+        "batch_size": 2,
+        "epochs": 20,
+        "img_size": 512,
+        "use_advanced_mask_losses": False,
+        "boundary_loss_weight": 0.0,
+        "focal_mask_loss_weight": 0.0,
+        "tversky_loss_weight": 0.0,
+    },
+    "Fast Debug": {
+        "lr": 3e-4,
+        "batch_size": 1,
+        "epochs": 2,
+        "img_size": 256,
+        "use_advanced_mask_losses": False,
+        "boundary_loss_weight": 0.0,
+        "focal_mask_loss_weight": 0.0,
+        "tversky_loss_weight": 0.0,
+    },
+    "Small Organelle": {
+        "lr": 1e-4,
+        "batch_size": 1,
+        "epochs": 80,
+        "img_size": 768,
+        "use_advanced_mask_losses": True,
+        "boundary_loss_weight": 0.3,
+        "focal_mask_loss_weight": 1.0,
+        "tversky_loss_weight": 1.0,
+    },
+    "Boundary Sensitive": {
+        "lr": 8e-5,
+        "batch_size": 1,
+        "epochs": 100,
+        "img_size": 768,
+        "use_advanced_mask_losses": True,
+        "boundary_loss_weight": 1.0,
+        "focal_mask_loss_weight": 0.3,
+        "tversky_loss_weight": 0.7,
+    },
+    "Class Imbalance": {
+        "lr": 1e-4,
+        "batch_size": 1,
+        "epochs": 100,
+        "img_size": 640,
+        "use_advanced_mask_losses": True,
+        "boundary_loss_weight": 0.2,
+        "focal_mask_loss_weight": 1.5,
+        "tversky_loss_weight": 1.0,
+    },
+}
 
 
 def _configure_wrapped_label(widget: Label):
@@ -117,6 +272,111 @@ def _configure_wrapped_label(widget: Label):
 def _configure_wrapped_labels(*widgets: Label):
     for widget in widgets:
         _configure_wrapped_label(widget)
+
+
+def _get_thread_worker():
+    from napari.qt.threading import thread_worker
+
+    return thread_worker
+
+
+class _LogEmitter(QObject):
+    message = Signal(str)
+
+
+def _create_log_dock(viewer, name, area="bottom", min_height=180):
+    emitter = _LogEmitter()
+    if viewer is None:
+        return None, emitter
+
+    log_text = QTextEdit()
+    log_text.setReadOnly(True)
+    log_text.setMinimumHeight(min_height)
+    viewer.window.add_dock_widget(log_text, name=name, area=area)
+    emitter.message.connect(log_text.append)
+    return log_text, emitter
+
+
+def _append_log_message(log_text, message):
+    text = str(message)
+    if log_text is not None:
+        log_text.append(text)
+    print(text)
+
+
+def _emit_log_message(log_emitter, log_text, message):
+    text = str(message)
+    if log_emitter is not None:
+        log_emitter.message.emit(text)
+    elif log_text is not None:
+        log_text.append(text)
+    print(text)
+
+
+def _set_widget_value(widget, value):
+    if value is None:
+        return
+    try:
+        widget.value = value
+    except Exception:
+        widget.value = str(value)
+
+
+def _apply_widget_values(widget_map, values):
+    for key, widget in widget_map.items():
+        if key in values:
+            _set_widget_value(widget, values[key])
+
+
+def _widget_values(widget_map):
+    return {key: widget.value for key, widget in widget_map.items()}
+
+
+def threshold_autogenerate_widget(image, threshold):
+    data = image.data if hasattr(image, "data") else image
+    return np.asarray(data) > threshold
+
+
+def threshold_magic_widget():
+    def _threshold(image, threshold):
+        return threshold_autogenerate_widget(image, threshold)
+
+    return _threshold
+
+
+class ImageThreshold(Container):
+    def __init__(self, viewer: "napari.viewer.Viewer"):
+        super().__init__()
+        self._viewer = viewer
+        self._image_layer_combo = create_widget(
+            label="Image", annotation="napari.layers.Image"
+        )
+        self._threshold_slider = FloatSpinBox(
+            label="Threshold", min=0.0, max=1.0, step=0.01, value=0.5
+        )
+        self._threshold_button = PushButton(text="Apply Threshold")
+        self._threshold_button.clicked.connect(self._threshold_im)
+        self.extend(
+            [self._image_layer_combo, self._threshold_slider, self._threshold_button]
+        )
+
+    def _threshold_im(self):
+        image_layer = self._image_layer_combo.value
+        if image_layer is None:
+            return
+        thresholded = threshold_autogenerate_widget(
+            image_layer, self._threshold_slider.value
+        ).astype(np.uint8)
+        upsert_image_layer(self._viewer, thresholded, f"{image_layer.name}_threshold")
+
+
+class ExampleQWidget(QWidget):
+    def __init__(self, viewer: "napari.viewer.Viewer"):
+        super().__init__()
+        self._viewer = viewer
+
+    def _on_click(self):
+        print(f"napari has {len(self._viewer.layers)} layers")
 
 class ImageResize(Container):
     """Container widget for resizing images with different interpolation algorithms."""
@@ -306,15 +566,21 @@ class DLInferenceContainer(Container):
     def __init__(self, viewer: "napari.viewer.Viewer"):
         super().__init__()
         self._viewer = viewer
+        self._log_text, self._log_emitter = _create_log_dock(
+        self._viewer,
+            "Semantic Segmentation Inference Log",
+        )
 
         self.model_path = FileEdit(label="Model (.pt/.pth/.ptscript)")
+        self.config_path = FileEdit(label="Inference config JSON", mode="r", nullable=True)
+        self._load_config_button = PushButton(text="Load Config")
         self._image_layer_combo = create_widget(label="Image", annotation="napari.layers.Image")
         self.num_classes = SpinBox(label="num classes", min=2, max=1000, step=1, value=2)
         self.device = ComboBox(label="Device", choices=["auto", "cpu", "cuda"], value="auto")
         self.backbone_name = ComboBox(label="Backbone", choices=backbone_zoom, value="emcellfound_vit_base")
         self.model_name = ComboBox(label="Model", choices=model_zoom, value="deeplabv3plus")
-        self.img_size = SpinBox(label="Image size to model", min=1, max=4096, step=1, value=512)
-        self.slide_window_size = SpinBox(label="Slide window size", min=1, max=4096, step=1, value=512)
+        self.img_size = SpinBox(label="Image size to model", min=1, max=40960, step=1, value=512)
+        self.slide_window_size = SpinBox(label="Slide window size", min=1, max=40960, step=1, value=512)
 
         self.line_break = Label(value="-- OR inference in a image folder ---")
         self.inference_from_folder_mode = CheckBox(label="Inference from folder", value=False)
@@ -333,6 +599,8 @@ class DLInferenceContainer(Container):
 
         self.extend([
             self.model_path,
+            self.config_path,
+            self._load_config_button,
             self._image_layer_combo,
             self.backbone_name,
             self.model_name,
@@ -354,6 +622,7 @@ class DLInferenceContainer(Container):
             self._stop_button,
         ])
 
+        self._load_config_button.clicked.connect(self._load_config)
         self._run_button_full.clicked.connect(self._run_inference_full)
         self._run_button_slide.clicked.connect(self._run_inference_slide)
         self._stop_button.clicked.connect(self._stop_worker)
@@ -371,15 +640,72 @@ class DLInferenceContainer(Container):
         device = self.device.value
         return torch.device(device) if device != "auto" else None
 
+    def _log(self, message):
+        _append_log_message(self._log_text, message)
+
+    def _threadsafe_log(self, message):
+        _emit_log_message(self._log_emitter, self._log_text, message)
+
+    def _load_config(self):
+        config_path = normalize_optional_path(self.config_path.value)
+        if not config_path:
+            self._log("Please choose a config JSON path before loading.")
+            return
+        try:
+            config = load_training_config(config_path)
+            task = config.get("task")
+            if task not in {"semantic_segmentation", "semantic_segmentation_inference"}:
+                raise ValueError(f"Unsupported config task: {task}")
+            params = dict(config.get("parameters", {}))
+            mapped = {
+                "backbone_name": params.get("backbone_name"),
+                "model_name": params.get("model_name"),
+                "num_classes": params.get("num_classes", params.get("classes_num")),
+                "img_size": params.get("img_size", params.get("target_size")),
+                "device": params.get("device"),
+                "model_path": params.get("model_path"),
+                "image_folder": params.get("image_folder"),
+                "label_output_folder": params.get("label_output_folder"),
+                "visualization_output_folder": params.get("visualization_output_folder"),
+                "save_visualization": params.get("save_visualization"),
+                "stacked_visualization_output_folder": params.get("stacked_visualization_output_folder"),
+                "save_stacked_visualization": params.get("save_stacked_visualization"),
+                "window_size": params.get("window_size"),
+            }
+            _apply_widget_values(
+                {
+                    "backbone_name": self.backbone_name,
+                    "model_name": self.model_name,
+                    "num_classes": self.num_classes,
+                    "img_size": self.img_size,
+                    "device": self.device,
+                    "model_path": self.model_path,
+                    "image_folder": self.image_folder,
+                    "label_output_folder": self.output_folder,
+                    "visualization_output_folder": self.visualization_output_folder,
+                    "save_visualization": self.save_visualization,
+                    "stacked_visualization_output_folder": self.stacked_visualization_output_folder,
+                    "save_stacked_visualization": self.save_stacked_visualization,
+                    "window_size": self.slide_window_size,
+                },
+                {key: value for key, value in mapped.items() if value is not None},
+            )
+            if mapped.get("image_folder"):
+                self.inference_from_folder_mode.value = True
+            self._update_folder_inference_state()
+            self._log(f"Semantic segmentation inference config loaded from: {config_path}")
+        except Exception as error:
+            self._log(f"Failed to load semantic segmentation inference config: {error}")
+
     def _stop_checker(self):
         if self._stop_flag:
-            print("[Frontend Checker] Stop flag detected.")
+            self._threadsafe_log("[Frontend Checker] Stop flag detected.")
             return True
         return False
 
     def _prepare_run(self):
         self._stop_flag = False
-        print("--- Starting new task, flag reset to False ---")
+        self._log("--- Starting new semantic segmentation inference task ---")
 
     def _update_folder_inference_state(self):
         folder_mode = self.inference_from_folder_mode.value
@@ -456,7 +782,7 @@ class DLInferenceContainer(Container):
             self._stop_checker,
         )
 
-        @thread_worker
+        @_get_thread_worker()
         def _worker():
             return task_runner(request)
 
@@ -464,10 +790,13 @@ class DLInferenceContainer(Container):
 
         def on_result(mask: np.ndarray):
             if img_layer is None or mask is None:
+                self._log("Semantic segmentation inference finished")
                 return
             upsert_labels_layer(self._viewer, mask, f"{img_layer.name}{suffix}")
+            self._log("Semantic segmentation inference finished")
 
         self._worker.returned.connect(on_result)
+        self._worker.errored.connect(lambda err: self._log(f"Semantic segmentation inference error: {err}"))
         self._worker.start()
 
     def _run_inference_full(self):
@@ -486,11 +815,11 @@ class DLInferenceContainer(Container):
 
     def _stop_worker(self):
         if self._worker is not None:
-            print("Attempting to stop inference...")
+            self._log("Attempting to stop inference...")
             self._stop_flag = True
             self._worker.quit()
         else:
-            print("No active inference worker to stop.")
+            self._log("No active inference worker to stop.")
 
 
 class DLTrainingContainer(Container):
@@ -499,6 +828,10 @@ class DLTrainingContainer(Container):
         super().__init__()
         self._viewer = viewer
         self._stop_flag = False
+        self._log_text, self._log_emitter = _create_log_dock(
+            self._viewer,
+            "Semantic Segmentation Training Log",
+        )
 
         self.images_dir = FileEdit(label="Images folder", mode="d")
         self.masks_dir = FileEdit(label="Masks folder", mode="d")
@@ -508,6 +841,11 @@ class DLTrainingContainer(Container):
         self.backbone_name = ComboBox(label="Backbone", choices=backbone_zoom, value="resnet34")
         self.model_name = ComboBox(label="Model", choices=model_zoom, value="deeplabv3plus")
 
+        self.training_preset = ComboBox(
+            label="Training preset",
+            choices=TRAINING_PRESET_CHOICES,
+            value="Custom",
+        )
         self.lr = FloatSpinBox(label="Learning rate", min=1e-8, max=1.0, step=1e-4, value=1e-4)
         self.batch_size = SpinBox(label="Batch size", min=1, max=512, step=1, value=8)
         self.epochs = SpinBox(label="Epochs", min=1, max=1000, step=10, value=100)
@@ -516,14 +854,19 @@ class DLTrainingContainer(Container):
         self.classes_num = SpinBox(label="Classes num", min=2, max=1000, step=1, value=2)
         self.target_size = SpinBox(label="Target size", min=1, max=10**8, value=512)
         self.ignore_index = SpinBox(label="Ignore the index in mask", min=-1, max=10**8, value=-1)
+        self.use_advanced_losses = CheckBox(label="Configure advanced segmentation losses", value=False)
+        self.dice_loss_weight = FloatSpinBox(label="Dice loss weight", min=0.0, max=10.0, step=0.1, value=1.0)
+        self.focal_loss_weight = FloatSpinBox(label="Focal loss weight", min=0.0, max=10.0, step=0.1, value=0.0)
+        self.tversky_loss_weight = FloatSpinBox(label="Tversky loss weight", min=0.0, max=10.0, step=0.1, value=0.0)
+        self.boundary_loss_weight = FloatSpinBox(label="Boundary loss weight", min=0.0, max=10.0, step=0.1, value=0.0)
+        self.lovasz_loss_weight = FloatSpinBox(label="Lovasz-Softmax loss weight", min=0.0, max=10.0, step=0.1, value=0.0)
+        self.ohem_ce_loss_weight = FloatSpinBox(label="OHEM CE loss weight", min=0.0, max=10.0, step=0.1, value=0.0)
 
+        self.config_path = FileEdit(label="Training config JSON", mode="w", nullable=True)
+        self._save_config_button = PushButton(text="Save Config")
+        self._load_config_button = PushButton(text="Load Config")
         self._train_button = PushButton(text="Start Training")
         self._stop_button = PushButton(text="Stop Training")
-        self._log_label = Label(value="Training log:")
-        _configure_wrapped_label(self._log_label)
-        self._log_widget = TextEdit()
-        self._log_widget.read_only = True
-        self._log_widget.native.setMinimumHeight(180)
 
         self.extend([
             self.images_dir,
@@ -532,6 +875,7 @@ class DLTrainingContainer(Container):
             self.pretrained_model,
             self.backbone_name,
             self.model_name,
+            self.training_preset,
             self.lr,
             self.batch_size,
             self.epochs,
@@ -539,14 +883,27 @@ class DLTrainingContainer(Container):
             self.classes_num,
             self.target_size,
             self.ignore_index,
+            self.use_advanced_losses,
+            self.dice_loss_weight,
+            self.focal_loss_weight,
+            self.tversky_loss_weight,
+            self.boundary_loss_weight,
+            self.lovasz_loss_weight,
+            self.ohem_ce_loss_weight,
+            self.config_path,
+            self._save_config_button,
+            self._load_config_button,
             self._train_button,
             self._stop_button,
-            self._log_label,
-            self._log_widget,
         ])
 
         self._train_button.clicked.connect(self._start_training)
         self._stop_button.clicked.connect(self._stop_training)
+        self._save_config_button.clicked.connect(self._save_config)
+        self._load_config_button.clicked.connect(self._load_config)
+        self.training_preset.changed.connect(self._apply_training_preset)
+        self.use_advanced_losses.changed.connect(self._update_advanced_loss_state)
+        self._update_advanced_loss_state()
 
         self._fig, self._ax = plt.subplots()
         self._canvas = FigureCanvas(self._fig)
@@ -563,10 +920,10 @@ class DLTrainingContainer(Container):
         self._reset_training_plot()
 
     def _log(self, message):
-        try:
-            self._log_widget.append(message)
-        except Exception:
-            print(message)
+        _append_log_message(self._log_text, message)
+
+    def _threadsafe_log(self, message):
+        _emit_log_message(self._log_emitter, self._log_text, message)
 
     def _render_training_plot(self):
         self._ax.clear()
@@ -594,6 +951,74 @@ class DLTrainingContainer(Container):
             return torch.device(device)
         return torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
+    def _update_advanced_loss_state(self):
+        enabled = self.use_advanced_losses.value
+        self.dice_loss_weight.visible = enabled
+        self.focal_loss_weight.visible = enabled
+        self.tversky_loss_weight.visible = enabled
+        self.boundary_loss_weight.visible = enabled
+        self.lovasz_loss_weight.visible = enabled
+        self.ohem_ce_loss_weight.visible = enabled
+
+    def _config_widget_map(self):
+        return {
+            "images_dir": self.images_dir,
+            "masks_dir": self.masks_dir,
+            "save_path": self.save_path,
+            "pretrained_model": self.pretrained_model,
+            "backbone_name": self.backbone_name,
+            "model_name": self.model_name,
+            "training_preset": self.training_preset,
+            "lr": self.lr,
+            "batch_size": self.batch_size,
+            "epochs": self.epochs,
+            "device": self.device,
+            "classes_num": self.classes_num,
+            "target_size": self.target_size,
+            "ignore_index": self.ignore_index,
+            "use_advanced_losses": self.use_advanced_losses,
+            "dice_loss_weight": self.dice_loss_weight,
+            "focal_loss_weight": self.focal_loss_weight,
+            "tversky_loss_weight": self.tversky_loss_weight,
+            "boundary_loss_weight": self.boundary_loss_weight,
+            "lovasz_loss_weight": self.lovasz_loss_weight,
+            "ohem_ce_loss_weight": self.ohem_ce_loss_weight,
+        }
+
+    def _save_config(self):
+        config_path = normalize_optional_path(self.config_path.value)
+        if not config_path:
+            self._log("Please choose a config JSON path before saving.")
+            return
+        path = save_training_config(
+            config_path,
+            _widget_values(self._config_widget_map()),
+            "semantic_segmentation",
+        )
+        self._log(f"Semantic segmentation config saved to: {path}")
+
+    def _load_config(self):
+        config_path = normalize_optional_path(self.config_path.value)
+        if not config_path:
+            self._log("Please choose a config JSON path before loading.")
+            return
+        try:
+            config = load_training_config(config_path, expected_task="semantic_segmentation")
+            _apply_widget_values(self._config_widget_map(), config.get("parameters", {}))
+            self._update_advanced_loss_state()
+            self._log(f"Semantic segmentation config loaded from: {config_path}")
+        except Exception as error:
+            self._log(f"Failed to load semantic segmentation config: {error}")
+
+    def _apply_training_preset(self):
+        preset_name = self.training_preset.value
+        preset = SEMANTIC_TRAINING_PRESETS.get(preset_name)
+        if not preset:
+            return
+        _apply_widget_values(self._config_widget_map(), preset)
+        self._update_advanced_loss_state()
+        self._log(f"Applied semantic segmentation preset: {preset_name}")
+
     def _build_training_request(self):
         return SegmentationTrainingRequest(
             images_dir=self.images_dir.value,
@@ -609,31 +1034,28 @@ class DLTrainingContainer(Container):
             target_size=self.target_size.value,
             ignore_index=self.ignore_index.value,
             pretrained_model=normalize_optional_path(self.pretrained_model.value),
+            use_advanced_losses=self.use_advanced_losses.value,
+            dice_loss_weight=self.dice_loss_weight.value,
+            focal_loss_weight=self.focal_loss_weight.value,
+            tversky_loss_weight=self.tversky_loss_weight.value,
+            boundary_loss_weight=self.boundary_loss_weight.value,
+            lovasz_loss_weight=self.lovasz_loss_weight.value,
+            ohem_ce_loss_weight=self.ohem_ce_loss_weight.value,
         )
 
     def _create_training_worker(self, request):
-        @thread_worker
+        @_get_thread_worker()
         def _worker():
             return run_training_task(
                 request,
                 update_loss_curve=self._update_loss_curve,
-                log=self._log,
+                log=self._threadsafe_log,
                 stop_flag_fn=lambda: self._stop_flag,
             )
 
         return _worker()
 
     def _on_training_returned(self, logs, request):
-        for epoch, batch, n_batches, loss, finished, epoch_time, metrics_info in logs:
-            if batch == 0:
-                if epoch_time is not None:
-                    self._log(
-                        f"Epoch {epoch} finished, avg loss {loss:.4f}, time {epoch_time:.2f}s, metric {metrics_info}"
-                    )
-                else:
-                    self._log(f"Epoch {epoch} finished, avg loss {loss:.4f}")
-            else:
-                self._log(f"Epoch {epoch} batch {batch}/{n_batches} loss {loss:.4f}")
         if not self._stop_flag:
             self._log(f"Training finished. Model saved to: {request.save_path}")
 
@@ -646,11 +1068,819 @@ class DLTrainingContainer(Container):
         request = self._build_training_request()
         worker = self._create_training_worker(request)
         worker.returned.connect(lambda logs: self._on_training_returned(logs, request))
+        worker.errored.connect(lambda err: self._log(f"Semantic segmentation training error: {err}"))
         worker.start()
 
     def _stop_training(self):
         self._stop_flag = True
         self._log("Stop button clicked. Stopping training...")
+
+
+class ClassificationTrainingContainer(Container):
+    def __init__(self, viewer: "napari.viewer.Viewer"):
+        super().__init__()
+        self._viewer = viewer
+        self._stop_flag = False
+        self._log_text, self._log_emitter = _create_log_dock(
+            self._viewer,
+            "Classification Training Log",
+        )
+
+        self.dataset_dir = FileEdit(label="Dataset folder", mode="d")
+        self.save_path = FileEdit(label="Save model folder", mode="d")
+        self.backbone_name = ComboBox(label="Backbone", choices=backbone_zoom, value="emcellfound_vit_base")
+        self.head_name = ComboBox(label="Head", choices=classification_head_zoom, value="knn")
+        self.img_size = SpinBox(label="Image size", min=1, max=40960, step=1, value=512)
+        self.batch_size = SpinBox(label="Batch size", min=1, max=512, step=1, value=8)
+        self.epochs = SpinBox(label="Epochs", min=1, max=1000, step=1, value=20)
+        self.lr = FloatSpinBox(label="Learning rate", min=1e-8, max=1.0, step=1e-4, value=1e-4)
+        self.device = ComboBox(label="Device", choices=["auto", "cpu", "cuda"], value="auto")
+        self.pretrained = CheckBox(label="Use pretrained backbone", value=True)
+        self.freeze_backbone = CheckBox(label="Freeze backbone for linear head", value=True)
+        self.val_split = FloatSpinBox(label="Validation split", min=0.0, max=0.9, step=0.05, value=0.2)
+        self.knn_k = SpinBox(label="KNN K", min=1, max=256, step=1, value=5)
+        self.knn_metric = ComboBox(label="KNN metric", choices=["cosine", "l2"], value="cosine")
+
+        self._train_button = PushButton(text="Start Classification Training")
+        self._stop_button = PushButton(text="Stop Training")
+
+        self.extend([
+            self.dataset_dir,
+            self.save_path,
+            self.backbone_name,
+            self.head_name,
+            self.img_size,
+            self.batch_size,
+            self.epochs,
+            self.lr,
+            self.device,
+            self.pretrained,
+            self.freeze_backbone,
+            self.val_split,
+            self.knn_k,
+            self.knn_metric,
+            self._train_button,
+            self._stop_button,
+        ])
+
+        self._train_button.clicked.connect(self._start_training)
+        self._stop_button.clicked.connect(self._stop_training)
+        self.head_name.changed.connect(self._update_head_controls)
+        self._update_head_controls()
+
+        self._fig, self._ax = plt.subplots()
+        self._canvas = FigureCanvas(self._fig)
+        self._x_values = []
+        self._y_values = []
+
+        self._canvas_widget = QWidget()
+        v_layout = QVBoxLayout()
+        v_layout.addWidget(self._canvas)
+        self._canvas_widget.setLayout(v_layout)
+        if self._viewer is not None:
+            self._viewer.window.add_dock_widget(self._canvas_widget, name="Classification Loss Curve", area="right")
+
+        self._render_training_plot()
+
+    def _update_head_controls(self):
+        is_knn = self.head_name.value == "knn"
+        self.knn_k.visible = is_knn
+        self.knn_metric.visible = is_knn
+        self.freeze_backbone.visible = not is_knn
+
+    def _log(self, message):
+        _append_log_message(self._log_text, message)
+
+    def _threadsafe_log(self, message):
+        _emit_log_message(self._log_emitter, self._log_text, message)
+
+    def _render_training_plot(self):
+        self._ax.clear()
+        self._ax.set_xlabel("Epoch")
+        self._ax.set_ylabel("Loss")
+        self._ax.set_title("Classification Loss Curve")
+        if self._x_values and self._y_values:
+            self._ax.plot(self._x_values, self._y_values, color="darkgreen")
+        self._fig.tight_layout()
+        self._canvas.draw_idle()
+
+    def _update_loss_curve(self, loss, epoch=None):
+        if epoch is not None:
+            self._x_values.append(epoch)
+            self._y_values.append(loss)
+        self._render_training_plot()
+
+    def _reset_training_plot(self):
+        self._x_values = []
+        self._y_values = []
+        self._render_training_plot()
+
+    def _resolve_device(self):
+        device = self.device.value
+        if device != "auto":
+            return torch.device(device)
+        return torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+    def _build_training_request(self):
+        return ClassificationTrainingRequest(
+            dataset_dir=self.dataset_dir.value,
+            save_path=self.save_path.value,
+            backbone_name=self.backbone_name.value,
+            head_name=self.head_name.value,
+            img_size=self.img_size.value,
+            batch_size=self.batch_size.value,
+            epochs=self.epochs.value,
+            lr=self.lr.value,
+            device=self._resolve_device(),
+            pretrained=self.pretrained.value,
+            val_split=self.val_split.value,
+            freeze_backbone=self.freeze_backbone.value,
+            knn_k=self.knn_k.value,
+            knn_metric=self.knn_metric.value,
+        )
+
+    def _create_training_worker(self, request):
+        @_get_thread_worker()
+        def _worker():
+            return run_classification_training_task(
+                request,
+                update_loss_curve=self._update_loss_curve,
+                log=self._threadsafe_log,
+                stop_flag_fn=lambda: self._stop_flag,
+            )
+
+        return _worker()
+
+    def _on_training_returned(self, logs, request):
+        if not self._stop_flag:
+            self._log(f"Classification training finished. Model saved to: {request.save_path}")
+
+    def _start_training(self):
+        if self._viewer is None:
+            return
+
+        self._stop_flag = False
+        self._reset_training_plot()
+        request = self._build_training_request()
+        worker = self._create_training_worker(request)
+        worker.returned.connect(lambda logs: self._on_training_returned(logs, request))
+        worker.errored.connect(lambda err: self._log(f"Classification training error: {err}"))
+        worker.start()
+
+    def _stop_training(self):
+        self._stop_flag = True
+        self._log("Stop button clicked. Stopping classification training...")
+
+
+class ClassificationInferenceContainer(Container):
+    def __init__(self, viewer: "napari.viewer.Viewer"):
+        super().__init__()
+        self._viewer = viewer
+        self._log_text, self._log_emitter = _create_log_dock(
+            self._viewer,
+            "Classification Inference Log",
+        )
+
+        self.checkpoint_path = FileEdit(label="Checkpoint (.pth)", mode="r")
+        self._image_layer_combo = create_widget(label="Image", annotation="napari.layers.Image")
+        self.device = ComboBox(label="Device", choices=["auto", "cpu", "cuda"], value="auto")
+        self.inference_from_folder_mode = CheckBox(label="Inference from folder", value=False)
+        self.image_folder = FileEdit(label="Image folder", mode="d", nullable=True)
+        self.output_csv = FileEdit(label="Output CSV", mode="w", nullable=True)
+        self._run_button = PushButton(text="Run Classification")
+
+        self.extend([
+            self.checkpoint_path,
+            self._image_layer_combo,
+            self.device,
+            self.inference_from_folder_mode,
+            self.image_folder,
+            self.output_csv,
+            self._run_button,
+        ])
+
+        self._run_button.clicked.connect(self._run_classification)
+        self.inference_from_folder_mode.changed.connect(self._update_folder_mode_state)
+        self._update_folder_mode_state()
+
+    def _update_folder_mode_state(self):
+        folder_mode = self.inference_from_folder_mode.value
+        self._image_layer_combo.visible = not folder_mode
+        self.image_folder.visible = folder_mode
+        self.output_csv.visible = folder_mode
+
+    def _resolve_device(self):
+        device = self.device.value
+        if device != "auto":
+            return torch.device(device)
+        return torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+    def _log(self, message):
+        _append_log_message(self._log_text, message)
+
+    def _run_classification(self):
+        checkpoint_path = normalize_optional_path(self.checkpoint_path.value)
+        if not checkpoint_path:
+            self._log("Invalid checkpoint path")
+            return
+
+        request = ClassificationInferenceRequest(
+            checkpoint_path=checkpoint_path,
+            image=None if self.inference_from_folder_mode.value else (None if self._image_layer_combo.value is None else self._image_layer_combo.value.data),
+            image_folder=normalize_optional_path(self.image_folder.value) if self.inference_from_folder_mode.value else None,
+            output_csv=normalize_optional_path(self.output_csv.value),
+            device=self._resolve_device(),
+        )
+
+        @_get_thread_worker()
+        def _worker():
+            return run_classification_inference_task(request)
+
+        worker = _worker()
+
+        @worker.returned.connect
+        def _on_result(result):
+            if result is None:
+                self._log("Classification finished")
+                return
+            if isinstance(result, list):
+                self._log(f"Classification finished for {len(result)} images")
+                return
+            self._log(
+                f"Predicted: {result['class_name']} (index={result['class_index']}, confidence={result['confidence']:.4f})"
+            )
+
+        @worker.errored.connect
+        def _on_error(err):
+            self._log(f"Classification error: {err}")
+
+        worker.start()
+
+
+class InstanceSegmentationTrainingContainer(Container):
+    def __init__(self, viewer: "napari.viewer.Viewer"):
+        super().__init__()
+        self._viewer = viewer
+        self._stop_flag = False
+        self._log_text, self._log_emitter = _create_log_dock(
+            self._viewer,
+            "Instance Segmentation Training Log",
+        )
+
+        self.image_dir = FileEdit(label="COCO images folder", mode="d")
+        self.annotation_path = FileEdit(label="COCO instances JSON", mode="r")
+        self.save_path = FileEdit(label="Save model folder", mode="d")
+        self.backbone_name = ComboBox(label="Backbone", choices=backbone_zoom, value="emcellfound_vit_base")
+        self.model_name = ComboBox(label="Model", choices=INSTANCE_MODEL_CHOICES, value="rtm_instance")
+        self.img_size = SpinBox(label="Image size", min=1, max=40960, step=1, value=512)
+        self.num_classes = SpinBox(label="Num classes (0=from COCO)", min=0, max=1000, step=1, value=0)
+        self.training_preset = ComboBox(
+            label="Training preset",
+            choices=TRAINING_PRESET_CHOICES,
+            value="Custom",
+        )
+        self.batch_size = SpinBox(label="Batch size", min=1, max=512, step=1, value=2)
+        self.epochs = SpinBox(label="Epochs", min=1, max=1000, step=1, value=20)
+        self.lr = FloatSpinBox(label="Learning rate", min=1e-8, max=1.0, step=1e-4, value=1e-4)
+        self.weight_decay = FloatSpinBox(label="Weight decay", min=0.0, max=1.0, step=1e-4, value=1e-4)
+        self.use_advanced_mask_losses = CheckBox(label="Configure advanced mask losses", value=False)
+        self.boundary_loss_weight = FloatSpinBox(label="Boundary loss weight", min=0.0, max=10.0, step=0.1, value=0.0)
+        self.focal_mask_loss_weight = FloatSpinBox(label="Focal mask loss weight", min=0.0, max=10.0, step=0.1, value=0.0)
+        self.tversky_loss_weight = FloatSpinBox(label="Tversky loss weight", min=0.0, max=10.0, step=0.1, value=0.0)
+        self.val_split = FloatSpinBox(label="Validation split", min=0.0, max=0.9, step=0.05, value=0.0)
+        self.use_separate_eval_sets = CheckBox(label="Use separate val/test datasets", value=False)
+        self.val_image_dir = FileEdit(label="Val COCO images folder (optional)", mode="d", nullable=True)
+        self.val_annotation_path = FileEdit(label="Val COCO instances JSON", mode="r", nullable=True)
+        self.test_image_dir = FileEdit(label="Test COCO images folder (optional)", mode="d", nullable=True)
+        self.test_annotation_path = FileEdit(label="Test COCO instances JSON", mode="r", nullable=True)
+        self.device = ComboBox(label="Device", choices=["auto", "cpu", "cuda"], value="auto")
+        self.pretrained = CheckBox(label="Use pretrained backbone", value=True)
+        self.checkpoint_path = FileEdit(label="Resume checkpoint", nullable=True, mode="r")
+
+        self.config_path = FileEdit(label="Training config JSON", mode="w", nullable=True)
+        self._save_config_button = PushButton(text="Save Config")
+        self._load_config_button = PushButton(text="Load Config")
+        self._train_button = PushButton(text="Start Instance Seg Training")
+        self._stop_button = PushButton(text="Stop Training")
+
+        self.extend([
+            self.image_dir,
+            self.annotation_path,
+            self.save_path,
+            self.backbone_name,
+            self.model_name,
+            self.img_size,
+            self.num_classes,
+            self.training_preset,
+            self.batch_size,
+            self.epochs,
+            self.lr,
+            self.weight_decay,
+            self.use_advanced_mask_losses,
+            self.boundary_loss_weight,
+            self.focal_mask_loss_weight,
+            self.tversky_loss_weight,
+            self.val_split,
+            self.use_separate_eval_sets,
+            self.val_image_dir,
+            self.val_annotation_path,
+            self.test_image_dir,
+            self.test_annotation_path,
+            self.device,
+            self.pretrained,
+            self.checkpoint_path,
+            self.config_path,
+            self._save_config_button,
+            self._load_config_button,
+            self._train_button,
+            self._stop_button,
+        ])
+
+        self._train_button.clicked.connect(self._start_training)
+        self._stop_button.clicked.connect(self._stop_training)
+        self._save_config_button.clicked.connect(self._save_config)
+        self._load_config_button.clicked.connect(self._load_config)
+        self.training_preset.changed.connect(self._apply_training_preset)
+        self.use_separate_eval_sets.changed.connect(self._update_eval_dataset_state)
+        self.use_advanced_mask_losses.changed.connect(self._update_advanced_loss_state)
+        self._update_eval_dataset_state()
+        self._update_advanced_loss_state()
+
+        self._fig, self._ax = plt.subplots()
+        self._canvas = FigureCanvas(self._fig)
+        self._x_values = []
+        self._y_values = []
+        self._canvas_widget = QWidget()
+        v_layout = QVBoxLayout()
+        v_layout.addWidget(self._canvas)
+        self._canvas_widget.setLayout(v_layout)
+        if self._viewer is not None:
+            self._viewer.window.add_dock_widget(
+                self._canvas_widget,
+                name="Instance Segmentation Loss Curve",
+                area="right",
+            )
+        self._render_training_plot()
+
+    def _log(self, message):
+        _append_log_message(self._log_text, message)
+
+    def _render_training_plot(self):
+        self._ax.clear()
+        self._ax.set_xlabel("Epoch")
+        self._ax.set_ylabel("Loss")
+        self._ax.set_title("Instance Segmentation Loss Curve")
+        if self._x_values and self._y_values:
+            self._ax.plot(self._x_values, self._y_values, color="darkorange")
+        self._fig.tight_layout()
+        self._canvas.draw_idle()
+
+    def _update_loss_curve(self, loss, epoch=None):
+        if epoch is not None:
+            self._x_values.append(epoch)
+            self._y_values.append(loss)
+        self._render_training_plot()
+
+    def _reset_training_plot(self):
+        self._x_values = []
+        self._y_values = []
+        self._render_training_plot()
+
+    def _resolve_device(self):
+        device = self.device.value
+        if device != "auto":
+            return torch.device(device)
+        return torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+    def _update_eval_dataset_state(self):
+        use_separate = self.use_separate_eval_sets.value
+        self.val_split.visible = not use_separate
+        self.val_image_dir.visible = use_separate
+        self.val_annotation_path.visible = use_separate
+        self.test_image_dir.visible = use_separate
+        self.test_annotation_path.visible = use_separate
+
+    def _update_advanced_loss_state(self):
+        enabled = self.use_advanced_mask_losses.value
+        self.boundary_loss_weight.visible = enabled
+        self.focal_mask_loss_weight.visible = enabled
+        self.tversky_loss_weight.visible = enabled
+
+    def _config_widget_map(self):
+        return {
+            "image_dir": self.image_dir,
+            "annotation_path": self.annotation_path,
+            "save_path": self.save_path,
+            "backbone_name": self.backbone_name,
+            "model_name": self.model_name,
+            "img_size": self.img_size,
+            "num_classes": self.num_classes,
+            "training_preset": self.training_preset,
+            "batch_size": self.batch_size,
+            "epochs": self.epochs,
+            "lr": self.lr,
+            "weight_decay": self.weight_decay,
+            "val_split": self.val_split,
+            "use_separate_eval_sets": self.use_separate_eval_sets,
+            "val_image_dir": self.val_image_dir,
+            "val_annotation_path": self.val_annotation_path,
+            "test_image_dir": self.test_image_dir,
+            "test_annotation_path": self.test_annotation_path,
+            "device": self.device,
+            "pretrained": self.pretrained,
+            "checkpoint_path": self.checkpoint_path,
+            "use_advanced_mask_losses": self.use_advanced_mask_losses,
+            "boundary_loss_weight": self.boundary_loss_weight,
+            "focal_mask_loss_weight": self.focal_mask_loss_weight,
+            "tversky_loss_weight": self.tversky_loss_weight,
+        }
+
+    def _save_config(self):
+        config_path = normalize_optional_path(self.config_path.value)
+        if not config_path:
+            self._log("Please choose a config JSON path before saving.")
+            return
+        path = save_training_config(
+            config_path,
+            _widget_values(self._config_widget_map()),
+            "instance_segmentation",
+        )
+        self._log(f"Instance segmentation config saved to: {path}")
+
+    def _load_config(self):
+        config_path = normalize_optional_path(self.config_path.value)
+        if not config_path:
+            self._log("Please choose a config JSON path before loading.")
+            return
+        try:
+            config = load_training_config(config_path, expected_task="instance_segmentation")
+            params = dict(config.get("parameters", {}))
+            if params.get("num_classes") is None:
+                params["num_classes"] = 0
+            use_separate = params.get("use_separate_eval_sets")
+            if use_separate is None:
+                use_separate = any(
+                    params.get(key)
+                    for key in (
+                        "val_image_dir",
+                        "val_annotation_path",
+                        "test_image_dir",
+                        "test_annotation_path",
+                    )
+                )
+            self.use_separate_eval_sets.value = bool(use_separate)
+            _apply_widget_values(self._config_widget_map(), params)
+            self._update_eval_dataset_state()
+            self._update_advanced_loss_state()
+            self._log(f"Instance segmentation config loaded from: {config_path}")
+        except Exception as error:
+            self._log(f"Failed to load instance segmentation config: {error}")
+
+    def _apply_training_preset(self):
+        preset_name = self.training_preset.value
+        preset = INSTANCE_TRAINING_PRESETS.get(preset_name)
+        if not preset:
+            return
+        _apply_widget_values(self._config_widget_map(), preset)
+        self._update_advanced_loss_state()
+        self._log(f"Applied instance segmentation preset: {preset_name}")
+
+    def _build_training_request(self):
+        num_classes = self.num_classes.value if self.num_classes.value > 0 else None
+        use_separate = self.use_separate_eval_sets.value
+        return InstanceSegmentationTrainingRequest(
+            image_dir=self.image_dir.value,
+            annotation_path=self.annotation_path.value,
+            save_path=self.save_path.value,
+            backbone_name=self.backbone_name.value,
+            model_name=self.model_name.value,
+            img_size=self.img_size.value,
+            num_classes=num_classes,
+            batch_size=self.batch_size.value,
+            epochs=self.epochs.value,
+            lr=self.lr.value,
+            device=self._resolve_device(),
+            pretrained=self.pretrained.value,
+            val_split=0.0 if use_separate else self.val_split.value,
+            val_image_dir=normalize_optional_path(self.val_image_dir.value) if use_separate else None,
+            val_annotation_path=normalize_optional_path(self.val_annotation_path.value) if use_separate else None,
+            test_image_dir=normalize_optional_path(self.test_image_dir.value) if use_separate else None,
+            test_annotation_path=normalize_optional_path(self.test_annotation_path.value) if use_separate else None,
+            weight_decay=self.weight_decay.value,
+            checkpoint_path=normalize_optional_path(self.checkpoint_path.value),
+            use_advanced_mask_losses=self.use_advanced_mask_losses.value,
+            boundary_loss_weight=self.boundary_loss_weight.value,
+            focal_mask_loss_weight=self.focal_mask_loss_weight.value,
+            tversky_loss_weight=self.tversky_loss_weight.value,
+        )
+
+    def _start_training(self):
+        if self._viewer is None:
+            return
+
+        self._stop_flag = False
+        self._reset_training_plot()
+        request = self._build_training_request()
+
+        @_get_thread_worker()
+        def _worker():
+            logs = yield from iter_instance_segmentation_training_task(
+                request,
+                update_loss_curve=self._update_loss_curve,
+                stop_flag_fn=lambda: self._stop_flag,
+            )
+            return logs
+
+        worker = _worker()
+        worker.yielded.connect(self._log)
+        worker.returned.connect(
+            lambda logs: self._log(
+                f"Instance segmentation training finished. Model saved to: {request.save_path}"
+            )
+            if not self._stop_flag
+            else None
+        )
+        worker.errored.connect(lambda err: self._log(f"Instance segmentation training error: {err}"))
+        worker.start()
+
+    def _stop_training(self):
+        self._stop_flag = True
+        self._log("Stop button clicked. Stopping instance segmentation training...")
+
+
+class InstanceSegmentationInferenceContainer(Container):
+    def __init__(self, viewer: "napari.viewer.Viewer"):
+        super().__init__()
+        self._viewer = viewer
+
+        self.checkpoint_path = FileEdit(label="Checkpoint (.pth)", mode="r")
+        self._image_layer_combo = create_widget(label="Image", annotation="napari.layers.Image")
+        self.backbone_name = ComboBox(label="Backbone", choices=backbone_zoom, value="emcellfound_vit_base")
+        self.model_name = ComboBox(label="Model", choices=INSTANCE_MODEL_CHOICES, value="rtm_instance")
+        self.img_size = SpinBox(label="Image size", min=1, max=40960, step=1, value=512)
+        self.num_classes = SpinBox(label="Num classes", min=1, max=1000, step=1, value=1)
+        self.score_threshold = FloatSpinBox(label="Score threshold", min=0.0, max=1.0, step=0.05, value=0.3)
+        self.nms_iou_threshold = FloatSpinBox(label="NMS IoU", min=0.0, max=1.0, step=0.05, value=0.5)
+        self.mask_threshold = FloatSpinBox(label="Mask threshold", min=0.0, max=1.0, step=0.05, value=0.5)
+        self.max_detections = SpinBox(label="Max detections", min=1, max=10000, step=1, value=100)
+        self.device = ComboBox(label="Device", choices=["auto", "cpu", "cuda"], value="auto")
+        self.inference_from_folder_mode = CheckBox(label="Inference from folder", value=False)
+        self.image_folder = FileEdit(label="Image folder", mode="d", nullable=True)
+        self.output_csv = FileEdit(label="Output CSV", mode="w", nullable=True)
+        self.mask_output_folder = FileEdit(label="Instance mask output folder", mode="d", nullable=True)
+        self.binary_mask_output_folder = FileEdit(label="Binary masks output folder", mode="d", nullable=True)
+        self._run_button = PushButton(text="Run Instance Segmentation")
+        self._log_widget = TextEdit()
+        self._log_widget.read_only = True
+        self._log_widget.native.setMinimumHeight(120)
+
+        self.extend([
+            self.checkpoint_path,
+            self._image_layer_combo,
+            self.backbone_name,
+            self.model_name,
+            self.img_size,
+            self.num_classes,
+            self.score_threshold,
+            self.nms_iou_threshold,
+            self.mask_threshold,
+            self.max_detections,
+            self.device,
+            self.inference_from_folder_mode,
+            self.image_folder,
+            self.output_csv,
+            self.mask_output_folder,
+            self.binary_mask_output_folder,
+            self._run_button,
+            self._log_widget,
+        ])
+
+        self._run_button.clicked.connect(self._run_instance_segmentation)
+        self.inference_from_folder_mode.changed.connect(self._update_folder_mode_state)
+        self._update_folder_mode_state()
+
+    def _log(self, message):
+        try:
+            self._log_widget.append(message)
+        except Exception:
+            print(message)
+
+    def _update_folder_mode_state(self):
+        folder_mode = self.inference_from_folder_mode.value
+        self._image_layer_combo.visible = not folder_mode
+        self.image_folder.visible = folder_mode
+        self.mask_output_folder.visible = folder_mode
+        self.binary_mask_output_folder.visible = folder_mode
+
+    def _resolve_device(self):
+        device = self.device.value
+        if device != "auto":
+            return torch.device(device)
+        return torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+    def _build_inference_request(self):
+        return InstanceSegmentationInferenceRequest(
+            checkpoint_path=normalize_optional_path(self.checkpoint_path.value),
+            backbone_name=self.backbone_name.value,
+            model_name=self.model_name.value,
+            img_size=self.img_size.value,
+            num_classes=self.num_classes.value,
+            image=None if self.inference_from_folder_mode.value else (None if self._image_layer_combo.value is None else self._image_layer_combo.value.data),
+            image_folder=normalize_optional_path(self.image_folder.value) if self.inference_from_folder_mode.value else None,
+            output_csv=normalize_optional_path(self.output_csv.value),
+            mask_output_folder=normalize_optional_path(self.mask_output_folder.value),
+            binary_mask_output_folder=normalize_optional_path(self.binary_mask_output_folder.value),
+            device=self._resolve_device(),
+            score_threshold=self.score_threshold.value,
+            max_detections=self.max_detections.value,
+            nms_iou_threshold=self.nms_iou_threshold.value,
+            mask_threshold=self.mask_threshold.value,
+        )
+
+    def _run_instance_segmentation(self):
+        request = self._build_inference_request()
+        if not request.checkpoint_path:
+            self._log("Invalid checkpoint path")
+            return
+
+        img_layer = self._image_layer_combo.value
+
+        @_get_thread_worker()
+        def _worker():
+            return run_instance_segmentation_inference_task(request)
+
+        worker = _worker()
+
+        @worker.returned.connect
+        def _on_result(result):
+            if isinstance(result, list):
+                self._log(f"Instance segmentation finished for {len(result)} instances")
+                return
+            if result is None:
+                self._log("Instance segmentation finished")
+                return
+            instance_mask = prediction_to_instance_mask(result)
+            if img_layer is not None:
+                upsert_labels_layer(
+                    self._viewer,
+                    instance_mask,
+                    f"{img_layer.name}_instances",
+                )
+            self._log(f"Detected {int(result['scores'].numel())} instances")
+
+        worker.errored.connect(lambda err: self._log(f"Instance segmentation error: {err}"))
+        worker.start()
+
+
+class COCOInstanceDatasetInspector(Container):
+    """Check and preview COCO instance segmentation datasets before training."""
+
+    def __init__(self, viewer: "napari.viewer.Viewer"):
+        super().__init__()
+        self._viewer = viewer
+        self._last_report = None
+        self._last_preview = None
+
+        self.image_dir = FileEdit(label="COCO images folder", mode="d")
+        self.annotation_path = FileEdit(label="COCO instances JSON", mode="r")
+        self.include_crowd = CheckBox(label="Include crowd annotations", value=False)
+        self.preview_index = SpinBox(label="Preview image index", min=0, max=1000000, step=1, value=0)
+        self._check_button = PushButton(text="Check Dataset")
+        self._preview_button = PushButton(text="Preview Image")
+        self._random_preview_button = PushButton(text="Random Preview")
+        self.report = TextEdit(value="")
+        self.report.read_only = True
+        self.report.native.setMinimumHeight(240)
+
+        self.extend([
+            self.image_dir,
+            self.annotation_path,
+            self.include_crowd,
+            self.preview_index,
+            self._check_button,
+            self._preview_button,
+            self._random_preview_button,
+            self.report,
+        ])
+
+        self._check_button.clicked.connect(self._check_dataset)
+        self._preview_button.clicked.connect(self._preview_dataset_item)
+        self._random_preview_button.clicked.connect(self._preview_random_item)
+
+    def _log_report(self, message):
+        self.report.value = message
+        print(message)
+
+    def _paths(self):
+        return str(self.image_dir.value), str(self.annotation_path.value)
+
+    def _check_dataset(self):
+        try:
+            image_dir, annotation_path = self._paths()
+            self._last_report = check_coco_instance_dataset(
+                image_dir,
+                annotation_path,
+                include_crowd=self.include_crowd.value,
+            )
+            self.preview_index.max = max(
+                int(self._last_report.get("summary", {}).get("num_existing_images", 1)) - 1,
+                0,
+            )
+            self._log_report(format_coco_instance_check_report(self._last_report))
+        except Exception as error:
+            self._log_report(f"COCO dataset check failed: {error}")
+
+    def _preview_random_item(self):
+        if self._last_report is None:
+            self._check_dataset()
+        count = 0
+        if self._last_report:
+            count = int(self._last_report.get("summary", {}).get("num_existing_images", 0))
+        if count > 0:
+            self.preview_index.value = int(np.random.default_rng().integers(0, count))
+        self._preview_dataset_item()
+
+    def _preview_dataset_item(self):
+        if self._viewer is None:
+            self._log_report("Preview requires an active napari viewer.")
+            return
+        try:
+            image_dir, annotation_path = self._paths()
+            preview = load_coco_instance_preview(
+                image_dir,
+                annotation_path,
+                index=int(self.preview_index.value),
+                include_crowd=self.include_crowd.value,
+            )
+            self._last_preview = preview
+            image_layer_name = f"COCO preview image {preview['image_id']}"
+            mask_layer_name = f"COCO preview instances {preview['image_id']}"
+            upsert_image_layer(self._viewer, preview["image"], image_layer_name)
+            upsert_labels_layer(self._viewer, preview["instance_mask"], mask_layer_name)
+            self._upsert_box_layer(preview)
+            info_lines = [
+                f"Preview image id={preview['image_id']} ({preview['file_name']})",
+                f"Image path: {preview['image_path']}",
+                f"Instances: {len(preview['labels'])}",
+            ]
+            for instance_index, (annotation_id, label) in enumerate(
+                zip(preview["annotation_ids"], preview["labels"]),
+                start=1,
+            ):
+                info_lines.append(
+                    f"- instance={instance_index} annotation_id={annotation_id} label={label}"
+                )
+            preview_report = "\n".join(info_lines)
+            if self._last_report is not None:
+                preview_report = (
+                    f"{format_coco_instance_check_report(self._last_report)}"
+                    f"\n\nPreview:\n{preview_report}"
+                )
+            self._log_report(preview_report)
+        except Exception as error:
+            self._log_report(f"COCO dataset preview failed: {error}")
+
+    def _upsert_box_layer(self, preview):
+        boxes = preview["boxes"]
+        layer_name = f"COCO preview boxes {preview['image_id']}"
+        if boxes.size == 0:
+            if layer_name in self._viewer.layers:
+                self._viewer.layers.remove(layer_name)
+            return None
+        shapes = []
+        edge_colors = []
+        text_values = []
+        for index, box in enumerate(boxes):
+            x1, y1, x2, y2 = [float(value) for value in box]
+            shapes.append(
+                np.asarray(
+                    [
+                        [y1, x1],
+                        [y1, x2],
+                        [y2, x2],
+                        [y2, x1],
+                    ],
+                    dtype=np.float32,
+                )
+            )
+            edge_colors.append("lime")
+            label = preview["labels"][index] if index < len(preview["labels"]) else "instance"
+            text_values.append(f"{index + 1}: {label}")
+        if layer_name in self._viewer.layers:
+            layer = self._viewer.layers[layer_name]
+            layer.data = shapes
+            layer.edge_color = edge_colors
+            layer.text = {"string": text_values, "size": 10, "color": "yellow"}
+            return layer
+        return self._viewer.add_shapes(
+            shapes,
+            shape_type="polygon",
+            name=layer_name,
+            edge_color=edge_colors,
+            face_color="transparent",
+            edge_width=2,
+            text={"string": text_values, "size": 10, "color": "yellow"},
+        )
 
 
 #------------EMCellFiner=------
@@ -659,6 +1889,10 @@ class EMCellFinerSingleInferWidget(Container):
     def __init__(self, viewer: "napari.viewer.Viewer"):
         super().__init__()
         self.viewer = viewer
+        self._log_text, self._log_emitter = _create_log_dock(
+            self.viewer,
+            "Super Resolution Single Inference Log",
+        )
 
         MODEL_ZOO = ["EMCellFiner"]
 
@@ -695,16 +1929,19 @@ class EMCellFinerSingleInferWidget(Container):
             image=None if img_layer is None else img_layer.data,
         )
 
+    def _log(self, message):
+        _append_log_message(self._log_text, message)
+
     def _run_inference(self):
         img_layer = self._image_layer_combo.value
         if img_layer is None:
-            print("No layer selected")
+            self._log("No layer selected")
             return
 
         request = self._build_request(img_layer)
         progress = napari.utils.progress(total=100, desc="EMCellFiner Inference...")
 
-        @thread_worker
+        @_get_thread_worker()
         def _worker():
             return run_emcellfiner_single_inference(request)
 
@@ -714,12 +1951,12 @@ class EMCellFinerSingleInferWidget(Container):
         def _on_result(output_np):
             progress.close()
             upsert_image_layer(self.viewer, output_np, f"{img_layer.name}_EMCFiner_SR")
-            print("Inference Finished")
+            self._log("Inference Finished")
 
         @worker.errored.connect
         def _on_error(err):
             progress.close()
-            print("Inference Error:", err)
+            self._log(f"Inference Error: {err}")
 
         worker.start()
 
@@ -727,6 +1964,10 @@ class EMCellFinerBatchInferWidget(Container):
     def __init__(self, viewer: "napari.viewer.Viewer"):
         super().__init__()
         self.viewer = viewer
+        self._log_text, self._log_emitter = _create_log_dock(
+            self.viewer,
+            "Super Resolution Batch Inference Log",
+        )
 
         MODEL_ZOO = ["EMCellFiner"]
 
@@ -766,6 +2007,9 @@ class EMCellFinerBatchInferWidget(Container):
         self._stop_flag = False
         self._update_resize_controls_state()
 
+    def _log(self, message):
+        _append_log_message(self._log_text, message)
+
     def _update_resize_controls_state(self):
         enabled = self.resize_before_inference.value
         self.resize_factor.visible = enabled
@@ -788,29 +2032,29 @@ class EMCellFinerBatchInferWidget(Container):
         self._stop_flag = True
         if self._worker is not None:
             self._worker.quit()
-            print("Batch inference stopped by user.")
+            self._log("Batch inference stopped by user.")
 
     def _run_batch_inference(self):
         request = self._build_request()
 
         if not (request.input_dir and os.path.isdir(request.input_dir)):
-            print("Invalid Input Folder")
+            self._log("Invalid Input Folder")
             return
 
         if not request.output_dir:
-            print("Invalid Output Folder")
+            self._log("Invalid Output Folder")
             return
 
         img_files = collect_image_files(request.input_dir)
         ensure_directory(request.output_dir)
         if len(img_files) == 0:
-            print("No images found in folder")
+            self._log("No images found in folder")
             return
 
         self._stop_flag = False
         progress = napari.utils.progress(range(len(img_files)), desc="Batch Inference...")
 
-        @thread_worker
+        @_get_thread_worker()
         def _worker():
             yield from iter_emcellfiner_batch_inference(
                 request,
@@ -823,18 +2067,18 @@ class EMCellFinerBatchInferWidget(Container):
         @worker.yielded.connect
         def _on_each(args):
             path, save_path, out_np, idx = args
-            print(f"idx: {idx} : {os.path.basename(path)} Saved to: ", save_path)
+            self._log(f"idx: {idx} : {os.path.basename(path)} Saved to: {save_path}")
             progress.update(idx + 1)
 
         @worker.errored.connect
         def _on_err(err):
             progress.close()
-            print("Error:", err)
+            self._log(f"Error: {err}")
 
         @worker.finished.connect
         def _on_finished():
             progress.close()
-            print("Batch Inference Finished")
+            self._log("Batch Inference Finished")
             self._worker = None
             self._stop_flag = False
 
@@ -844,6 +2088,126 @@ class EMCellFinerBatchInferWidget(Container):
 #----------------------------
 # labelme2semantci segmentation mask
 #----------------------------
+class LabelMe2COCOInstance(Container):
+    """Convert LabelMe polygon instance annotations to COCO instance JSON."""
+
+    def __init__(self, viewer: "napari.viewer.Viewer"):
+        super().__init__()
+        self.viewer = viewer
+
+        self.json_dir = FileEdit(label="LabelMe JSON folder", mode="d", nullable=False)
+        self.output_json = FileEdit(label="Output COCO JSON", mode="w", nullable=False)
+        self.image_output_dir = FileEdit(label="Output image folder", mode="d", nullable=True)
+        self.copy_images = CheckBox(label="Copy images to output folder", value=True)
+        self.split_dataset = CheckBox(label="Split train/val/test JSONs", value=False)
+        self.train_ratio = FloatSpinBox(label="Train ratio", min=0.0, max=100.0, step=0.05, value=0.8)
+        self.val_ratio = FloatSpinBox(label="Val ratio", min=0.0, max=100.0, step=0.05, value=0.1)
+        self.test_ratio = FloatSpinBox(label="Test ratio", min=0.0, max=100.0, step=0.05, value=0.1)
+        self.split_seed = SpinBox(label="Split seed", min=0, max=2147483647, step=1, value=42)
+        self.category_names = TextEdit(
+            label="Category order",
+            value="",
+        )
+        self._run_button = PushButton(text="Convert LabelMe to COCO Instance")
+        self.info = TextEdit(
+            value=(
+                "Convert LabelMe polygon annotations to COCO instance segmentation JSON.\n"
+                "Draw each object instance as one separate polygon in LabelMe.\n"
+                "Category order can be one name per line or comma-separated. Leave it blank to infer labels from JSON files.\n"
+                "Recommended: enable image copying, then train with image folder = Output image folder and annotation = Output COCO JSON.\n"
+                "If image copying is enabled and Output image folder is empty, images are saved beside the COCO JSON in an images folder.\n"
+                "Enable train/val/test split to write train.json, val.json and test.json beside the selected Output COCO JSON."
+            ),
+        )
+        self.info.read_only = True
+
+        self.extend([
+            self.json_dir,
+            self.output_json,
+            self.copy_images,
+            self.image_output_dir,
+            self.split_dataset,
+            self.train_ratio,
+            self.val_ratio,
+            self.test_ratio,
+            self.split_seed,
+            self.category_names,
+            self._run_button,
+            self.info,
+        ])
+
+        self.copy_images.changed.connect(self._update_image_output_state)
+        self.split_dataset.changed.connect(self._update_split_state)
+        self._run_button.clicked.connect(self._convert_labelme_to_coco)
+        self._update_image_output_state()
+        self._update_split_state()
+
+    def _update_image_output_state(self):
+        self.image_output_dir.visible = self.copy_images.value
+
+    def _update_split_state(self):
+        split_enabled = self.split_dataset.value
+        self.train_ratio.visible = split_enabled
+        self.val_ratio.visible = split_enabled
+        self.test_ratio.visible = split_enabled
+        self.split_seed.visible = split_enabled
+
+    def _parse_category_names(self):
+        raw = self.category_names.value or ""
+        names = []
+        for chunk in raw.replace(",", "\n").splitlines():
+            name = chunk.strip()
+            if name:
+                names.append(name)
+        return names or None
+
+    def _convert_labelme_to_coco(self):
+        try:
+            request = LabelMeInstanceToCOCORequest(
+                labelme_json_dir=str(self.json_dir.value),
+                output_json=str(self.output_json.value),
+                image_output_dir=normalize_optional_path(self.image_output_dir.value),
+                copy_images=bool(self.copy_images.value),
+                category_names=self._parse_category_names(),
+                split_dataset=bool(self.split_dataset.value),
+                train_ratio=float(self.train_ratio.value),
+                val_ratio=float(self.val_ratio.value),
+                test_ratio=float(self.test_ratio.value),
+                split_seed=int(self.split_seed.value),
+            )
+            result = convert_labelme_instance_folder_to_coco(request)
+            if result["output_jsons"]:
+                output_lines = "\n".join(
+                    f"{name}: {path}" for name, path in result["output_jsons"].items()
+                )
+                split_lines = "\n".join(
+                    f"{name}: {counts['images']} images, {counts['annotations']} instances"
+                    for name, counts in result["split_counts"].items()
+                )
+                message = (
+                    "LabelMe instance annotations converted to COCO splits.\n"
+                    f"{output_lines}\n"
+                    f"Images: {result['num_images']}; "
+                    f"Instances: {result['num_annotations']}; "
+                    f"Categories: {result['categories']}\n"
+                    f"{split_lines}"
+                )
+            else:
+                message = (
+                    "LabelMe instance annotations converted to COCO.\n"
+                    f"Output JSON: {result['output_json']}\n"
+                    f"Images: {result['num_images']}; "
+                    f"Instances: {result['num_annotations']}; "
+                    f"Categories: {result['categories']}"
+                )
+            self.info.value = message
+            print(message)
+        except Exception as error:
+            message = f"LabelMe to COCO conversion failed: {error}"
+            self.info.value = message
+            print(message)
+
+
 class LabelMe2Seg(Container):
     '''
         using labelme to annotate the labels first, and generate json files.

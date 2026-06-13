@@ -17,7 +17,7 @@ from PIL import Image
 from skimage.transform import resize
 import torch
 import time
-from .metrics.metrics import compute_metrics, DiceCELoss
+from .metrics.metrics import compute_metrics, build_segmentation_loss
 from .transforms.transforms import Compose, LoadImage, LoadMask, PhotometricDistortion, AlbumentationsTransform, RandomErasing, RandomScale, Pad, ToTensor,  RandomCrop, Resize, Normalize
 import albumentations as A
 from PIL import Image
@@ -37,7 +37,14 @@ def train_loop(images_dir, masks_dir,
                epochs=100, device=None,
                callback=None, target_size=(512, 512), 
                classes_num=2, ignore_index=-1,
-               stop_flag_fn=None):
+               stop_flag_fn=None,
+               use_advanced_losses=False,
+               dice_loss_weight=1.0,
+               focal_loss_weight=0.0,
+               tversky_loss_weight=0.0,
+               boundary_loss_weight=0.0,
+               lovasz_loss_weight=0.0,
+               ohem_ce_loss_weight=0.0):
     
     if not os.path.exists(save_path):
         os.makedirs(save_path, exist_ok=True)
@@ -65,8 +72,17 @@ def train_loop(images_dir, masks_dir,
         model = load_pretrained(model, pretrained_model, device)
             
     opt = torch.optim.Adam(model.parameters(), lr=lr)
-    # criterion = nn.CrossEntropyLoss(ignore_index=ignore_index)
-    criterion = DiceCELoss(num_classes=classes_num, ignore_index=ignore_index, dice_weight=1, ce_weight=1)
+    criterion = build_segmentation_loss(
+        num_classes=classes_num,
+        ignore_index=ignore_index,
+        use_advanced_losses=use_advanced_losses,
+        dice_loss_weight=dice_loss_weight,
+        focal_loss_weight=focal_loss_weight,
+        tversky_loss_weight=tversky_loss_weight,
+        boundary_loss_weight=boundary_loss_weight,
+        lovasz_loss_weight=lovasz_loss_weight,
+        ohem_ce_loss_weight=ohem_ce_loss_weight,
+    )
     
     best_metric = -1
     best_model_path = None

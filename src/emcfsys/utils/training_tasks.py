@@ -4,6 +4,7 @@ from dataclasses import dataclass
 import torch
 
 from ..EMCellFound.train import train_loop
+from .training_artifacts import export_training_artifacts
 
 
 @dataclass(slots=True)
@@ -21,6 +22,13 @@ class SegmentationTrainingRequest:
     target_size: int
     ignore_index: int
     pretrained_model: str | None = None
+    use_advanced_losses: bool = False
+    dice_loss_weight: float = 1.0
+    focal_loss_weight: float = 0.0
+    tversky_loss_weight: float = 0.0
+    boundary_loss_weight: float = 0.0
+    lovasz_loss_weight: float = 0.0
+    ohem_ce_loss_weight: float = 0.0
 
 
 def run_training_task(
@@ -51,6 +59,9 @@ def run_training_task(
 
         logs.append((epoch, batch, n_batches, loss, finished_epoch, epoch_time, metrics))
 
+        if batch != 0:
+            emit_log(f"Epoch {epoch} batch {batch}/{n_batches} loss {loss:.4f}")
+
         if batch == 0 and finished_epoch and epoch_time is not None:
             emit_log(
                 f"Epoch {epoch} finished, avg loss {loss:.4f}, time {epoch_time:.2f}s, metric {metrics}"
@@ -80,8 +91,25 @@ def run_training_task(
             classes_num=request.classes_num,
             ignore_index=request.ignore_index,
             stop_flag_fn=stop_flag_fn,
+            use_advanced_losses=request.use_advanced_losses,
+            dice_loss_weight=request.dice_loss_weight,
+            focal_loss_weight=request.focal_loss_weight,
+            tversky_loss_weight=request.tversky_loss_weight,
+            boundary_loss_weight=request.boundary_loss_weight,
+            lovasz_loss_weight=request.lovasz_loss_weight,
+            ohem_ce_loss_weight=request.ohem_ce_loss_weight,
         )
     except StopIteration:
         emit_log("Training stopped by user.")
 
+    artifacts = export_training_artifacts(
+        request.save_path,
+        request,
+        "semantic_segmentation",
+        logs,
+    )
+    emit_log(
+        "Training artifacts exported: "
+        f"{artifacts['config']}, {artifacts['training_log']}, {artifacts['metrics']}"
+    )
     return logs

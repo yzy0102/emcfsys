@@ -4,8 +4,9 @@ from .UNet import UNet
 from .PSPNet import PSPNet
 from .DeepLabv3Plus import DeepLabV3Plus
 from .UperNet import UPerNet
+from .RTMInstanceSeg import build_emcellfound_instance_segmenter, is_supported_instance_model
 
-def get_model(model_name, backbone_name='resnet34', img_size = 512, num_classes=2, aux_on=True, pretrained=True):
+def get_model(model_name, backbone_name='resnet34', img_size = 512, num_classes=2, aux_on=True, pretrained=True, **kwargs):
     """
     动态选择模型
 
@@ -30,6 +31,15 @@ def get_model(model_name, backbone_name='resnet34', img_size = 512, num_classes=
         model = DeepLabV3Plus(num_classes=num_classes, img_size=img_size, backbone_name=backbone_name, aux_on=aux_on, pretrained=pretrained)
     elif model_name == "upernet":
         model = UPerNet(num_classes=num_classes, img_size=img_size, backbone_name=backbone_name, aux_on=aux_on, pretrained=pretrained)
+    elif is_supported_instance_model(model_name):
+        model = build_emcellfound_instance_segmenter(
+            model_name,
+            num_classes=num_classes,
+            img_size=img_size,
+            backbone_name=backbone_name,
+            pretrained=pretrained,
+            **kwargs,
+        )
     else:
         raise ValueError(f"Unknown model_name: {model_name}")
     

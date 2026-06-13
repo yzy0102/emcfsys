@@ -3,6 +3,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 import timm
 from emcfsys.EMCellFound.models.EMCellFoundViT import emcellfound_vit_base
+from emcfsys.EMCellFound.models.backbone_registry import try_create_backbone
 
 vit_names = ["emcellfound_vit_base", 
             
@@ -208,9 +209,17 @@ class CasualBackbones(nn.Module):
         super().__init__()
         self.features_only = features_only
         
-        
-        feat_len = len(timm.create_model(backbone_name, pretrained=False, features_only=True).feature_info)
-        out_indices = tuple(range(1, feat_len))  # skip first if you want, 或 (0,1,2,3)
+        try:
+            feat_len = len(
+                timm.create_model(
+                    backbone_name,
+                    pretrained=False,
+                    features_only=True,
+                ).feature_info
+            )
+            out_indices = tuple(range(1, feat_len))
+        except Exception:
+            out_indices = (0, 1, 2, 3)
         
         if backbone_name in ['convnext_tiny', 'convnext_small', 'convnext_base', 'convnext_large']:
             out_indices = (0, 1, 2, 3)
@@ -227,11 +236,21 @@ class CasualBackbones(nn.Module):
                                                     out_indices=out_indices)
                 self.is_vit = True
             else:
-                self.backbone = timm.create_model(backbone_name, 
-                                                features_only=features_only, 
-                                                pretrained=pretrained,
-                                                out_indices=out_indices)
-                self.is_vit = False
+                try:
+                    self.backbone = try_create_backbone(
+                        backbone_name,
+                        pretrained=pretrained,
+                        features_only=features_only,
+                        out_indices=out_indices,
+                    )
+                except Exception:
+                    self.backbone = timm.create_model(
+                        backbone_name,
+                        features_only=features_only,
+                        pretrained=pretrained,
+                        out_indices=out_indices,
+                    )
+                self.is_vit = backbone_name in vit_names or backbone_name in dinov3_vit_dict
                 
         except:
             print("No pretrained weights available, using random initialization...")
@@ -242,11 +261,21 @@ class CasualBackbones(nn.Module):
                                                     out_indices=(2, 5, 8, 11))
                 self.is_vit = True
             else:
-                self.backbone = timm.create_model(backbone_name, 
-                                                pretrained=False,
-                                                features_only=features_only, 
-                                                out_indices=out_indices)
-                self.is_vit = False
+                try:
+                    self.backbone = try_create_backbone(
+                        backbone_name,
+                        pretrained=False,
+                        features_only=features_only,
+                        out_indices=out_indices,
+                    )
+                except Exception:
+                    self.backbone = timm.create_model(
+                        backbone_name,
+                        pretrained=False,
+                        features_only=features_only,
+                        out_indices=out_indices,
+                    )
+                self.is_vit = backbone_name in vit_names or backbone_name in dinov3_vit_dict
                 
         # -------------------------------------------------------
         #            ViT 的输出 channels 由 adapter 控制
@@ -277,7 +306,15 @@ class CasualBackbones(nn.Module):
                 self.channels = (vit_channels, vit_channels, vit_channels, vit_channels)
 
         else:
-            self.channels = self.backbone.feature_info.channels()
+            try:
+                self.channels = tuple(self.backbone.feature_info.channels())
+            except Exception:
+                with torch.no_grad():
+                    dummy = torch.zeros(1, 3, img_size, img_size)
+                    outputs = self.backbone(dummy)
+                if not isinstance(outputs, (list, tuple)):
+                    outputs = [outputs]
+                self.channels = tuple(int(output.shape[1]) for output in outputs)
             self.adapter = nn.Identity()
 
 

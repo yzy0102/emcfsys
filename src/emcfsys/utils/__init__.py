@@ -4,6 +4,17 @@ from .emcellfiner_tasks import (
     resolve_emcellfiner_device,
     run_emcellfiner_single_inference,
 )
+from .classification_tasks import (
+    ClassificationInferenceRequest,
+    ClassificationTrainingRequest,
+    run_classification_inference_task,
+    run_classification_training_task,
+)
+from .coco_instance_inspector import (
+    check_coco_instance_dataset,
+    format_coco_instance_check_report,
+    load_coco_instance_preview,
+)
 from .image_resize_ops import (
     ALGORITHM_MAP,
     output_shape_for_image,
@@ -12,6 +23,16 @@ from .image_resize_ops import (
     spatial_shape,
     target_size_from_mode,
 )
+from .instance_segmentation_tasks import (
+    InstanceSegmentationInferenceRequest,
+    InstanceSegmentationTrainingRequest,
+    iter_instance_segmentation_training_task,
+    prediction_to_instance_mask,
+    run_instance_segmentation_inference_task,
+    run_instance_segmentation_training_task,
+    save_binary_instance_masks,
+    save_instance_mask,
+)
 from .inference_tasks import (
     SegmentationInferenceRequest,
     SlidingWindowInferenceRequest,
@@ -19,28 +40,49 @@ from .inference_tasks import (
     run_sliding_inference_task,
 )
 from .io_utils import collect_image_files, ensure_directory, is_missing_path, normalize_optional_path
+from .labelme_coco_tasks import (
+    LabelMeInstanceToCOCORequest,
+    convert_labelme_instance_folder_to_coco,
+)
 from .training_tasks import SegmentationTrainingRequest, run_training_task
 from .viewer_ops import upsert_image_layer, upsert_labels_layer
 
 __all__ = [
     "ALGORITHM_MAP",
+    "ClassificationInferenceRequest",
+    "ClassificationTrainingRequest",
     "EMCellFinerRequest",
+    "InstanceSegmentationInferenceRequest",
+    "InstanceSegmentationTrainingRequest",
+    "LabelMeInstanceToCOCORequest",
     "SegmentationInferenceRequest",
     "SegmentationTrainingRequest",
     "SlidingWindowInferenceRequest",
     "collect_image_files",
+    "check_coco_instance_dataset",
+    "convert_labelme_instance_folder_to_coco",
     "ensure_directory",
+    "format_coco_instance_check_report",
     "is_missing_path",
     "iter_emcellfiner_batch_inference",
+    "iter_instance_segmentation_training_task",
+    "load_coco_instance_preview",
     "normalize_optional_path",
     "output_shape_for_image",
+    "prediction_to_instance_mask",
     "resize_array",
     "resize_with_ndimage",
     "resolve_emcellfiner_device",
+    "run_classification_inference_task",
+    "run_classification_training_task",
     "run_emcellfiner_single_inference",
     "run_full_inference_task",
+    "run_instance_segmentation_inference_task",
+    "run_instance_segmentation_training_task",
     "run_sliding_inference_task",
     "run_training_task",
+    "save_binary_instance_masks",
+    "save_instance_mask",
     "spatial_shape",
     "target_size_from_mode",
     "upsert_image_layer",
