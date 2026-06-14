@@ -117,6 +117,7 @@ def test_linear_classifier_builds_from_feature_extractor():
 def test_classification_training_knn_saves_checkpoint(monkeypatch, tmp_path):
     dataset_dir = tmp_path / "dataset"
     save_dir = tmp_path / "save"
+    monkeypatch.setenv("EMCFSYS_MODEL_REGISTRY", str(tmp_path / "registry.json"))
     _make_folder_dataset(dataset_dir, images_per_class=2)
     monkeypatch.setattr(ct, "EMCellFoundFeatureExtractor", FakeFeatureExtractor)
 
@@ -140,11 +141,13 @@ def test_classification_training_knn_saves_checkpoint(monkeypatch, tmp_path):
     assert (save_dir / "config.json").exists()
     assert (save_dir / "training_log.csv").exists()
     assert (save_dir / "metrics.json").exists()
+    assert (tmp_path / "registry.json").exists()
 
 
 def test_classification_training_linear_saves_checkpoint(monkeypatch, tmp_path):
     dataset_dir = tmp_path / "dataset"
     save_dir = tmp_path / "save"
+    monkeypatch.setenv("EMCFSYS_MODEL_REGISTRY", str(tmp_path / "registry.json"))
     _make_folder_dataset(dataset_dir, images_per_class=2)
     monkeypatch.setattr(ct, "EMCellFoundFeatureExtractor", FakeFeatureExtractor)
     monkeypatch.setattr(ct, "_evaluate_classifier", lambda model, loader, device: 1.0)

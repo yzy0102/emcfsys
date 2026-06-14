@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -36,6 +37,9 @@ CHECKPOINT_PATTERNS = {
 
 
 def default_model_registry_path() -> str:
+    env_path = os.environ.get("EMCFSYS_MODEL_REGISTRY")
+    if env_path:
+        return str(Path(env_path).expanduser())
     return str(Path.home() / ".emcfsys" / "model_registry.json")
 
 
@@ -104,6 +108,10 @@ def save_model_registry(
     }
     _write_json(registry_path, normalized)
     return normalized
+
+
+def registry_path_from_value(path: str | Path | None = None) -> str:
+    return str(_as_path(path) or Path(default_model_registry_path()))
 
 
 def _load_config(path: str | Path | None) -> dict[str, Any]:
@@ -326,6 +334,54 @@ def add_or_update_model_entry(
     return registry, "added"
 
 
+def merge_model_registries(
+    registry: dict[str, Any],
+    incoming_registry: dict[str, Any],
+) -> tuple[dict[str, Any], dict[str, int]]:
+    stats = {"added": 0, "updated": 0}
+    for entry in incoming_registry.get("models", []):
+        if not isinstance(entry, dict):
+            continue
+        registry, action = add_or_update_model_entry(registry, entry)
+        stats[action] += 1
+    return registry, stats
+
+
+def remove_model_entry(
+    registry: dict[str, Any],
+    index: int,
+) -> tuple[dict[str, Any], dict[str, Any] | None]:
+    models = [entry for entry in registry.get("models", []) if isinstance(entry, dict)]
+    if index < 0 or index >= len(models):
+        return registry, None
+    removed = models.pop(index)
+    registry["models"] = models
+    registry.setdefault("version", REGISTRY_VERSION)
+    return registry, removed
+
+
+def update_model_entry_metadata(
+    registry: dict[str, Any],
+    index: int,
+    *,
+    name: str | None = None,
+    notes: str | None = None,
+) -> tuple[dict[str, Any], dict[str, Any] | None]:
+    models = registry.get("models", [])
+    if index < 0 or index >= len(models):
+        return registry, None
+    entry = dict(models[index])
+    if name is not None and str(name).strip():
+        entry["name"] = str(name).strip()
+    if notes is not None:
+        entry["notes"] = str(notes)
+    entry["updated_at"] = _now_iso()
+    models[index] = validate_model_entry(entry)
+    registry["models"] = models
+    registry.setdefault("version", REGISTRY_VERSION)
+    return registry, models[index]
+
+
 def refresh_registry_status(registry: dict[str, Any]) -> dict[str, Any]:
     registry.setdefault("version", REGISTRY_VERSION)
     registry["models"] = [
@@ -334,6 +390,27 @@ def refresh_registry_status(registry: dict[str, Any]) -> dict[str, Any]:
         if isinstance(entry, dict)
     ]
     return registry
+
+
+def register_training_result(
+    save_dir: str | Path,
+    registry_path: str | Path | None = None,
+) -> dict[str, Any]:
+    registry_file = registry_path_from_value(registry_path)
+    registry = load_model_registry(registry_file)
+    entries = scan_experiment_folder(save_dir)
+    stats = {"added": 0, "updated": 0}
+    for entry in entries:
+        registry, action = add_or_update_model_entry(registry, entry)
+        stats[action] += 1
+    registry = save_model_registry(registry, registry_file)
+    return {
+        "registry": registry,
+        "registry_path": registry_file,
+        "entries": entries,
+        "added": stats["added"],
+        "updated": stats["updated"],
+    }
 
 
 def select_recommended_checkpoint(
@@ -397,9 +474,94 @@ def registry_rows(registry: dict[str, Any]) -> list[dict[str, Any]]:
                 "status": entry.get("status", ""),
                 "metric": metric,
                 "checkpoint": Path(entry.get("checkpoint_path") or "").name,
+                "checkpoint_path": entry.get("checkpoint_path", ""),
             }
         )
     return rows
+
+
+def check_model_entry(
+    entry: dict[str, Any],
+    *,
+    load_checkpoint: bool = True,
+) -> dict[str, Any]:
+    checks = []
+
+    def add_check(name: str, ok: bool, message: str):
+        checks.append(
+            {
+                "name": name,
+                "status": "ok" if ok else "error",
+                "message": message,
+            }
+        )
+
+    checkpoint_path = _as_path(entry.get("checkpoint_path"))
+    config_path = _as_path(entry.get("config_path"))
+    metrics_path = _as_path(entry.get("metrics_path"))
+    log_path = _as_path(entry.get("training_log_path"))
+
+    add_check(
+        "checkpoint_exists",
+        checkpoint_path is not None and checkpoint_path.exists(),
+        str(checkpoint_path or "Missing checkpoint path"),
+    )
+    add_check(
+        "config_exists",
+        config_path is not None and config_path.exists(),
+        str(config_path or "Missing config path"),
+    )
+    if entry.get("metrics_path"):
+        add_check(
+            "metrics_exists",
+            metrics_path is not None and metrics_path.exists(),
+            str(metrics_path or "Missing metrics path"),
+        )
+    if entry.get("training_log_path"):
+        add_check(
+            "training_log_exists",
+            log_path is not None and log_path.exists(),
+            str(log_path or "Missing training log path"),
+        )
+
+    config = _load_config(config_path)
+    config_task = _infer_task(config)
+    entry_task = entry.get("task")
+    add_check(
+        "config_task_matches",
+        bool(config) and config_task == entry_task,
+        f"config task={config_task}, registry task={entry_task}",
+    )
+
+    if load_checkpoint and checkpoint_path is not None and checkpoint_path.exists():
+        try:
+            import torch
+
+            try:
+                checkpoint = torch.load(
+                    checkpoint_path,
+                    map_location="cpu",
+                    weights_only=True,
+                )
+            except TypeError:
+                checkpoint = torch.load(checkpoint_path, map_location="cpu")
+            except Exception:
+                checkpoint = torch.load(
+                    checkpoint_path,
+                    map_location="cpu",
+                    weights_only=False,
+                )
+            if entry_task == "classification" and isinstance(checkpoint, dict):
+                add_check(
+                    "checkpoint_task_matches",
+                    checkpoint.get("task") == "classification",
+                    f"checkpoint task={checkpoint.get('task')}",
+                )
+            add_check("checkpoint_loadable", True, "checkpoint can be loaded by torch")
+        except Exception as error:
+            add_check("checkpoint_loadable", False, f"{type(error).__name__}: {error}")
+
+    return {"ok": all(check["status"] == "ok" for check in checks), "checks": checks}
 
 
 def format_registry_summary(registry: dict[str, Any]) -> str:

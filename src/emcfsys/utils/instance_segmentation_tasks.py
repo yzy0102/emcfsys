@@ -19,6 +19,7 @@ from ..EMCellFound.models.RTMInstanceSeg import (
     is_supported_instance_model,
 )
 from .io_utils import collect_image_files, ensure_directory
+from .model_registry import register_training_result
 from .training_artifacts import export_training_artifacts
 
 
@@ -814,6 +815,15 @@ def iter_instance_segmentation_training_task(
         "Training artifacts exported: "
         f"{artifacts['config']}, {artifacts['training_log']}, {artifacts['metrics']}"
     )
+    try:
+        registration = register_training_result(save_path)
+        yield emit(
+            "Model registry updated: "
+            f"{registration['registry_path']} "
+            f"(added {registration['added']}, updated {registration['updated']})"
+        )
+    except Exception as error:
+        yield emit(f"Model registry update skipped: {error}")
     return logs
 
 

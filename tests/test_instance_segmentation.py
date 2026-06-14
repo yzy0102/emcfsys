@@ -804,7 +804,8 @@ def test_instance_detection_metrics_for_perfect_prediction():
     assert metrics["val_recall"] == 1.0
 
 
-def test_instance_segmentation_training_task_saves_checkpoint(tmp_path):
+def test_instance_segmentation_training_task_saves_checkpoint(monkeypatch, tmp_path):
+    monkeypatch.setenv("EMCFSYS_MODEL_REGISTRY", str(tmp_path / "registry.json"))
     image_dir, annotation_path = _write_tiny_coco_dataset(tmp_path / "dataset")
     save_dir = tmp_path / "save"
 
@@ -830,12 +831,14 @@ def test_instance_segmentation_training_task_saves_checkpoint(tmp_path):
     assert (save_dir / "config.json").exists()
     assert (save_dir / "training_log.csv").exists()
     assert (save_dir / "metrics.json").exists()
+    assert (tmp_path / "registry.json").exists()
 
 
 def test_instance_segmentation_training_uses_separate_val_and_test_sets(
     monkeypatch,
     tmp_path,
 ):
+    monkeypatch.setenv("EMCFSYS_MODEL_REGISTRY", str(tmp_path / "registry.json"))
     monkeypatch.setattr(ist, "EMCellFoundRTMInstanceSegmenter", FakeTrainingInstanceModel)
     train_image_dir, train_annotation_path = _write_tiny_coco_dataset(tmp_path / "train")
     val_image_dir, val_annotation_path = _write_tiny_coco_dataset(tmp_path / "val")
@@ -883,6 +886,7 @@ def test_instance_segmentation_training_skips_empty_val_and_test_sets(
     monkeypatch,
     tmp_path,
 ):
+    monkeypatch.setenv("EMCFSYS_MODEL_REGISTRY", str(tmp_path / "registry.json"))
     monkeypatch.setattr(ist, "EMCellFoundRTMInstanceSegmenter", FakeTrainingInstanceModel)
     image_dir, annotation_path = _write_tiny_coco_dataset(tmp_path / "train")
 
@@ -912,6 +916,7 @@ def test_instance_segmentation_training_can_use_only_val_json(
     monkeypatch,
     tmp_path,
 ):
+    monkeypatch.setenv("EMCFSYS_MODEL_REGISTRY", str(tmp_path / "registry.json"))
     monkeypatch.setattr(ist, "EMCellFoundRTMInstanceSegmenter", FakeTrainingInstanceModel)
     image_dir, train_annotation_path = _write_tiny_coco_dataset(tmp_path / "train")
     _, val_annotation_path = _write_tiny_coco_dataset(tmp_path / "val_json_only")
@@ -946,6 +951,7 @@ def test_instance_segmentation_training_can_use_only_test_json(
     monkeypatch,
     tmp_path,
 ):
+    monkeypatch.setenv("EMCFSYS_MODEL_REGISTRY", str(tmp_path / "registry.json"))
     monkeypatch.setattr(ist, "EMCellFoundRTMInstanceSegmenter", FakeTrainingInstanceModel)
     image_dir, train_annotation_path = _write_tiny_coco_dataset(tmp_path / "train")
     _, test_annotation_path = _write_tiny_coco_dataset(tmp_path / "test_json_only")
@@ -976,6 +982,7 @@ def test_instance_segmentation_training_requires_json_when_eval_image_dir_is_set
     monkeypatch,
     tmp_path,
 ):
+    monkeypatch.setenv("EMCFSYS_MODEL_REGISTRY", str(tmp_path / "registry.json"))
     monkeypatch.setattr(ist, "EMCellFoundRTMInstanceSegmenter", FakeTrainingInstanceModel)
     image_dir, annotation_path = _write_tiny_coco_dataset(tmp_path / "train")
 
@@ -1006,6 +1013,7 @@ def test_instance_segmentation_training_iterator_yields_realtime_logs(
     monkeypatch,
     tmp_path,
 ):
+    monkeypatch.setenv("EMCFSYS_MODEL_REGISTRY", str(tmp_path / "registry.json"))
     monkeypatch.setattr(ist, "EMCellFoundRTMInstanceSegmenter", FakeTrainingInstanceModel)
     image_dir, annotation_path = _write_tiny_coco_dataset(tmp_path / "dataset")
     save_dir = tmp_path / "save"

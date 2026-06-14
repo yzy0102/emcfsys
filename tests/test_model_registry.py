@@ -3,11 +3,16 @@ import json
 from emcfsys.utils.model_registry import (
     add_or_update_model_entry,
     build_model_entry,
+    check_model_entry,
     empty_model_registry,
     format_registry_summary,
     load_model_registry,
+    merge_model_registries,
+    register_training_result,
+    remove_model_entry,
     save_model_registry,
     scan_experiment_folder,
+    update_model_entry_metadata,
 )
 
 
@@ -112,3 +117,50 @@ def test_scan_experiment_folder_registers_classification_run(tmp_path):
     assert entries[0]["summary"]["model_name"] == "knn"
     assert entries[0]["summary"]["metric_name"] == "Val_Accuracy"
     assert entries[0]["checkpoint_path"].endswith("classification_knn.pth")
+
+
+def test_registry_metadata_delete_merge_and_register_training_result(tmp_path, monkeypatch):
+    run_dir = _write_training_run(tmp_path)
+    registry_path = tmp_path / "registry.json"
+    monkeypatch.setenv("EMCFSYS_MODEL_REGISTRY", str(registry_path))
+
+    result = register_training_result(run_dir)
+    assert result["added"] == 1
+    assert registry_path.exists()
+
+    registry = load_model_registry(registry_path)
+    registry, entry = update_model_entry_metadata(
+        registry,
+        0,
+        name="renamed semantic",
+        notes="important run",
+    )
+    assert entry["name"] == "renamed semantic"
+    assert entry["notes"] == "important run"
+
+    registry, stats = merge_model_registries(empty_model_registry(), registry)
+    assert stats == {"added": 1, "updated": 0}
+
+    registry, removed = remove_model_entry(registry, 0)
+    assert removed["name"] == "renamed semantic"
+    assert registry["models"] == []
+
+
+def test_check_model_entry_reports_missing_and_task_mismatch(tmp_path):
+    run_dir = _write_training_run(tmp_path)
+    entry = build_model_entry(
+        checkpoint_path=run_dir / "best_model_epoch5_IoU=0.7500.pth",
+        config_path=run_dir / "config.json",
+        metrics_path=run_dir / "metrics.json",
+        training_log_path=run_dir / "training_log.csv",
+        task="instance_segmentation",
+    )
+    entry["task"] = "instance_segmentation"
+
+    report = check_model_entry(entry, load_checkpoint=False)
+
+    assert report["ok"] is False
+    assert any(
+        check["name"] == "config_task_matches" and check["status"] == "error"
+        for check in report["checks"]
+    )

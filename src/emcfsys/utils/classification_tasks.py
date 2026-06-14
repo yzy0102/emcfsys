@@ -24,6 +24,7 @@ from ..EMCellFound.models.classifier import (
     EMCellFoundLinearClassifier,
 )
 from .io_utils import collect_image_files, ensure_directory
+from .model_registry import register_training_result
 from .training_artifacts import export_training_artifacts
 
 
@@ -50,6 +51,7 @@ class ClassificationTrainingRequest:
     knn_k: int = 5
     knn_metric: str = "cosine"
     num_workers: int = 0
+    checkpoint_path: str | None = None
 
 
 @dataclass(slots=True)
@@ -269,6 +271,15 @@ def run_classification_training_task(
             "Training artifacts exported: "
             f"{artifacts['config']}, {artifacts['training_log']}, {artifacts['metrics']}"
         )
+        try:
+            registration = register_training_result(save_path)
+            emit(
+                "Model registry updated: "
+                f"{registration['registry_path']} "
+                f"(added {registration['added']}, updated {registration['updated']})"
+            )
+        except Exception as error:
+            emit(f"Model registry update skipped: {error}")
 
     base_dataset, train_dataset, val_dataset = _build_datasets(
         request.dataset_dir,
@@ -333,6 +344,14 @@ def run_classification_training_task(
         feature_extractor,
         num_classes=len(base_dataset.class_names),
     ).to(device)
+    if request.checkpoint_path and os.path.exists(request.checkpoint_path):
+        try:
+            checkpoint = torch.load(request.checkpoint_path, map_location=device, weights_only=True)
+        except TypeError:
+            checkpoint = torch.load(request.checkpoint_path, map_location=device)
+        if isinstance(checkpoint, dict) and checkpoint.get("state_dict"):
+            model.load_state_dict(checkpoint["state_dict"], strict=False)
+            emit(f"Loaded classification checkpoint for continued training: {request.checkpoint_path}")
     if request.freeze_backbone:
         for parameter in model.feature_extractor.parameters():
             parameter.requires_grad = False

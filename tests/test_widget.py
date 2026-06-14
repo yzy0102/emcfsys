@@ -530,11 +530,13 @@ def test_model_manager_widget_scans_and_registers_training_run(tmp_path):
 
     widget = ModelManagerContainer(None)
     widget.registry_path.value = tmp_path / "registry.json"
+    widget._registry = {"version": 1, "models": []}
     widget.scan_root.value = tmp_path
     widget._scan_folder()
     widget._show_selected_model()
 
     assert len(widget._registry["models"]) == 1
+    assert widget.model_table.native.rowCount() == 1
     assert "unet" in widget.model_list.value
     assert "best_model_epoch1_IoU=0.8000.pth" in widget.model_details.value
 
@@ -675,6 +677,108 @@ def test_model_manager_fills_instance_inference_widget(tmp_path):
     assert inference.backbone_name.value == "resnet50"
     assert inference.img_size.value == 640
     assert inference.num_classes.value == 3
+
+
+def test_model_manager_edits_deletes_imports_exports_and_checks_model(tmp_path):
+    run_dir = tmp_path / "semantic_run"
+    run_dir.mkdir()
+    checkpoint = run_dir / "final_model.pth"
+    checkpoint.write_bytes(b"checkpoint")
+    config = run_dir / "config.json"
+    config.write_text(
+        """
+        {
+          "task": "semantic_segmentation",
+          "version": 1,
+          "parameters": {
+            "model_name": "unet",
+            "backbone_name": "resnet34",
+            "target_size": 256,
+            "classes_num": 2
+          }
+        }
+        """,
+        encoding="utf-8",
+    )
+
+    manager = ModelManagerContainer(None)
+    manager.registry_path.value = tmp_path / "registry.json"
+    manager._registry = {"version": 1, "models": []}
+    manager.scan_root.value = tmp_path
+    manager._scan_folder()
+    manager._on_model_table_cell_clicked(0, 1)
+
+    assert manager.selected_index.value == 0
+    assert manager.edit_name.value == "final_model"
+
+    manager.edit_name.value = "renamed model"
+    manager.edit_notes.value = "useful note"
+    manager._save_selected_metadata()
+
+    assert manager._registry["models"][0]["name"] == "renamed model"
+    assert manager._registry["models"][0]["notes"] == "useful note"
+
+    export_path = tmp_path / "exported_registry.json"
+    manager.export_registry_path.value = export_path
+    manager._export_registry()
+    assert export_path.exists()
+
+    manager._check_selected_model()
+    assert "Model health check" in manager.model_details.value
+    assert "config_task_matches" in manager.model_details.value
+
+    manager._delete_selected_model()
+    assert manager._registry["models"] == []
+
+    manager.import_registry_path.value = export_path
+    manager._import_registry()
+    assert len(manager._registry["models"]) == 1
+    assert manager._registry["models"][0]["name"] == "renamed model"
+
+
+def test_model_manager_fills_training_widgets(tmp_path):
+    checkpoint = tmp_path / "final_instance_segmentation.pth"
+    checkpoint.write_bytes(b"checkpoint")
+    config = tmp_path / "config.json"
+    config.write_text(
+        """
+        {
+          "task": "instance_segmentation",
+          "version": 1,
+          "parameters": {
+            "model_name": "mask_rcnn_instance",
+            "backbone_name": "resnet50",
+            "img_size": 640,
+            "num_classes": 3
+          }
+        }
+        """,
+        encoding="utf-8",
+    )
+    manager = ModelManagerContainer(None)
+    manager._registry = {
+        "version": 1,
+        "models": [
+            {
+                "name": "instance",
+                "task": "instance_segmentation",
+                "checkpoint_path": str(checkpoint),
+                "config_path": str(config),
+                "summary": {},
+                "status": "available",
+            }
+        ],
+    }
+    manager._refresh_model_list()
+
+    training = manager._fill_selected_training_widget()
+
+    assert isinstance(training, InstanceSegmentationTrainingContainer)
+    assert training.checkpoint_path.value == checkpoint
+    assert training.model_name.value == "mask_rcnn_instance"
+    assert training.backbone_name.value == "resnet50"
+    assert training.img_size.value == 640
+    assert training.num_classes.value == 3
 
 
 def test_model_manager_is_in_manifest():

@@ -34,6 +34,9 @@ import base64
 import json
 import os
 import os.path as osp
+import subprocess
+import sys
+from pathlib import Path
 
 import imgviz
 import matplotlib.pyplot as plt
@@ -59,7 +62,7 @@ from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 from napari.layers import Image, Image as ImageLayer, Labels
 from PIL import Image as PILImage
 from qtpy.QtCore import QObject, Signal
-from qtpy.QtWidgets import QFileDialog, QSizePolicy, QTextEdit, QWidget, QVBoxLayout
+from qtpy.QtWidgets import QFileDialog, QSizePolicy, QTextEdit, QWidget, QTableWidgetItem, QVBoxLayout
 
 from emcfsys.PhenotypeAnalysis.functions import analyze_phenotypes
 
@@ -103,12 +106,17 @@ from .utils.labelme_coco_tasks import (
 from .utils.model_registry import (
     add_or_update_model_entry,
     build_model_entry,
+    check_model_entry,
     default_model_registry_path,
     format_registry_summary,
     load_model_registry,
+    merge_model_registries,
     refresh_registry_status,
+    registry_rows,
+    remove_model_entry,
     save_model_registry,
     scan_experiment_folder,
+    update_model_entry_metadata,
 )
 from .utils.training_tasks import SegmentationTrainingRequest, run_training_task
 from .utils.training_artifacts import load_training_config, save_training_config
@@ -429,13 +437,44 @@ class ModelManagerContainer(Container):
         self._refresh_button = PushButton(text="Refresh List")
         self._show_details_button = PushButton(text="Show Selected Details")
         self._fill_inference_button = PushButton(text="Open / Fill Inference Widget")
+        self._fill_training_button = PushButton(text="Open / Fill Training Widget")
+        self._check_model_button = PushButton(text="Check Selected Model")
+        self._open_folder_button = PushButton(text="Open Model Folder")
+        self._delete_model_button = PushButton(text="Delete from Registry")
+        self.model_table = Table(label="Models")
+        self.model_table.native.setColumnCount(8)
+        self.model_table.native.setHorizontalHeaderLabels(
+            [
+                "registry_index",
+                "name",
+                "task",
+                "model",
+                "backbone",
+                "metric",
+                "status",
+                "checkpoint path",
+            ]
+        )
+        self.model_table.native.hideColumn(0)
+        self.model_table.native.setSortingEnabled(True)
+        self.model_table.native.setMinimumHeight(220)
         self.model_list = TextEdit(value="")
         self.model_list.read_only = True
+        self.model_list.visible = False
         self.model_list.native.setMinimumHeight(180)
+        self.edit_name = create_widget(label="Rename selected", annotation=str)
+        self.edit_notes = TextEdit(label="Edit notes", value="")
+        self.edit_notes.native.setMinimumHeight(70)
+        self._save_metadata_button = PushButton(text="Save Name / Notes")
+        self.import_registry_path = FileEdit(label="Import registry JSON", mode="r", nullable=True)
+        self._import_registry_button = PushButton(text="Import Registry")
+        self.export_registry_path = FileEdit(label="Export registry JSON", mode="w", nullable=True)
+        self._export_registry_button = PushButton(text="Export Registry")
         self.model_details = TextEdit(value="")
         self.model_details.read_only = True
         self.model_details.native.setMinimumHeight(180)
         self._inference_widgets = {}
+        self._training_widgets = {}
 
         self.extend(
             [
@@ -459,7 +498,19 @@ class ModelManagerContainer(Container):
                 self._refresh_button,
                 self._show_details_button,
                 self._fill_inference_button,
+                self._fill_training_button,
+                self._check_model_button,
+                self._open_folder_button,
+                self._delete_model_button,
+                self.model_table,
                 self.model_list,
+                self.edit_name,
+                self.edit_notes,
+                self._save_metadata_button,
+                self.import_registry_path,
+                self._import_registry_button,
+                self.export_registry_path,
+                self._export_registry_button,
                 self.model_details,
             ]
         )
@@ -472,6 +523,14 @@ class ModelManagerContainer(Container):
         self._refresh_button.clicked.connect(self._refresh_model_list)
         self._show_details_button.clicked.connect(self._show_selected_model)
         self._fill_inference_button.clicked.connect(self._fill_selected_inference_widget)
+        self._fill_training_button.clicked.connect(self._fill_selected_training_widget)
+        self._check_model_button.clicked.connect(self._check_selected_model)
+        self._open_folder_button.clicked.connect(self._open_selected_model_folder)
+        self._delete_model_button.clicked.connect(self._delete_selected_model)
+        self._save_metadata_button.clicked.connect(self._save_selected_metadata)
+        self._import_registry_button.clicked.connect(self._import_registry)
+        self._export_registry_button.clicked.connect(self._export_registry)
+        self.model_table.native.cellClicked.connect(self._on_model_table_cell_clicked)
         self._update_manual_registration_state()
         self._refresh_model_list()
 
@@ -506,6 +565,7 @@ class ModelManagerContainer(Container):
             self._log("Please choose a training result root folder before scanning.")
             return
         try:
+            self._registry = load_model_registry(self._registry_path())
             entries = scan_experiment_folder(scan_root)
             added = 0
             updated = 0
@@ -556,13 +616,52 @@ class ModelManagerContainer(Container):
         except Exception as error:
             self._log(f"Failed to register model: {error}")
 
+    def _save_registry_and_refresh(self):
+        self._registry = refresh_registry_status(self._registry)
+        self._registry = save_model_registry(self._registry, self._registry_path())
+        self._refresh_model_list()
+
     def _refresh_model_list(self):
         self._registry = refresh_registry_status(self._registry)
         self.model_list.value = format_registry_summary(self._registry)
+        self._refresh_model_table()
         max_index = max(len(self._registry.get("models", [])) - 1, 0)
         self.selected_index.max = max_index
         if self.selected_index.value > max_index:
             self.selected_index.value = max_index
+        self._sync_editor_from_selected()
+
+    def _refresh_model_table(self):
+        table = self.model_table.native
+        table.setSortingEnabled(False)
+        rows = registry_rows(self._registry)
+        table.setRowCount(len(rows))
+        for row_index, row in enumerate(rows):
+            values = [
+                row["index"],
+                row["name"],
+                row["task"],
+                row["model"],
+                row["backbone"],
+                row["metric"],
+                row["status"],
+                row["checkpoint_path"],
+            ]
+            for column_index, value in enumerate(values):
+                table.setItem(row_index, column_index, QTableWidgetItem(str(value)))
+        table.resizeColumnsToContents()
+        table.hideColumn(0)
+        table.setSortingEnabled(True)
+
+    def _on_model_table_cell_clicked(self, row, _column):
+        item = self.model_table.native.item(row, 0)
+        if item is None:
+            return
+        try:
+            self.selected_index.value = int(item.text())
+            self._sync_editor_from_selected()
+        except ValueError:
+            return
 
     def _selected_model(self):
         models = self._registry.get("models", [])
@@ -577,6 +676,119 @@ class ModelManagerContainer(Container):
             self.model_details.value = "No registered model selected."
             return
         self.model_details.value = json.dumps(entry, indent=2, ensure_ascii=False)
+
+    def _selected_model_index(self):
+        models = self._registry.get("models", [])
+        if not models:
+            return -1
+        return min(max(int(self.selected_index.value), 0), len(models) - 1)
+
+    def _sync_editor_from_selected(self):
+        entry = self._selected_model()
+        if entry is None:
+            self.edit_name.value = ""
+            self.edit_notes.value = ""
+            return
+        self.edit_name.value = entry.get("name", "")
+        self.edit_notes.value = entry.get("notes", "")
+
+    def _save_selected_metadata(self):
+        index = self._selected_model_index()
+        if index < 0:
+            self._log("No registered model selected.")
+            return
+        self._registry, entry = update_model_entry_metadata(
+            self._registry,
+            index,
+            name=self.edit_name.value,
+            notes=self.edit_notes.value,
+        )
+        if entry is None:
+            self._log("No registered model selected.")
+            return
+        self._save_registry_and_refresh()
+        self._log(f"Model metadata saved: {entry.get('name')}")
+
+    def _delete_selected_model(self):
+        index = self._selected_model_index()
+        if index < 0:
+            self._log("No registered model selected.")
+            return
+        self._registry, removed = remove_model_entry(self._registry, index)
+        if removed is None:
+            self._log("No registered model selected.")
+            return
+        self._save_registry_and_refresh()
+        self._log(
+            f"Removed from registry only: {removed.get('name')}. "
+            "Local checkpoint files were not deleted."
+        )
+
+    def _open_selected_model_folder(self):
+        entry = self._selected_model()
+        if entry is None:
+            self._log("No registered model selected.")
+            return
+        folder = entry.get("experiment_dir") or (
+            str(Path(entry["checkpoint_path"]).parent) if entry.get("checkpoint_path") else None
+        )
+        if not folder:
+            self._log("Selected model does not have a model folder path.")
+            return
+        folder_path = Path(folder)
+        if not folder_path.exists():
+            self._log(f"Model folder does not exist: {folder_path}")
+            return
+        try:
+            if sys.platform.startswith("win"):
+                os.startfile(str(folder_path))
+            elif sys.platform == "darwin":
+                subprocess.Popen(["open", str(folder_path)])
+            else:
+                subprocess.Popen(["xdg-open", str(folder_path)])
+            self._log(f"Opened model folder: {folder_path}")
+        except Exception as error:
+            self._log(f"Failed to open model folder: {error}")
+
+    def _import_registry(self):
+        import_path = normalize_optional_path(self.import_registry_path.value)
+        if not import_path:
+            self._log("Please choose a registry JSON path before importing.")
+            return
+        try:
+            incoming = load_model_registry(import_path)
+            self._registry, stats = merge_model_registries(self._registry, incoming)
+            self._save_registry_and_refresh()
+            self._log(
+                f"Imported registry: {import_path} "
+                f"(added {stats['added']}, updated {stats['updated']})"
+            )
+        except Exception as error:
+            self._log(f"Failed to import registry: {error}")
+
+    def _export_registry(self):
+        export_path = normalize_optional_path(self.export_registry_path.value)
+        if not export_path:
+            self._log("Please choose a registry JSON path before exporting.")
+            return
+        try:
+            save_model_registry(self._registry, export_path)
+            self._log(f"Exported registry to: {export_path}")
+        except Exception as error:
+            self._log(f"Failed to export registry: {error}")
+
+    def _check_selected_model(self):
+        entry = self._selected_model()
+        if entry is None:
+            self._log("No registered model selected.")
+            return
+        report = check_model_entry(entry)
+        lines = [f"Model health check: {'OK' if report['ok'] else 'FAILED'}"]
+        for check in report["checks"]:
+            lines.append(
+                f"[{check['status'].upper()}] {check['name']}: {check['message']}"
+            )
+        self.model_details.value = "\n".join(lines)
 
     def _entry_parameters(self, entry):
         config_path = entry.get("config_path")
@@ -628,6 +840,34 @@ class ModelManagerContainer(Container):
             self._viewer.window.add_dock_widget(widget, name=dock_name, area="right")
         return widget
 
+    def _get_or_create_training_widget(self, task):
+        if task in self._training_widgets:
+            return self._training_widgets[task]
+
+        mapping = {
+            "semantic_segmentation": (
+                DLTrainingContainer,
+                "Semantic Segmentation | Training",
+            ),
+            "classification": (
+                ClassificationTrainingContainer,
+                "Classification | Training",
+            ),
+            "instance_segmentation": (
+                InstanceSegmentationTrainingContainer,
+                "Instance Segmentation | Training",
+            ),
+        }
+        if task not in mapping:
+            raise ValueError(f"Unsupported model task: {task}")
+
+        widget_cls, dock_name = mapping[task]
+        widget = widget_cls(self._viewer)
+        self._training_widgets[task] = widget
+        if self._viewer is not None:
+            self._viewer.window.add_dock_widget(widget, name=dock_name, area="right")
+        return widget
+
     def _fill_selected_inference_widget(self):
         entry = self._selected_model()
         if entry is None:
@@ -658,6 +898,36 @@ class ModelManagerContainer(Container):
         self._log(f"Filled {task} inference widget from registry model: {entry.get('name')}")
         return widget
 
+    def _fill_selected_training_widget(self):
+        entry = self._selected_model()
+        if entry is None:
+            self._log("No registered model selected.")
+            return None
+        if entry.get("status") != "available":
+            self._log(
+                f"Selected model is not fully available: {entry.get('status')}. "
+                "Please check missing files before continued training."
+            )
+            return None
+
+        task = entry.get("task")
+        widget = self._get_or_create_training_widget(task)
+        params = self._entry_parameters(entry)
+        checkpoint_path = entry.get("checkpoint_path")
+
+        if task == "semantic_segmentation":
+            self._fill_semantic_training_widget(widget, params, checkpoint_path)
+        elif task == "classification":
+            self._fill_classification_training_widget(widget, params, checkpoint_path)
+        elif task == "instance_segmentation":
+            self._fill_instance_training_widget(widget, params, checkpoint_path)
+        else:
+            self._log(f"Unsupported model task: {task}")
+            return None
+
+        self._log(f"Filled {task} training widget from registry model: {entry.get('name')}")
+        return widget
+
     def _fill_semantic_inference_widget(self, widget, entry, params, checkpoint_path):
         self._safe_set_widget_value(widget.model_path, checkpoint_path)
         self._safe_set_widget_value(widget.config_path, entry.get("config_path"))
@@ -676,6 +946,35 @@ class ModelManagerContainer(Container):
         self._safe_set_widget_value(widget.checkpoint_path, checkpoint_path)
 
     def _fill_instance_inference_widget(self, widget, params, checkpoint_path):
+        self._safe_set_widget_value(widget.checkpoint_path, checkpoint_path)
+        self._safe_set_widget_value(widget.backbone_name, params.get("backbone_name"))
+        self._safe_set_widget_value(widget.model_name, params.get("model_name"))
+        self._safe_set_widget_value(widget.img_size, params.get("img_size"))
+        self._safe_set_widget_value(widget.num_classes, params.get("num_classes"))
+
+    def _fill_semantic_training_widget(self, widget, params, checkpoint_path):
+        self._safe_set_widget_value(widget.pretrained_model, checkpoint_path)
+        self._safe_set_widget_value(widget.backbone_name, params.get("backbone_name"))
+        self._safe_set_widget_value(widget.model_name, params.get("model_name"))
+        self._safe_set_widget_value(
+            widget.classes_num,
+            params.get("classes_num", params.get("num_classes")),
+        )
+        self._safe_set_widget_value(
+            widget.target_size,
+            params.get("target_size", params.get("img_size")),
+        )
+
+    def _fill_classification_training_widget(self, widget, params, checkpoint_path):
+        self._safe_set_widget_value(widget.checkpoint_path, checkpoint_path)
+        self._safe_set_widget_value(widget.backbone_name, params.get("backbone_name"))
+        self._safe_set_widget_value(widget.head_name, params.get("head_name", params.get("model_name")))
+        self._safe_set_widget_value(widget.img_size, params.get("img_size"))
+        self._safe_set_widget_value(widget.knn_k, params.get("knn_k"))
+        self._safe_set_widget_value(widget.knn_metric, params.get("knn_metric"))
+        widget._update_head_controls()
+
+    def _fill_instance_training_widget(self, widget, params, checkpoint_path):
         self._safe_set_widget_value(widget.checkpoint_path, checkpoint_path)
         self._safe_set_widget_value(widget.backbone_name, params.get("backbone_name"))
         self._safe_set_widget_value(widget.model_name, params.get("model_name"))
@@ -1405,6 +1704,7 @@ class ClassificationTrainingContainer(Container):
         self.val_split = FloatSpinBox(label="Validation split", min=0.0, max=0.9, step=0.05, value=0.2)
         self.knn_k = SpinBox(label="KNN K", min=1, max=256, step=1, value=5)
         self.knn_metric = ComboBox(label="KNN metric", choices=["cosine", "l2"], value="cosine")
+        self.checkpoint_path = FileEdit(label="Resume checkpoint (.pth)", mode="r", nullable=True)
 
         self._train_button = PushButton(text="Start Classification Training")
         self._stop_button = PushButton(text="Stop Training")
@@ -1424,6 +1724,7 @@ class ClassificationTrainingContainer(Container):
             self.val_split,
             self.knn_k,
             self.knn_metric,
+            self.checkpoint_path,
             self._train_button,
             self._stop_button,
         ])
@@ -1502,6 +1803,7 @@ class ClassificationTrainingContainer(Container):
             freeze_backbone=self.freeze_backbone.value,
             knn_k=self.knn_k.value,
             knn_metric=self.knn_metric.value,
+            checkpoint_path=normalize_optional_path(self.checkpoint_path.value),
         )
 
     def _create_training_worker(self, request):

@@ -4,6 +4,7 @@ from dataclasses import dataclass
 import torch
 
 from ..EMCellFound.train import train_loop
+from .model_registry import register_training_result
 from .training_artifacts import export_training_artifacts
 
 
@@ -112,4 +113,13 @@ def run_training_task(
         "Training artifacts exported: "
         f"{artifacts['config']}, {artifacts['training_log']}, {artifacts['metrics']}"
     )
+    try:
+        registration = register_training_result(request.save_path)
+        emit_log(
+            "Model registry updated: "
+            f"{registration['registry_path']} "
+            f"(added {registration['added']}, updated {registration['updated']})"
+        )
+    except Exception as error:
+        emit_log(f"Model registry update skipped: {error}")
     return logs

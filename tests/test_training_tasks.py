@@ -9,6 +9,7 @@ import torch
 
 def test_run_training_task(monkeypatch, tmp_path):
     calls = {"update": [], "log": []}
+    monkeypatch.setenv("EMCFSYS_MODEL_REGISTRY", str(tmp_path / "registry.json"))
 
     def fake_train_loop(images_dir, masks_dir, save_path, **kwargs):
         callback = kwargs["callback"]
@@ -54,6 +55,8 @@ def test_run_training_task(monkeypatch, tmp_path):
     assert calls["update"] == [(1, 0.3)]
     assert any("Estimated total training time" in message for message in calls["log"])
     assert any("Training artifacts exported" in message for message in calls["log"])
+    assert any("Model registry updated" in message for message in calls["log"])
+    assert (tmp_path / "registry.json").exists()
 
 
 def test_run_training_task_passes_advanced_loss_config(monkeypatch, tmp_path):
