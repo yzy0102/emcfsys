@@ -1,3 +1,4 @@
+import json
 import numpy as np
 from pathlib import Path
 from PIL import Image
@@ -16,6 +17,7 @@ from emcfsys._widget import (
     InstanceSegmentationInferenceContainer,
     InstanceSegmentationTrainingContainer,
     LabelMe2COCOInstance,
+    LabelMe2Seg,
     ModelManagerContainer,
     DatasetValidatorContainer,
     threshold_autogenerate_widget,
@@ -219,6 +221,61 @@ def test_instance_segmentation_widgets_construct(make_napari_viewer):
     assert converter_widget.train_ratio.value == 0.8
     assert converter_widget.val_ratio.value == 0.1
     assert converter_widget.test_ratio.value == 0.1
+
+
+def test_labelme_semantic_converter_widget_checks_previews_and_converts(make_napari_viewer, tmp_path):
+    labelme_dir = tmp_path / "labelme"
+    labelme_dir.mkdir()
+    image = np.zeros((8, 8, 3), dtype=np.uint8)
+    Image.fromarray(image).save(labelme_dir / "img.png")
+    payload = {
+        "version": "5.0.0",
+        "flags": {},
+        "shapes": [
+            {
+                "label": "mito",
+                "points": [[1, 1], [6, 1], [6, 6], [1, 6]],
+                "shape_type": "polygon",
+                "flags": {},
+            }
+        ],
+        "imagePath": "img.png",
+        "imageData": None,
+        "imageHeight": 8,
+        "imageWidth": 8,
+    }
+    (labelme_dir / "img.json").write_text(json.dumps(payload), encoding="utf-8")
+
+    viewer = make_napari_viewer()
+    widget = LabelMe2Seg(viewer)
+    widget.json_path.value = labelme_dir
+    widget.output_dir.value = tmp_path / "converted"
+    widget.label_map_path.value = tmp_path / "label_map.json"
+    widget.split_dataset.value = True
+    widget.save_rgb_mask.value = True
+    widget.save_overlay.value = True
+
+    widget._infer_label_map()
+    assert widget.label_map_table.native.rowCount() >= 3
+
+    widget._save_label_map()
+    assert (tmp_path / "label_map.json").exists()
+
+    widget._check_labelme_folder()
+    assert "LabelMe semantic folder check: OK" in widget.info.value
+
+    widget._preview_labelme_folder()
+    assert "LabelMe semantic preview image" in viewer.layers
+    assert "LabelMe semantic preview mask" in viewer.layers
+    assert "LabelMe semantic preview overlay" in viewer.layers
+
+    widget._convert_labelme_json_to_mask()
+    assert "success=1" in widget.info.value
+    assert (tmp_path / "converted" / "split.json").exists()
+    assert len(list((tmp_path / "converted" / "images").rglob("*.tif"))) == 1
+    assert len(list((tmp_path / "converted" / "masks").rglob("*.png"))) == 1
+    assert len(list((tmp_path / "converted" / "rgb_masks").rglob("*.png"))) == 1
+    assert len(list((tmp_path / "converted" / "overlay").rglob("*.png"))) == 1
 
 
 def test_semantic_segmentation_training_widget_builds_advanced_loss_request(tmp_path):
@@ -478,6 +535,8 @@ def test_instance_segmentation_widgets_are_in_manifest():
     assert "COCOInstanceDatasetInspector" not in manifest
     assert "emcfsys.labelme_2_coco_instance" in manifest
     assert "LabelMe2COCOInstance" in manifest
+    assert "emcfsys.labelme_2_semseg" in manifest
+    assert "LabelMe2Seg" in manifest
 
 
 def test_dataset_validator_widget_checks_exports_and_previews_semantic(tmp_path):

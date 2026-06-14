@@ -109,6 +109,18 @@ from .utils.labelme_coco_tasks import (
     LabelMeInstanceToCOCORequest,
     convert_labelme_instance_folder_to_coco,
 )
+from .utils.labelme_semantic_tasks import (
+    LabelMeSemanticConversionRequest,
+    check_labelme_semantic_folder,
+    convert_labelme_semantic_folder,
+    format_labelme_semantic_check_report,
+    format_labelme_semantic_conversion_report,
+    infer_label_map,
+    load_label_map,
+    normalize_label_map,
+    preview_labelme_semantic_item,
+    save_label_map,
+)
 from .utils.model_registry import (
     add_or_update_model_entry,
     build_model_entry,
@@ -2857,7 +2869,7 @@ class LabelMe2COCOInstance(Container):
             print(message)
 
 
-class LabelMe2Seg(Container):
+class _LegacyLabelMe2Seg(Container):
     '''
         using labelme to annotate the labels first, and generate json files.
         Here, using this function we can convert those json files to semantic segmentation masks, labels are png files in P(PIL) mode.
@@ -3021,7 +3033,270 @@ class LabelMe2Seg(Container):
             pass
 
         raise ValueError("无法解析标签映射文件，请检查文件格式。")
-    
+
+class LabelMe2Seg(Container):
+    """Convert LabelMe semantic annotations into trainable segmentation masks."""
+
+    def __init__(self, viewer: "napari.viewer.Viewer"):
+        super().__init__()
+        self.viewer = viewer
+
+        self.json_path = FileEdit(label="LabelMe JSON folder", mode="d", nullable=False)
+        self.output_dir = FileEdit(label="Output dataset folder", mode="d", nullable=False)
+        self.label_map_path = FileEdit(label="Label map JSON", mode="w", nullable=True)
+
+        self.background_id = SpinBox(label="Background ID", value=0, min=0, max=65535)
+        self.ignore_id = SpinBox(label="Ignore ID", value=255, min=0, max=65535)
+        self.unlabeled_mode = ComboBox(
+            label="Unlabeled pixels",
+            choices=["background", "ignore"],
+            value="background",
+        )
+        self.skip_invalid = CheckBox(label="Skip invalid files", value=True)
+
+        self.label_map_table = Table(label="Label map")
+        table = self.label_map_table.native
+        table.setColumnCount(3)
+        table.setHorizontalHeaderLabels(["label_name", "class_id", "color"])
+        self._set_label_map_table(
+            {
+                "_background_": {"class_id": 0, "color": [0, 0, 0]},
+                "_ignore_": {"class_id": 255, "color": [255, 255, 255]},
+            }
+        )
+
+        self._infer_label_map_button = PushButton(text="Infer Label Map from Folder")
+        self._load_label_map_button = PushButton(text="Load Label Map JSON")
+        self._save_label_map_button = PushButton(text="Save Label Map JSON")
+        self._check_button = PushButton(text="Check LabelMe Folder")
+        self._preview_button = PushButton(text="Preview Random Sample")
+
+        self.split_dataset = CheckBox(label="Split train/val/test", value=False)
+        self.train_ratio = FloatSpinBox(label="Train ratio", value=0.8, min=0.0, max=1.0, step=0.05)
+        self.val_ratio = FloatSpinBox(label="Val ratio", value=0.1, min=0.0, max=1.0, step=0.05)
+        self.test_ratio = FloatSpinBox(label="Test ratio", value=0.1, min=0.0, max=1.0, step=0.05)
+        self.split_seed = SpinBox(label="Split seed", value=42, min=0, max=999999)
+
+        self.save_class_mask = CheckBox(label="Output single-channel class ID mask", value=True)
+        self.save_rgb_mask = CheckBox(label="Output RGB color mask", value=False)
+        self.save_label_viz = CheckBox(label="Output label visualization", value=True)
+        self.save_overlay = CheckBox(label="Output overlay preview", value=True)
+
+        self._run_button = PushButton(text="Convert LabelMe to Semantic Dataset")
+        self.info = TextEdit(
+            value=(
+                "LabelMe -> semantic segmentation dataset converter.\n"
+                "Workflow: choose LabelMe JSON folder -> infer/load label map -> "
+                "Check LabelMe Folder -> Preview Random Sample -> Convert.\n"
+                "Main training output: images/*.tif and masks/*.png."
+            ),
+        )
+
+        self.extend(
+            [
+                self.json_path,
+                self.output_dir,
+                self.label_map_path,
+                self.background_id,
+                self.ignore_id,
+                self.unlabeled_mode,
+                self.skip_invalid,
+                self.label_map_table,
+                self._infer_label_map_button,
+                self._load_label_map_button,
+                self._save_label_map_button,
+                self._check_button,
+                self._preview_button,
+                self.split_dataset,
+                self.train_ratio,
+                self.val_ratio,
+                self.test_ratio,
+                self.split_seed,
+                self.save_class_mask,
+                self.save_rgb_mask,
+                self.save_label_viz,
+                self.save_overlay,
+                self._run_button,
+                self.info,
+            ]
+        )
+
+        self._infer_label_map_button.clicked.connect(self._infer_label_map)
+        self._load_label_map_button.clicked.connect(self._load_label_map)
+        self._save_label_map_button.clicked.connect(self._save_label_map)
+        self._check_button.clicked.connect(self._check_labelme_folder)
+        self._preview_button.clicked.connect(self._preview_labelme_folder)
+        self._run_button.clicked.connect(self._convert_labelme_json_to_mask)
+
+    def _log(self, message):
+        text = str(message)
+        self.info.value = text
+        print(text)
+
+    def _color_to_text(self, color):
+        values = [int(value) for value in color[:3]]
+        return ",".join(str(value) for value in values)
+
+    def _parse_color_text(self, text, class_id):
+        raw = str(text).strip()
+        if raw.startswith("#") and len(raw) == 7:
+            return [int(raw[1:3], 16), int(raw[3:5], 16), int(raw[5:7], 16)]
+        if "," in raw:
+            values = [int(float(part.strip())) for part in raw.split(",")[:3]]
+            return [max(0, min(255, value)) for value in values]
+        label_map = normalize_label_map(
+            {"_tmp_": {"class_id": int(class_id), "color": None}},
+            background_id=int(self.background_id.value),
+            ignore_id=int(self.ignore_id.value),
+        )
+        return list(label_map["_tmp_"]["color"])
+
+    def _set_label_map_table(self, label_map):
+        normalized = normalize_label_map(
+            label_map,
+            background_id=int(self.background_id.value),
+            ignore_id=int(self.ignore_id.value),
+        )
+        table = self.label_map_table.native
+        table.setSortingEnabled(False)
+        table.setRowCount(len(normalized))
+        for row, (label_name, entry) in enumerate(normalized.items()):
+            table.setItem(row, 0, QTableWidgetItem(str(label_name)))
+            table.setItem(row, 1, QTableWidgetItem(str(int(entry["class_id"]))))
+            table.setItem(row, 2, QTableWidgetItem(self._color_to_text(entry["color"])))
+        table.resizeColumnsToContents()
+        table.setSortingEnabled(True)
+
+    def _label_map_from_table(self):
+        table = self.label_map_table.native
+        label_map = {}
+        for row in range(table.rowCount()):
+            name_item = table.item(row, 0)
+            id_item = table.item(row, 1)
+            color_item = table.item(row, 2)
+            label_name = name_item.text().strip() if name_item is not None else ""
+            if not label_name:
+                continue
+            class_id = int(id_item.text()) if id_item is not None and id_item.text().strip() else 0
+            color_text = color_item.text() if color_item is not None else ""
+            label_map[label_name] = {
+                "class_id": class_id,
+                "color": self._parse_color_text(color_text, class_id),
+            }
+        return normalize_label_map(
+            label_map,
+            background_id=int(self.background_id.value),
+            ignore_id=int(self.ignore_id.value),
+        )
+
+    def _infer_label_map(self):
+        try:
+            label_map = infer_label_map(
+                self.json_path.value,
+                background_id=int(self.background_id.value),
+                ignore_id=int(self.ignore_id.value),
+            )
+            self._set_label_map_table(label_map)
+            self._log(f"Inferred {len(label_map)} labels from: {self.json_path.value}")
+        except Exception as error:
+            self._log(f"Failed to infer label map: {error}")
+
+    def _load_label_map(self):
+        try:
+            label_map_path = normalize_optional_path(self.label_map_path.value)
+            if not label_map_path:
+                self._log("Please choose a label_map.json path before loading.")
+                return
+            label_map = load_label_map(label_map_path)
+            self._set_label_map_table(label_map)
+            self._log(f"Loaded label map: {label_map_path}")
+        except Exception as error:
+            self._log(f"Failed to load label map: {error}")
+
+    def _save_label_map(self):
+        try:
+            label_map_path = normalize_optional_path(self.label_map_path.value)
+            if not label_map_path:
+                output_dir = normalize_optional_path(self.output_dir.value)
+                if not output_dir:
+                    self._log("Please choose a label map path or output folder before saving.")
+                    return
+                label_map_path = Path(output_dir) / "label_map.json"
+                self.label_map_path.value = label_map_path
+            saved = save_label_map(
+                label_map_path,
+                self._label_map_from_table(),
+                background_id=int(self.background_id.value),
+                ignore_id=int(self.ignore_id.value),
+            )
+            self._log(f"Saved label map: {saved}")
+        except Exception as error:
+            self._log(f"Failed to save label map: {error}")
+
+    def _check_labelme_folder(self):
+        try:
+            report = check_labelme_semantic_folder(
+                self.json_path.value,
+                label_map=self._label_map_from_table(),
+                background_id=int(self.background_id.value),
+                ignore_id=int(self.ignore_id.value),
+            )
+            self._log(format_labelme_semantic_check_report(report))
+        except Exception as error:
+            self._log(f"Failed to check LabelMe folder: {error}")
+
+    def _preview_labelme_folder(self):
+        try:
+            preview = preview_labelme_semantic_item(
+                self.json_path.value,
+                self._label_map_from_table(),
+                background_id=int(self.background_id.value),
+                ignore_id=int(self.ignore_id.value),
+                unlabeled_mode=self.unlabeled_mode.value,
+            )
+            if self.viewer is not None:
+                upsert_image_layer(self.viewer, preview["image"], "LabelMe semantic preview image")
+                upsert_labels_layer(self.viewer, preview["mask"], "LabelMe semantic preview mask")
+                upsert_image_layer(self.viewer, preview["overlay"], "LabelMe semantic preview overlay")
+            legend = "\n".join(
+                f"{item['class_id']}: {item['label_name']} color={item['color']}"
+                for item in preview["legend"]
+            )
+            self._log(f"Preview: {preview['json_path']}\nLegend:\n{legend}")
+        except Exception as error:
+            self._log(f"Failed to preview LabelMe folder: {error}")
+
+    def _build_request(self):
+        return LabelMeSemanticConversionRequest(
+            labelme_json_dir=str(self.json_path.value),
+            output_dir=str(self.output_dir.value),
+            label_map=self._label_map_from_table(),
+            background_id=int(self.background_id.value),
+            ignore_id=int(self.ignore_id.value),
+            unlabeled_mode=self.unlabeled_mode.value,
+            skip_invalid=bool(self.skip_invalid.value),
+            split_dataset=bool(self.split_dataset.value),
+            train_ratio=float(self.train_ratio.value),
+            val_ratio=float(self.val_ratio.value),
+            test_ratio=float(self.test_ratio.value),
+            split_seed=int(self.split_seed.value),
+            copy_images=True,
+            save_class_mask=bool(self.save_class_mask.value),
+            save_rgb_mask=bool(self.save_rgb_mask.value),
+            save_label_viz=bool(self.save_label_viz.value),
+            save_overlay=bool(self.save_overlay.value),
+            image_extension=".tif",
+        )
+
+    def _convert_labelme_json_to_mask(self):
+        try:
+            report = convert_labelme_semantic_folder(self._build_request())
+            self.label_map_path.value = Path(report["label_map_path"])
+            self._log(format_labelme_semantic_conversion_report(report))
+        except Exception as error:
+            self._log(f"LabelMe semantic conversion failed: {error}")
+
+
 class PhenotypeAnalysis(Container):
     def __init__(self, viewer: "napari.viewer.Viewer"):
         super().__init__()

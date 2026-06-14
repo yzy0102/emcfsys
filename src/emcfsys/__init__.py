@@ -20,6 +20,7 @@ _WIDGET_EXPORTS = {
     "DatasetValidatorContainer",
     "EMCellFinerSingleInferWidget",
     "EMCellFinerBatchInferWidget",
+    "LabelMe2Seg",
     "LabelMe2COCOInstance",
     "PhenotypeAnalysis",
 }
@@ -51,6 +52,7 @@ __all__ = (
     "DatasetValidatorContainer",
     "EMCellFinerSingleInferWidget",
     "EMCellFinerBatchInferWidget",
+    "LabelMe2Seg",
     "LabelMe2COCOInstance",
     "PhenotypeAnalysis",
 )
