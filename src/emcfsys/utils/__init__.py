@@ -15,6 +15,14 @@ from .coco_instance_inspector import (
     format_coco_instance_check_report,
     load_coco_instance_preview,
 )
+from .dataset_validator import (
+    format_dataset_validation_report,
+    recommend_training_preset,
+    save_dataset_validation_report,
+    validate_classification_dataset,
+    validate_instance_segmentation_dataset,
+    validate_semantic_segmentation_dataset,
+)
 from .image_resize_ops import (
     ALGORITHM_MAP,
     output_shape_for_image,
@@ -89,6 +97,7 @@ __all__ = [
     "ensure_directory",
     "format_registry_summary",
     "format_coco_instance_check_report",
+    "format_dataset_validation_report",
     "is_missing_path",
     "iter_emcellfiner_batch_inference",
     "iter_instance_segmentation_training_task",
@@ -99,6 +108,7 @@ __all__ = [
     "output_shape_for_image",
     "prediction_to_instance_mask",
     "refresh_registry_status",
+    "recommend_training_preset",
     "registry_rows",
     "registry_path_from_value",
     "register_training_result",
@@ -115,6 +125,7 @@ __all__ = [
     "run_sliding_inference_task",
     "run_training_task",
     "save_binary_instance_masks",
+    "save_dataset_validation_report",
     "save_instance_mask",
     "save_model_registry",
     "scan_experiment_folder",
@@ -125,4 +136,7 @@ __all__ = [
     "upsert_image_layer",
     "upsert_labels_layer",
     "validate_model_entry",
+    "validate_classification_dataset",
+    "validate_instance_segmentation_dataset",
+    "validate_semantic_segmentation_dataset",
 ]

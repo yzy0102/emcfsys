@@ -86,9 +86,15 @@ from .utils.classification_tasks import (
     run_classification_training_task,
 )
 from .utils.coco_instance_inspector import (
-    check_coco_instance_dataset,
-    format_coco_instance_check_report,
     load_coco_instance_preview,
+)
+from .utils.dataset_validator import (
+    format_dataset_validation_report,
+    recommend_training_preset,
+    save_dataset_validation_report,
+    validate_classification_dataset,
+    validate_instance_segmentation_dataset,
+    validate_semantic_segmentation_dataset,
 )
 from .utils.instance_segmentation_tasks import (
     INSTANCE_MODEL_CHOICES,
@@ -2339,155 +2345,191 @@ class InstanceSegmentationInferenceContainer(Container):
         worker.start()
 
 
-class COCOInstanceDatasetInspector(Container):
-    """Check and preview COCO instance segmentation datasets before training."""
+class DatasetValidatorContainer(Container):
+    """Standalone dataset validator with reports, previews, and preset hints."""
 
     def __init__(self, viewer: "napari.viewer.Viewer"):
         super().__init__()
         self._viewer = viewer
         self._last_report = None
-        self._last_preview = None
 
-        self.image_dir = FileEdit(label="COCO images folder", mode="d")
-        self.annotation_path = FileEdit(label="COCO instances JSON", mode="r")
-        self.include_crowd = CheckBox(label="Include crowd annotations", value=False)
-        self.preview_index = SpinBox(label="Preview image index", min=0, max=1000000, step=1, value=0)
+        self.task_type = ComboBox(
+            label="Task",
+            choices=["semantic_segmentation", "instance_segmentation", "classification"],
+            value="semantic_segmentation",
+        )
+        self.images_dir = FileEdit(label="Images folder", mode="d", nullable=True)
+        self.masks_dir = FileEdit(label="Masks folder", mode="d", nullable=True)
+        self.coco_json = FileEdit(label="COCO annotation JSON", mode="r", nullable=True)
+        self.classification_dir = FileEdit(label="Classification dataset folder", mode="d", nullable=True)
+        self.preview_index = SpinBox(label="Preview index (-1=random)", min=-1, max=1000000, step=1, value=-1)
+        self.preview_count = SpinBox(label="Classification preview count", min=1, max=64, step=1, value=9)
+        self.report_path = FileEdit(label="Export report JSON", mode="w", nullable=True)
         self._check_button = PushButton(text="Check Dataset")
-        self._preview_button = PushButton(text="Preview Image")
-        self._random_preview_button = PushButton(text="Random Preview")
+        self._preview_button = PushButton(text="Preview Dataset")
+        self._export_button = PushButton(text="Export Report")
         self.report = TextEdit(value="")
         self.report.read_only = True
-        self.report.native.setMinimumHeight(240)
+        self.report.native.setMinimumHeight(260)
 
         self.extend([
-            self.image_dir,
-            self.annotation_path,
-            self.include_crowd,
+            self.task_type,
+            self.images_dir,
+            self.masks_dir,
+            self.coco_json,
+            self.classification_dir,
             self.preview_index,
+            self.preview_count,
+            self.report_path,
             self._check_button,
             self._preview_button,
-            self._random_preview_button,
+            self._export_button,
             self.report,
         ])
 
+        self.task_type.changed.connect(self._update_task_state)
         self._check_button.clicked.connect(self._check_dataset)
-        self._preview_button.clicked.connect(self._preview_dataset_item)
-        self._random_preview_button.clicked.connect(self._preview_random_item)
+        self._preview_button.clicked.connect(self._preview_dataset)
+        self._export_button.clicked.connect(self._export_report)
+        self._update_task_state()
 
-    def _log_report(self, message):
-        self.report.value = message
-        print(message)
+    def _update_task_state(self):
+        task = self.task_type.value
+        self.images_dir.visible = task in {"semantic_segmentation", "instance_segmentation"}
+        self.masks_dir.visible = task == "semantic_segmentation"
+        self.coco_json.visible = task == "instance_segmentation"
+        self.classification_dir.visible = task == "classification"
+        self.preview_count.visible = task == "classification"
 
-    def _paths(self):
-        return str(self.image_dir.value), str(self.annotation_path.value)
+    def _set_report(self, report):
+        self._last_report = report
+        self.report.value = format_dataset_validation_report(report)
+
+    def _build_report(self):
+        task = self.task_type.value
+        if task == "semantic_segmentation":
+            return validate_semantic_segmentation_dataset(self.images_dir.value, self.masks_dir.value)
+        if task == "instance_segmentation":
+            return validate_instance_segmentation_dataset(self.images_dir.value, self.coco_json.value)
+        if task == "classification":
+            return validate_classification_dataset(self.classification_dir.value)
+        raise ValueError(f"Unsupported dataset validation task: {task}")
 
     def _check_dataset(self):
         try:
-            image_dir, annotation_path = self._paths()
-            self._last_report = check_coco_instance_dataset(
-                image_dir,
-                annotation_path,
-                include_crowd=self.include_crowd.value,
-            )
-            self.preview_index.max = max(
-                int(self._last_report.get("summary", {}).get("num_existing_images", 1)) - 1,
-                0,
-            )
-            self._log_report(format_coco_instance_check_report(self._last_report))
+            self._set_report(self._build_report())
         except Exception as error:
-            self._log_report(f"COCO dataset check failed: {error}")
+            self.report.value = f"Dataset validation failed to run: {error}"
 
-    def _preview_random_item(self):
+    def _export_report(self):
         if self._last_report is None:
             self._check_dataset()
-        count = 0
-        if self._last_report:
-            count = int(self._last_report.get("summary", {}).get("num_existing_images", 0))
-        if count > 0:
-            self.preview_index.value = int(np.random.default_rng().integers(0, count))
-        self._preview_dataset_item()
-
-    def _preview_dataset_item(self):
-        if self._viewer is None:
-            self._log_report("Preview requires an active napari viewer.")
+        export_path = normalize_optional_path(self.report_path.value)
+        if not export_path:
+            self.report.value += "\n[ERROR] Please choose an export report JSON path."
             return
         try:
-            image_dir, annotation_path = self._paths()
-            preview = load_coco_instance_preview(
-                image_dir,
-                annotation_path,
-                index=int(self.preview_index.value),
-                include_crowd=self.include_crowd.value,
-            )
-            self._last_preview = preview
-            image_layer_name = f"COCO preview image {preview['image_id']}"
-            mask_layer_name = f"COCO preview instances {preview['image_id']}"
-            upsert_image_layer(self._viewer, preview["image"], image_layer_name)
-            upsert_labels_layer(self._viewer, preview["instance_mask"], mask_layer_name)
-            self._upsert_box_layer(preview)
-            info_lines = [
-                f"Preview image id={preview['image_id']} ({preview['file_name']})",
-                f"Image path: {preview['image_path']}",
-                f"Instances: {len(preview['labels'])}",
-            ]
-            for instance_index, (annotation_id, label) in enumerate(
-                zip(preview["annotation_ids"], preview["labels"]),
-                start=1,
-            ):
-                info_lines.append(
-                    f"- instance={instance_index} annotation_id={annotation_id} label={label}"
-                )
-            preview_report = "\n".join(info_lines)
-            if self._last_report is not None:
-                preview_report = (
-                    f"{format_coco_instance_check_report(self._last_report)}"
-                    f"\n\nPreview:\n{preview_report}"
-                )
-            self._log_report(preview_report)
+            path = save_dataset_validation_report(export_path, self._last_report)
+            self.report.value += f"\nReport exported to: {path}"
         except Exception as error:
-            self._log_report(f"COCO dataset preview failed: {error}")
+            self.report.value += f"\n[ERROR] Failed to export report: {error}"
 
-    def _upsert_box_layer(self, preview):
-        boxes = preview["boxes"]
-        layer_name = f"COCO preview boxes {preview['image_id']}"
-        if boxes.size == 0:
-            if layer_name in self._viewer.layers:
-                self._viewer.layers.remove(layer_name)
-            return None
-        shapes = []
-        edge_colors = []
-        text_values = []
-        for index, box in enumerate(boxes):
-            x1, y1, x2, y2 = [float(value) for value in box]
-            shapes.append(
-                np.asarray(
-                    [
-                        [y1, x1],
-                        [y1, x2],
-                        [y2, x2],
-                        [y2, x1],
-                    ],
-                    dtype=np.float32,
-                )
-            )
-            edge_colors.append("lime")
-            label = preview["labels"][index] if index < len(preview["labels"]) else "instance"
-            text_values.append(f"{index + 1}: {label}")
-        if layer_name in self._viewer.layers:
-            layer = self._viewer.layers[layer_name]
-            layer.data = shapes
-            layer.edge_color = edge_colors
-            layer.text = {"string": text_values, "size": 10, "color": "yellow"}
-            return layer
-        return self._viewer.add_shapes(
-            shapes,
-            shape_type="polygon",
-            name=layer_name,
-            edge_color=edge_colors,
-            face_color="transparent",
-            edge_width=2,
-            text={"string": text_values, "size": 10, "color": "yellow"},
+    def _preview_dataset(self):
+        if self._viewer is None:
+            self.report.value += "\n[ERROR] Preview requires an active napari viewer."
+            return
+        try:
+            task = self.task_type.value
+            if task == "semantic_segmentation":
+                self._preview_semantic_dataset()
+            elif task == "instance_segmentation":
+                self._preview_instance_dataset()
+            elif task == "classification":
+                self._preview_classification_dataset()
+        except Exception as error:
+            self.report.value += f"\n[ERROR] Failed to preview dataset: {error}"
+
+    def _preview_semantic_dataset(self):
+        image_files = collect_image_files(self.images_dir.value)
+        if not image_files:
+            raise ValueError("No images found for semantic preview.")
+        index = self._resolve_preview_index(len(image_files))
+        image_path = Path(image_files[index])
+        mask_path = Path(self.masks_dir.value) / f"{image_path.stem}.png"
+        if not mask_path.exists():
+            mask_files = collect_image_files(self.masks_dir.value)
+            if not mask_files:
+                raise ValueError("No masks found for semantic preview.")
+            mask_path = Path(mask_files[min(index, len(mask_files) - 1)])
+        image = np.asarray(PILImage.open(image_path))
+        mask = np.asarray(PILImage.open(mask_path))
+        upsert_image_layer(self._viewer, image, f"Semantic validator image {index}")
+        upsert_labels_layer(self._viewer, mask.astype(np.int32), f"Semantic validator mask {index}")
+
+    def _preview_instance_dataset(self):
+        preview = load_coco_instance_preview(
+            normalize_optional_path(self.images_dir.value),
+            normalize_optional_path(self.coco_json.value),
+            index=max(self.preview_index.value, 0),
         )
+        upsert_image_layer(self._viewer, preview["image"], "Instance validator image")
+        upsert_labels_layer(self._viewer, preview["instance_mask"], "Instance validator labels")
+        if preview["boxes"].size:
+            shapes = []
+            for box in preview["boxes"]:
+                x1, y1, x2, y2 = [float(value) for value in box]
+                shapes.append(np.asarray([[y1, x1], [y1, x2], [y2, x2], [y2, x1]], dtype=np.float32))
+            self._viewer.add_shapes(
+                shapes,
+                shape_type="polygon",
+                name="Instance validator boxes",
+                edge_color="yellow",
+                face_color="transparent",
+            )
+
+    def _preview_classification_dataset(self):
+        image_paths, labels = self._classification_preview_samples(Path(self.classification_dir.value))
+        if not image_paths:
+            raise ValueError("No classification images found.")
+        count = min(self.preview_count.value, len(image_paths))
+        indices = np.random.default_rng().choice(len(image_paths), size=count, replace=False)
+        tiles = [self._load_preview_tile(image_paths[int(index)]) for index in indices]
+        grid = self._make_image_grid(tiles)
+        layer = upsert_image_layer(self._viewer, grid, "Classification validator grid")
+        layer.metadata["labels"] = [labels[int(index)] for index in indices]
+        self.report.value += f"\nClassification preview labels: {layer.metadata['labels']}"
+
+    def _classification_preview_samples(self, dataset_dir):
+        roots = [dataset_dir / "train", dataset_dir / "val"] if (dataset_dir / "train").is_dir() else [dataset_dir]
+        image_paths = []
+        labels = []
+        for root in roots:
+            if not root.exists():
+                continue
+            for class_dir in sorted(path for path in root.iterdir() if path.is_dir()):
+                for image_path in collect_image_files(class_dir):
+                    image_paths.append(Path(image_path))
+                    labels.append(class_dir.name)
+        return image_paths, labels
+
+    def _resolve_preview_index(self, n_items):
+        if self.preview_index.value < 0:
+            return int(np.random.default_rng().integers(0, n_items))
+        return min(self.preview_index.value, n_items - 1)
+
+    def _load_preview_tile(self, path, size=128):
+        return np.asarray(PILImage.open(path).convert("RGB").resize((size, size)))
+
+    def _make_image_grid(self, tiles):
+        columns = int(np.ceil(np.sqrt(len(tiles))))
+        rows = int(np.ceil(len(tiles) / columns))
+        tile_h, tile_w = tiles[0].shape[:2]
+        grid = np.zeros((rows * tile_h, columns * tile_w, 3), dtype=tiles[0].dtype)
+        for index, tile in enumerate(tiles):
+            row = index // columns
+            column = index % columns
+            grid[row * tile_h : (row + 1) * tile_h, column * tile_w : (column + 1) * tile_w] = tile
+        return grid
 
 
 #------------EMCellFiner=------

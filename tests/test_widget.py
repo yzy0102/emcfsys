@@ -1,9 +1,9 @@
 import numpy as np
 from pathlib import Path
+from PIL import Image
 from qtpy.QtWidgets import QTextEdit
 
 from emcfsys._widget import (
-    COCOInstanceDatasetInspector,
     ClassificationInferenceContainer,
     ClassificationTrainingContainer,
     DLInferenceContainer,
@@ -17,6 +17,7 @@ from emcfsys._widget import (
     InstanceSegmentationTrainingContainer,
     LabelMe2COCOInstance,
     ModelManagerContainer,
+    DatasetValidatorContainer,
     threshold_autogenerate_widget,
     threshold_magic_widget,
 )
@@ -191,7 +192,6 @@ def test_instance_segmentation_widgets_construct(make_napari_viewer):
     training_widget = InstanceSegmentationTrainingContainer(viewer)
     inference_widget = InstanceSegmentationInferenceContainer(viewer)
     converter_widget = LabelMe2COCOInstance(viewer)
-    inspector_widget = COCOInstanceDatasetInspector(viewer)
 
     assert training_widget.model_name.value == "rtm_instance"
     assert "yolact_instance" in training_widget.model_name.choices
@@ -219,29 +219,6 @@ def test_instance_segmentation_widgets_construct(make_napari_viewer):
     assert converter_widget.train_ratio.value == 0.8
     assert converter_widget.val_ratio.value == 0.1
     assert converter_widget.test_ratio.value == 0.1
-    assert inspector_widget.include_crowd.value is False
-    assert inspector_widget.preview_index.value == 0
-
-
-def test_coco_instance_dataset_inspector_checks_and_previews(
-    make_napari_viewer,
-    tmp_path,
-):
-    image_dir, annotation_path = _write_tiny_coco_dataset(tmp_path)
-    viewer = make_napari_viewer()
-    widget = COCOInstanceDatasetInspector(viewer)
-
-    widget.image_dir.value = image_dir
-    widget.annotation_path.value = annotation_path
-    widget._check_dataset()
-    widget._preview_dataset_item()
-
-    assert widget._last_report["ok"] is True
-    assert "COCO instance dataset check: OK" in widget.report.value
-    assert "COCO preview image 1" in viewer.layers
-    assert "COCO preview instances 1" in viewer.layers
-    assert "COCO preview boxes 1" in viewer.layers
-    assert viewer.layers["COCO preview instances 1"].data.max() == 1
 
 
 def test_semantic_segmentation_training_widget_builds_advanced_loss_request(tmp_path):
@@ -497,10 +474,70 @@ def test_instance_segmentation_widgets_are_in_manifest():
     assert "InstanceSegmentationTrainingContainer" in manifest
     assert "emcfsys.instance_segmentation.inference" in manifest
     assert "InstanceSegmentationInferenceContainer" in manifest
-    assert "emcfsys.instance_segmentation.dataset_inspector" in manifest
-    assert "COCOInstanceDatasetInspector" in manifest
+    assert "emcfsys.instance_segmentation.dataset_inspector" not in manifest
+    assert "COCOInstanceDatasetInspector" not in manifest
     assert "emcfsys.labelme_2_coco_instance" in manifest
     assert "LabelMe2COCOInstance" in manifest
+
+
+def test_dataset_validator_widget_checks_exports_and_previews_semantic(tmp_path):
+    viewer = FakeViewer()
+    viewer.layers = {}
+    viewer.add_shapes = lambda *args, **kwargs: None
+    images = tmp_path / "images"
+    masks = tmp_path / "masks"
+    images.mkdir()
+    masks.mkdir()
+    Image.fromarray(np.zeros((8, 8), dtype=np.uint8)).save(images / "a.tif")
+    Image.fromarray(np.ones((8, 8), dtype=np.uint8)).save(masks / "a.png")
+    widget = DatasetValidatorContainer(viewer)
+    widget.images_dir.value = images
+    widget.masks_dir.value = masks
+    widget.report_path.value = tmp_path / "report.json"
+
+    widget._check_dataset()
+    widget._export_report()
+
+    assert "Dataset validation (semantic_segmentation): OK" in widget.report.value
+    assert "recommended_preset" in widget.report.value
+    assert (tmp_path / "report.json").exists()
+
+
+def test_dataset_validator_widget_previews_classification(make_napari_viewer, tmp_path):
+    viewer = make_napari_viewer()
+    dataset_dir = tmp_path / "classification"
+    (dataset_dir / "class_a").mkdir(parents=True)
+    (dataset_dir / "class_b").mkdir()
+    Image.fromarray(np.zeros((8, 8, 3), dtype=np.uint8)).save(dataset_dir / "class_a" / "a.png")
+    Image.fromarray(np.ones((8, 8, 3), dtype=np.uint8)).save(dataset_dir / "class_b" / "b.png")
+    widget = DatasetValidatorContainer(viewer)
+    widget.task_type.value = "classification"
+    widget.classification_dir.value = dataset_dir
+    widget.preview_count.value = 2
+
+    widget._check_dataset()
+    widget._preview_dataset()
+
+    assert "Dataset validation (classification): OK" in widget.report.value
+    assert "Classification validator grid" in viewer.layers
+    assert len(viewer.layers["Classification validator grid"].metadata["labels"]) == 2
+
+
+def test_dataset_validator_widget_previews_instance(make_napari_viewer, tmp_path):
+    image_dir, annotation_path = _write_tiny_coco_dataset(tmp_path)
+    viewer = make_napari_viewer()
+    widget = DatasetValidatorContainer(viewer)
+    widget.task_type.value = "instance_segmentation"
+    widget.images_dir.value = image_dir
+    widget.coco_json.value = annotation_path
+    widget.preview_index.value = 0
+
+    widget._check_dataset()
+    widget._preview_dataset()
+
+    assert "Dataset validation (instance_segmentation): OK" in widget.report.value
+    assert "Instance validator image" in viewer.layers
+    assert "Instance validator labels" in viewer.layers
 
 
 def test_model_manager_widget_scans_and_registers_training_run(tmp_path):
@@ -787,3 +824,6 @@ def test_model_manager_is_in_manifest():
     assert "emcfsys.model_manager" in manifest
     assert "ModelManagerContainer" in manifest
     assert "Model Manager | Registry" in manifest
+    assert "emcfsys.dataset_validator" in manifest
+    assert "DatasetValidatorContainer" in manifest
+    assert "Dataset Tools | Dataset Validator" in manifest
