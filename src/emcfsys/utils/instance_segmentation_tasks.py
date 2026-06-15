@@ -11,7 +11,10 @@ import torch
 from PIL import Image as PILImage
 from torch.utils.data import DataLoader, Subset
 
-from ..EMCellFound.datasets import COCOInstanceSegmentationDataset
+from ..EMCellFound.datasets import (
+    COCOInstanceSegmentationDataset,
+    InstanceSegmentationAugmentation,
+)
 from ..EMCellFound.models.RTMInstanceSeg import (
     EMCellFoundRTMInstanceSegmenter,
     SUPPORTED_INSTANCE_MODEL_NAMES,
@@ -27,6 +30,17 @@ MODEL_RTM_INSTANCE = "rtm_instance"
 INSTANCE_MODEL_CHOICES = list(SUPPORTED_INSTANCE_MODEL_NAMES)
 COCO_AP_THRESHOLDS = tuple(round(value, 2) for value in np.arange(0.50, 0.96, 0.05))
 METRIC_SCORE_THRESHOLD = 0.05
+DEFAULT_INSTANCE_AUGMENTATION = {
+    "use_data_augmentation": True,
+    "aug_horizontal_flip_prob": 0.5,
+    "aug_vertical_flip_prob": 0.5,
+    "aug_rotate90_prob": 0.5,
+    "aug_brightness": 0.15,
+    "aug_contrast": 0.15,
+    "aug_gaussian_noise_std": 0.0,
+    "aug_random_crop_prob": 0.3,
+    "aug_random_crop_min_scale": 0.7,
+}
 
 
 @dataclass(slots=True)
@@ -55,6 +69,15 @@ class InstanceSegmentationTrainingRequest:
     boundary_loss_weight: float = 0.0
     focal_mask_loss_weight: float = 0.0
     tversky_loss_weight: float = 0.0
+    use_data_augmentation: bool = DEFAULT_INSTANCE_AUGMENTATION["use_data_augmentation"]
+    aug_horizontal_flip_prob: float = DEFAULT_INSTANCE_AUGMENTATION["aug_horizontal_flip_prob"]
+    aug_vertical_flip_prob: float = DEFAULT_INSTANCE_AUGMENTATION["aug_vertical_flip_prob"]
+    aug_rotate90_prob: float = DEFAULT_INSTANCE_AUGMENTATION["aug_rotate90_prob"]
+    aug_brightness: float = DEFAULT_INSTANCE_AUGMENTATION["aug_brightness"]
+    aug_contrast: float = DEFAULT_INSTANCE_AUGMENTATION["aug_contrast"]
+    aug_gaussian_noise_std: float = DEFAULT_INSTANCE_AUGMENTATION["aug_gaussian_noise_std"]
+    aug_random_crop_prob: float = DEFAULT_INSTANCE_AUGMENTATION["aug_random_crop_prob"]
+    aug_random_crop_min_scale: float = DEFAULT_INSTANCE_AUGMENTATION["aug_random_crop_min_scale"]
 
 
 @dataclass(slots=True)
@@ -307,6 +330,21 @@ def _build_optional_coco_dataset(
     )
 
 
+def _build_instance_train_transform(request: InstanceSegmentationTrainingRequest):
+    if not request.use_data_augmentation:
+        return None
+    return InstanceSegmentationAugmentation(
+        horizontal_flip_prob=request.aug_horizontal_flip_prob,
+        vertical_flip_prob=request.aug_vertical_flip_prob,
+        rotate90_prob=request.aug_rotate90_prob,
+        brightness=request.aug_brightness,
+        contrast=request.aug_contrast,
+        gaussian_noise_std=request.aug_gaussian_noise_std,
+        random_crop_prob=request.aug_random_crop_prob,
+        random_crop_min_scale=request.aug_random_crop_min_scale,
+    )
+
+
 def _validate_eval_dataset_classes(
     train_dataset: COCOInstanceSegmentationDataset,
     eval_dataset: COCOInstanceSegmentationDataset | None,
@@ -322,10 +360,17 @@ def _validate_eval_dataset_classes(
 
 
 def _make_data_loaders(request: InstanceSegmentationTrainingRequest):
+    train_transform = _build_instance_train_transform(request)
     dataset = COCOInstanceSegmentationDataset(
         request.image_dir,
         request.annotation_path,
         img_size=request.img_size,
+    )
+    train_aug_dataset = COCOInstanceSegmentationDataset(
+        request.image_dir,
+        request.annotation_path,
+        img_size=request.img_size,
+        transforms=train_transform,
     )
     val_dataset = _build_optional_coco_dataset(
         request.val_image_dir,
@@ -344,12 +389,35 @@ def _make_data_loaders(request: InstanceSegmentationTrainingRequest):
     _validate_eval_dataset_classes(dataset, val_dataset, "validation")
     _validate_eval_dataset_classes(dataset, test_dataset, "test")
 
+    split_info = {
+        "total_samples": len(dataset),
+        "train_samples": len(dataset),
+        "val_samples": 0,
+        "test_samples": 0 if test_dataset is None else len(test_dataset),
+        "val_source": "none",
+        "test_source": "none" if test_dataset is None else "separate",
+    }
+
     if val_dataset is None:
         train_indices, val_indices = _split_indices(len(dataset), request.val_split)
-        train_dataset = Subset(dataset, train_indices)
+        train_dataset = Subset(train_aug_dataset, train_indices)
         val_dataset = Subset(dataset, val_indices) if val_indices else None
+        split_info.update(
+            {
+                "train_samples": len(train_indices),
+                "val_samples": len(val_indices),
+                "val_source": "split" if val_indices else "none",
+            }
+        )
     else:
-        train_dataset = dataset
+        train_dataset = train_aug_dataset
+        split_info.update(
+            {
+                "train_samples": len(train_dataset),
+                "val_samples": len(val_dataset),
+                "val_source": "separate",
+            }
+        )
 
     train_loader = DataLoader(
         train_dataset,
@@ -380,7 +448,7 @@ def _make_data_loaders(request: InstanceSegmentationTrainingRequest):
         if test_dataset is not None
         else None
     )
-    return dataset, train_loader, val_loader, test_loader
+    return dataset, train_loader, val_loader, test_loader, split_info
 
 
 def _evaluate_instance_loss(model, loader, device):
@@ -643,7 +711,7 @@ def iter_instance_segmentation_training_task(
 
     device = _resolve_device(request.device)
     save_path = ensure_directory(request.save_path)
-    dataset, train_loader, val_loader, test_loader = _make_data_loaders(request)
+    dataset, train_loader, val_loader, test_loader, split_info = _make_data_loaders(request)
     num_classes = request.num_classes or len(dataset.class_names)
     if num_classes <= 0:
         raise ValueError("COCO annotations must define at least one category")
@@ -684,6 +752,28 @@ def iter_instance_segmentation_training_task(
         if log is not None:
             log(message)
         return message
+
+    yield emit(
+        "Instance segmentation dataset split: "
+        f"total={split_info['total_samples']}, "
+        f"train={split_info['train_samples']}, "
+        f"val={split_info['val_samples']} ({split_info['val_source']}), "
+        f"test={split_info['test_samples']} ({split_info['test_source']})."
+    )
+    if request.use_data_augmentation:
+        yield emit(
+            "Instance segmentation augmentation enabled: "
+            f"hflip={request.aug_horizontal_flip_prob}, "
+            f"vflip={request.aug_vertical_flip_prob}, "
+            f"rot90={request.aug_rotate90_prob}, "
+            f"brightness={request.aug_brightness}, "
+            f"contrast={request.aug_contrast}, "
+            f"noise_std={request.aug_gaussian_noise_std}, "
+            f"crop={request.aug_random_crop_prob}, "
+            f"crop_min_scale={request.aug_random_crop_min_scale}."
+        )
+    else:
+        yield emit("Instance segmentation augmentation disabled.")
 
     best_val_loss = None
     for epoch in range(1, request.epochs + 1):

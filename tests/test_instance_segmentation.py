@@ -6,7 +6,10 @@ import torch
 from torch import nn
 from PIL import Image
 
-from emcfsys.EMCellFound.datasets import COCOInstanceSegmentationDataset
+from emcfsys.EMCellFound.datasets import (
+    COCOInstanceSegmentationDataset,
+    InstanceSegmentationAugmentation,
+)
 from emcfsys.EMCellFound.models.RTMInstanceSeg import (
     EMCellFoundMask2FormerInstanceSegmenter,
     EMCellFoundMaskRCNNInstanceSegmenter,
@@ -18,6 +21,8 @@ from emcfsys.EMCellFound.models.RTMInstanceSeg import (
     MODEL_RTM_INSTANCE_TINY,
     MODEL_SOLOV2_INSTANCE,
     MODEL_YOLACT_INSTANCE,
+    paste_roi_masks,
+    roi_mask_targets,
 )
 from emcfsys.EMCellFound.models.RTMInstanceSeg import batched_nms
 from emcfsys.EMCellFound.models.model_factory import get_model
@@ -139,6 +144,43 @@ def _write_labelme_split_dataset(root, num_images=5):
     return root
 
 
+def _write_multi_coco_dataset(root, num_images=4):
+    image_dir = root / "images"
+    image_dir.mkdir(parents=True)
+    images = []
+    annotations = []
+    for index in range(num_images):
+        image_name = f"img_{index}.png"
+        Image.fromarray(np.zeros((16, 16, 3), dtype=np.uint8)).save(image_dir / image_name)
+        image_id = index + 1
+        images.append(
+            {"id": image_id, "file_name": image_name, "width": 16, "height": 16}
+        )
+        annotations.append(
+            {
+                "id": image_id,
+                "image_id": image_id,
+                "category_id": 1,
+                "bbox": [2, 3, 8, 6],
+                "area": 48,
+                "iscrowd": 0,
+                "segmentation": [[2, 3, 10, 3, 10, 9, 2, 9]],
+            }
+        )
+    annotation_path = root / "instances.json"
+    annotation_path.write_text(
+        json.dumps(
+            {
+                "images": images,
+                "annotations": annotations,
+                "categories": [{"id": 1, "name": "Mito"}],
+            }
+        ),
+        encoding="utf-8",
+    )
+    return image_dir, annotation_path
+
+
 def test_coco_instance_dataset_reads_polygon_annotations(tmp_path):
     image_dir, annotation_path = _write_tiny_coco_dataset(tmp_path)
 
@@ -155,6 +197,52 @@ def test_coco_instance_dataset_reads_polygon_annotations(tmp_path):
     assert target["labels"].tolist() == [1]
     assert target["masks"].shape == (1, 32, 32)
     assert int(target["masks"].sum()) > 0
+
+
+def test_instance_segmentation_augmentation_flips_masks_and_boxes():
+    image = Image.fromarray(np.zeros((8, 8, 3), dtype=np.uint8))
+    target = {
+        "boxes": torch.tensor([[1.0, 2.0, 3.0, 6.0]]),
+        "labels": torch.tensor([1]),
+        "masks": torch.zeros(1, 8, 8, dtype=torch.uint8),
+        "area": torch.tensor([8.0]),
+        "iscrowd": torch.tensor([0]),
+        "annotation_ids": torch.tensor([1]),
+        "size": torch.tensor([8, 8]),
+    }
+    target["masks"][0, 2:6, 1:3] = 1
+    transform = InstanceSegmentationAugmentation(horizontal_flip_prob=1.0, seed=1)
+
+    _, flipped = transform(image, target)
+
+    assert flipped["boxes"].tolist() == [[5.0, 2.0, 7.0, 6.0]]
+    assert flipped["masks"][0, 2:6, 5:7].all()
+    assert flipped["masks"].sum().item() == 8
+
+
+def test_instance_segmentation_augmentation_random_crop_keeps_valid_targets():
+    image = Image.fromarray(np.zeros((8, 8, 3), dtype=np.uint8))
+    target = {
+        "boxes": torch.tensor([[1.0, 1.0, 3.0, 3.0]]),
+        "labels": torch.tensor([1]),
+        "masks": torch.zeros(1, 8, 8, dtype=torch.uint8),
+        "area": torch.tensor([4.0]),
+        "iscrowd": torch.tensor([0]),
+        "annotation_ids": torch.tensor([1]),
+        "size": torch.tensor([8, 8]),
+    }
+    target["masks"][0, 1:3, 1:3] = 1
+    transform = InstanceSegmentationAugmentation(
+        random_crop_prob=1.0,
+        random_crop_min_scale=0.5,
+        seed=4,
+    )
+
+    _, cropped = transform(image, target)
+
+    assert cropped["masks"].shape[-2:] == (8, 8)
+    assert cropped["boxes"].shape[1] == 4
+    assert cropped["labels"].shape[0] == cropped["masks"].shape[0]
 
 
 def test_coco_instance_inspector_reports_and_previews_dataset(tmp_path):
@@ -628,6 +716,29 @@ def test_mask_rcnn_instance_segmenter_predict_and_loss_contract():
     assert results[0]["masks"].shape[-2:] == (64, 64)
 
 
+def test_mask_rcnn_roi_mask_targets_crop_to_proposal_box():
+    masks = torch.zeros(1, 16, 16, dtype=torch.uint8)
+    masks[0, 4:12, 5:13] = 1
+    boxes = torch.tensor([[5.0, 4.0, 13.0, 12.0]])
+
+    targets = roi_mask_targets(masks, boxes, output_size=8, image_size=(16, 16))
+
+    assert targets.shape == (1, 8, 8)
+    assert targets.sum().item() == 64
+
+
+def test_mask_rcnn_paste_roi_masks_keeps_background_outside_box_low():
+    mask_logits = torch.full((1, 4, 4), 8.0)
+    boxes = torch.tensor([[4.0, 5.0, 8.0, 9.0]])
+
+    pasted = paste_roi_masks(mask_logits, boxes, image_size=(12, 12)).sigmoid()
+
+    assert pasted.shape == (1, 12, 12)
+    assert pasted[0, 5:9, 4:8].min().item() > 0.99
+    assert pasted[0, :5].max().item() < 1e-6
+    assert pasted[0, :, :4].max().item() < 1e-6
+
+
 def test_mask2former_instance_segmenter_predict_and_loss_contract():
     model = get_model(
         MODEL_MASK2FORMER_INSTANCE,
@@ -940,6 +1051,87 @@ def test_instance_segmentation_training_skips_empty_val_and_test_sets(
     assert not any("test_loss" in metrics for metrics in metric_logs)
 
 
+def test_instance_segmentation_training_uses_val_split_from_single_coco_json(
+    monkeypatch,
+    tmp_path,
+):
+    monkeypatch.setenv("EMCFSYS_MODEL_REGISTRY", str(tmp_path / "registry.json"))
+    monkeypatch.setattr(ist, "EMCellFoundRTMInstanceSegmenter", FakeTrainingInstanceModel)
+    image_dir, annotation_path = _write_multi_coco_dataset(tmp_path / "dataset", num_images=4)
+    messages = []
+
+    logs = run_instance_segmentation_training_task(
+        InstanceSegmentationTrainingRequest(
+            image_dir=str(image_dir),
+            annotation_path=str(annotation_path),
+            save_path=str(tmp_path / "save"),
+            backbone_name="resnet34",
+            img_size=16,
+            batch_size=1,
+            epochs=1,
+            lr=1e-4,
+            device="cpu",
+            pretrained=False,
+            num_workers=0,
+            val_split=0.25,
+        ),
+        log=messages.append,
+    )
+
+    metric_logs = [item[-1] for item in logs if isinstance(item[-1], dict)]
+    assert any("total=4, train=3, val=1 (split)" in message for message in messages)
+    assert any(metrics.get("val_loss") == 1.0 for metrics in metric_logs)
+    assert any(metrics.get("val_AP50") == 1.0 for metrics in metric_logs)
+    assert not any("test_loss" in metrics for metrics in metric_logs)
+
+
+def test_instance_segmentation_training_augmentation_applies_only_to_train_split(
+    tmp_path,
+):
+    image_dir, annotation_path = _write_multi_coco_dataset(tmp_path / "dataset", num_images=4)
+
+    _, train_loader, val_loader, _, _ = ist._make_data_loaders(
+        InstanceSegmentationTrainingRequest(
+            image_dir=str(image_dir),
+            annotation_path=str(annotation_path),
+            save_path=str(tmp_path / "save"),
+            img_size=16,
+            batch_size=1,
+            val_split=0.25,
+            use_data_augmentation=True,
+            aug_horizontal_flip_prob=1.0,
+        )
+    )
+
+    assert isinstance(train_loader.dataset.dataset.transforms, InstanceSegmentationAugmentation)
+    assert val_loader.dataset.dataset.transforms is None
+
+
+def test_instance_segmentation_training_uses_default_augmentation(tmp_path):
+    image_dir, annotation_path = _write_multi_coco_dataset(tmp_path / "dataset", num_images=4)
+
+    _, train_loader, val_loader, _, _ = ist._make_data_loaders(
+        InstanceSegmentationTrainingRequest(
+            image_dir=str(image_dir),
+            annotation_path=str(annotation_path),
+            save_path=str(tmp_path / "save"),
+            img_size=16,
+            batch_size=1,
+            val_split=0.25,
+        )
+    )
+
+    transform = train_loader.dataset.dataset.transforms
+    assert isinstance(transform, InstanceSegmentationAugmentation)
+    assert transform.horizontal_flip_prob == 0.5
+    assert transform.vertical_flip_prob == 0.5
+    assert transform.rotate90_prob == 0.5
+    assert transform.brightness == 0.15
+    assert transform.contrast == 0.15
+    assert transform.random_crop_prob == 0.3
+    assert val_loader.dataset.dataset.transforms is None
+
+
 def test_instance_segmentation_training_can_use_only_val_json(
     monkeypatch,
     tmp_path,
@@ -1069,7 +1261,11 @@ def test_instance_segmentation_training_iterator_yields_realtime_logs(
     except StopIteration as stopped:
         logs = stopped.value
 
-    assert first_message.startswith("Epoch 1 batch 1/1 loss")
+    assert first_message.startswith("Instance segmentation dataset split:")
+    assert any(
+        message.startswith("Epoch 1 batch 1/1 loss")
+        for message in remaining_messages
+    )
     assert any("Epoch 1 finished" in message for message in remaining_messages)
     assert any("Final instance segmentation model saved" in message for message in remaining_messages)
     assert logs

@@ -254,6 +254,15 @@ def test_instance_segmentation_widgets_construct(make_napari_viewer):
     assert training_widget.boundary_loss_weight.native.isHidden()
     assert training_widget.focal_mask_loss_weight.native.isHidden()
     assert training_widget.tversky_loss_weight.native.isHidden()
+    assert training_widget.use_data_augmentation.value is True
+    assert training_widget.aug_horizontal_flip_prob.value == 0.5
+    assert training_widget.aug_vertical_flip_prob.value == 0.5
+    assert training_widget.aug_rotate90_prob.value == 0.5
+    assert training_widget.aug_brightness.value == 0.15
+    assert training_widget.aug_contrast.value == 0.15
+    assert training_widget.aug_random_crop_prob.value == 0.3
+    assert not training_widget.aug_horizontal_flip_prob.native.isHidden()
+    assert not training_widget.aug_random_crop_prob.native.isHidden()
     assert not hasattr(training_widget, "_log_widget")
     assert training_widget._log_text is not None
     assert inference_widget.model_name.value == "rtm_instance"
@@ -552,6 +561,9 @@ def test_instance_segmentation_training_widget_saves_and_loads_config(tmp_path):
     training_widget.model_name.value = "mask_rcnn_instance"
     training_widget.use_advanced_mask_losses.value = True
     training_widget.boundary_loss_weight.value = 0.2
+    training_widget.use_data_augmentation.value = True
+    training_widget.aug_horizontal_flip_prob.value = 0.8
+    training_widget.aug_random_crop_prob.value = 0.4
     training_widget.use_separate_eval_sets.value = True
     training_widget.val_annotation_path.value = tmp_path / "val.json"
     training_widget._save_config()
@@ -559,6 +571,9 @@ def test_instance_segmentation_training_widget_saves_and_loads_config(tmp_path):
     training_widget.model_name.value = "rtm_instance"
     training_widget.use_advanced_mask_losses.value = False
     training_widget.boundary_loss_weight.value = 0.0
+    training_widget.use_data_augmentation.value = False
+    training_widget.aug_horizontal_flip_prob.value = 0.0
+    training_widget.aug_random_crop_prob.value = 0.0
     training_widget.use_separate_eval_sets.value = False
     training_widget.val_annotation_path.value = None
     training_widget._load_config()
@@ -567,6 +582,10 @@ def test_instance_segmentation_training_widget_saves_and_loads_config(tmp_path):
     assert training_widget.model_name.value == "mask_rcnn_instance"
     assert training_widget.use_advanced_mask_losses.value is True
     assert training_widget.boundary_loss_weight.value == 0.2
+    assert training_widget.use_data_augmentation.value is True
+    assert training_widget.aug_horizontal_flip_prob.value == 0.8
+    assert training_widget.aug_random_crop_prob.value == 0.4
+    assert not training_widget.aug_horizontal_flip_prob.native.isHidden()
     assert training_widget.use_separate_eval_sets.value is True
     assert not training_widget.val_annotation_path.native.isHidden()
 
@@ -591,6 +610,28 @@ def test_instance_segmentation_training_widget_builds_eval_dataset_request(tmp_p
     assert request.val_annotation_path == str(tmp_path / "val.json")
     assert request.test_image_dir == str(tmp_path / "test_images")
     assert request.test_annotation_path == str(tmp_path / "test.json")
+
+
+def test_instance_segmentation_training_widget_keeps_val_split_for_single_coco(tmp_path):
+    training_widget = InstanceSegmentationTrainingContainer(None)
+
+    training_widget.image_dir.value = tmp_path / "images"
+    training_widget.annotation_path.value = tmp_path / "instances.json"
+    training_widget.save_path.value = tmp_path / "save"
+    training_widget.use_separate_eval_sets.value = False
+    training_widget.val_split.value = 0.25
+    training_widget.use_data_augmentation.value = True
+    training_widget.aug_rotate90_prob.value = 0.6
+    training_widget.aug_contrast.value = 0.2
+    request = training_widget._build_training_request()
+
+    assert request.val_split == 0.25
+    assert request.val_image_dir is None
+    assert request.use_data_augmentation is True
+    assert request.aug_rotate90_prob == 0.6
+    assert request.aug_contrast == 0.2
+    assert request.val_annotation_path is None
+    assert not training_widget.val_split.native.isHidden()
 
 
 def test_instance_segmentation_training_widget_allows_json_only_eval_sets(tmp_path):

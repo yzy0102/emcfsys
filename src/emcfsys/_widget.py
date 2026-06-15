@@ -97,6 +97,7 @@ from .utils.dataset_validator import (
     validate_semantic_segmentation_dataset,
 )
 from .utils.instance_segmentation_tasks import (
+    DEFAULT_INSTANCE_AUGMENTATION,
     INSTANCE_MODEL_CHOICES,
     InstanceSegmentationInferenceRequest,
     InstanceSegmentationTrainingRequest,
@@ -1975,6 +1976,66 @@ class InstanceSegmentationTrainingContainer(Container):
         self.boundary_loss_weight = FloatSpinBox(label="Boundary loss weight", min=0.0, max=10.0, step=0.1, value=0.0)
         self.focal_mask_loss_weight = FloatSpinBox(label="Focal mask loss weight", min=0.0, max=10.0, step=0.1, value=0.0)
         self.tversky_loss_weight = FloatSpinBox(label="Tversky loss weight", min=0.0, max=10.0, step=0.1, value=0.0)
+        self.use_data_augmentation = CheckBox(
+            label="Configure data augmentation",
+            value=DEFAULT_INSTANCE_AUGMENTATION["use_data_augmentation"],
+        )
+        self.aug_horizontal_flip_prob = FloatSpinBox(
+            label="Aug horizontal flip prob",
+            min=0.0,
+            max=1.0,
+            step=0.05,
+            value=DEFAULT_INSTANCE_AUGMENTATION["aug_horizontal_flip_prob"],
+        )
+        self.aug_vertical_flip_prob = FloatSpinBox(
+            label="Aug vertical flip prob",
+            min=0.0,
+            max=1.0,
+            step=0.05,
+            value=DEFAULT_INSTANCE_AUGMENTATION["aug_vertical_flip_prob"],
+        )
+        self.aug_rotate90_prob = FloatSpinBox(
+            label="Aug 90-degree rotation prob",
+            min=0.0,
+            max=1.0,
+            step=0.05,
+            value=DEFAULT_INSTANCE_AUGMENTATION["aug_rotate90_prob"],
+        )
+        self.aug_brightness = FloatSpinBox(
+            label="Aug brightness jitter",
+            min=0.0,
+            max=1.0,
+            step=0.05,
+            value=DEFAULT_INSTANCE_AUGMENTATION["aug_brightness"],
+        )
+        self.aug_contrast = FloatSpinBox(
+            label="Aug contrast jitter",
+            min=0.0,
+            max=1.0,
+            step=0.05,
+            value=DEFAULT_INSTANCE_AUGMENTATION["aug_contrast"],
+        )
+        self.aug_gaussian_noise_std = FloatSpinBox(
+            label="Aug gaussian noise std",
+            min=0.0,
+            max=1.0,
+            step=0.01,
+            value=DEFAULT_INSTANCE_AUGMENTATION["aug_gaussian_noise_std"],
+        )
+        self.aug_random_crop_prob = FloatSpinBox(
+            label="Aug random crop prob",
+            min=0.0,
+            max=1.0,
+            step=0.05,
+            value=DEFAULT_INSTANCE_AUGMENTATION["aug_random_crop_prob"],
+        )
+        self.aug_random_crop_min_scale = FloatSpinBox(
+            label="Aug crop min scale",
+            min=0.05,
+            max=1.0,
+            step=0.05,
+            value=DEFAULT_INSTANCE_AUGMENTATION["aug_random_crop_min_scale"],
+        )
         self.val_split = FloatSpinBox(label="Validation split", min=0.0, max=0.9, step=0.05, value=0.0)
         self.use_separate_eval_sets = CheckBox(label="Use separate val/test datasets", value=False)
         self.val_image_dir = FileEdit(label="Val COCO images folder (optional)", mode="d", nullable=True)
@@ -2008,6 +2069,15 @@ class InstanceSegmentationTrainingContainer(Container):
             self.boundary_loss_weight,
             self.focal_mask_loss_weight,
             self.tversky_loss_weight,
+            self.use_data_augmentation,
+            self.aug_horizontal_flip_prob,
+            self.aug_vertical_flip_prob,
+            self.aug_rotate90_prob,
+            self.aug_brightness,
+            self.aug_contrast,
+            self.aug_gaussian_noise_std,
+            self.aug_random_crop_prob,
+            self.aug_random_crop_min_scale,
             self.val_split,
             self.use_separate_eval_sets,
             self.val_image_dir,
@@ -2031,8 +2101,10 @@ class InstanceSegmentationTrainingContainer(Container):
         self.training_preset.changed.connect(self._apply_training_preset)
         self.use_separate_eval_sets.changed.connect(self._update_eval_dataset_state)
         self.use_advanced_mask_losses.changed.connect(self._update_advanced_loss_state)
+        self.use_data_augmentation.changed.connect(self._update_data_augmentation_state)
         self._update_eval_dataset_state()
         self._update_advanced_loss_state()
+        self._update_data_augmentation_state()
 
         self._fig, self._ax = plt.subplots()
         self._canvas = FigureCanvas(self._fig)
@@ -2094,6 +2166,17 @@ class InstanceSegmentationTrainingContainer(Container):
         self.focal_mask_loss_weight.visible = enabled
         self.tversky_loss_weight.visible = enabled
 
+    def _update_data_augmentation_state(self):
+        enabled = self.use_data_augmentation.value
+        self.aug_horizontal_flip_prob.visible = enabled
+        self.aug_vertical_flip_prob.visible = enabled
+        self.aug_rotate90_prob.visible = enabled
+        self.aug_brightness.visible = enabled
+        self.aug_contrast.visible = enabled
+        self.aug_gaussian_noise_std.visible = enabled
+        self.aug_random_crop_prob.visible = enabled
+        self.aug_random_crop_min_scale.visible = enabled
+
     def _config_widget_map(self):
         return {
             "image_dir": self.image_dir,
@@ -2121,6 +2204,15 @@ class InstanceSegmentationTrainingContainer(Container):
             "boundary_loss_weight": self.boundary_loss_weight,
             "focal_mask_loss_weight": self.focal_mask_loss_weight,
             "tversky_loss_weight": self.tversky_loss_weight,
+            "use_data_augmentation": self.use_data_augmentation,
+            "aug_horizontal_flip_prob": self.aug_horizontal_flip_prob,
+            "aug_vertical_flip_prob": self.aug_vertical_flip_prob,
+            "aug_rotate90_prob": self.aug_rotate90_prob,
+            "aug_brightness": self.aug_brightness,
+            "aug_contrast": self.aug_contrast,
+            "aug_gaussian_noise_std": self.aug_gaussian_noise_std,
+            "aug_random_crop_prob": self.aug_random_crop_prob,
+            "aug_random_crop_min_scale": self.aug_random_crop_min_scale,
         }
 
     def _save_config(self):
@@ -2160,6 +2252,7 @@ class InstanceSegmentationTrainingContainer(Container):
             _apply_widget_values(self._config_widget_map(), params)
             self._update_eval_dataset_state()
             self._update_advanced_loss_state()
+            self._update_data_augmentation_state()
             self._log(f"Instance segmentation config loaded from: {config_path}")
         except Exception as error:
             self._log(f"Failed to load instance segmentation config: {error}")
@@ -2171,6 +2264,7 @@ class InstanceSegmentationTrainingContainer(Container):
             return
         _apply_widget_values(self._config_widget_map(), preset)
         self._update_advanced_loss_state()
+        self._update_data_augmentation_state()
         self._log(f"Applied instance segmentation preset: {preset_name}")
 
     def _build_training_request(self):
@@ -2200,6 +2294,15 @@ class InstanceSegmentationTrainingContainer(Container):
             boundary_loss_weight=self.boundary_loss_weight.value,
             focal_mask_loss_weight=self.focal_mask_loss_weight.value,
             tversky_loss_weight=self.tversky_loss_weight.value,
+            use_data_augmentation=self.use_data_augmentation.value,
+            aug_horizontal_flip_prob=self.aug_horizontal_flip_prob.value,
+            aug_vertical_flip_prob=self.aug_vertical_flip_prob.value,
+            aug_rotate90_prob=self.aug_rotate90_prob.value,
+            aug_brightness=self.aug_brightness.value,
+            aug_contrast=self.aug_contrast.value,
+            aug_gaussian_noise_std=self.aug_gaussian_noise_std.value,
+            aug_random_crop_prob=self.aug_random_crop_prob.value,
+            aug_random_crop_min_scale=self.aug_random_crop_min_scale.value,
         )
 
     def _start_training(self):
@@ -2355,6 +2458,11 @@ class InstanceSegmentationInferenceContainer(Container):
                     f"{img_layer.name}_instances",
                 )
             self._log(f"Detected {int(result['scores'].numel())} instances")
+            if int(result["scores"].numel()) > 0 and int(instance_mask.sum()) == 0:
+                self._log(
+                    "Detected boxes but all masks are empty. "
+                    "Try lowering Mask threshold, e.g. 0.1, or retrain the mask head."
+                )
 
         worker.errored.connect(lambda err: self._log(f"Instance segmentation error: {err}"))
         worker.start()

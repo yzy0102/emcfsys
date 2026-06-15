@@ -8,6 +8,7 @@ import numpy as np
 import torch
 from PIL import Image as PILImage
 from PIL import ImageDraw
+from PIL import ImageEnhance
 from torch.utils.data import Dataset
 
 
@@ -90,6 +91,190 @@ def _image_to_tensor(image: PILImage.Image):
     array = np.asarray(image.convert("RGB"), dtype=np.float32) / 255.0
     array = (array - IMAGENET_MEAN[None, None, :]) / IMAGENET_STD[None, None, :]
     return torch.from_numpy(array.transpose(2, 0, 1)).float()
+
+
+def _clone_target(target: dict):
+    return {
+        key: value.clone() if torch.is_tensor(value) else value
+        for key, value in target.items()
+    }
+
+
+def _recompute_target_boxes_from_masks(target: dict, image_size: tuple[int, int]):
+    height, width = image_size
+    masks = target.get("masks")
+    if masks is None:
+        masks = torch.zeros((0, height, width), dtype=torch.uint8)
+    masks = masks.to(torch.uint8)
+    if masks.ndim == 2:
+        masks = masks.unsqueeze(0)
+
+    keep_indices = []
+    boxes = []
+    areas = []
+    for index, mask in enumerate(masks):
+        ys, xs = torch.nonzero(mask > 0, as_tuple=True)
+        if xs.numel() == 0:
+            continue
+        keep_indices.append(index)
+        boxes.append(
+            torch.stack(
+                [
+                    xs.float().min(),
+                    ys.float().min(),
+                    xs.float().max() + 1.0,
+                    ys.float().max() + 1.0,
+                ]
+            )
+        )
+        areas.append(mask.sum().float())
+
+    device = masks.device
+    if keep_indices:
+        keep = torch.tensor(keep_indices, dtype=torch.long, device=device)
+        target["masks"] = masks[keep]
+        target["boxes"] = torch.stack(boxes, dim=0).to(torch.float32)
+        target["area"] = torch.stack(areas, dim=0).to(torch.float32)
+    else:
+        keep = torch.empty(0, dtype=torch.long, device=device)
+        target["masks"] = masks[:0]
+        target["boxes"] = torch.zeros((0, 4), dtype=torch.float32, device=device)
+        target["area"] = torch.empty(0, dtype=torch.float32, device=device)
+
+    for key in ("labels", "iscrowd", "annotation_ids"):
+        value = target.get(key)
+        if torch.is_tensor(value) and value.shape[:1] == (masks.shape[0],):
+            target[key] = value.to(device)[keep]
+    target["size"] = torch.tensor([height, width], dtype=torch.long)
+    return target
+
+
+class InstanceSegmentationAugmentation:
+    """Synchronized image, box, and mask augmentation for COCO instances."""
+
+    def __init__(
+        self,
+        *,
+        horizontal_flip_prob: float = 0.0,
+        vertical_flip_prob: float = 0.0,
+        rotate90_prob: float = 0.0,
+        brightness: float = 0.0,
+        contrast: float = 0.0,
+        gaussian_noise_std: float = 0.0,
+        random_crop_prob: float = 0.0,
+        random_crop_min_scale: float = 0.7,
+        seed: int | None = None,
+    ):
+        self.horizontal_flip_prob = float(horizontal_flip_prob)
+        self.vertical_flip_prob = float(vertical_flip_prob)
+        self.rotate90_prob = float(rotate90_prob)
+        self.brightness = float(brightness)
+        self.contrast = float(contrast)
+        self.gaussian_noise_std = float(gaussian_noise_std)
+        self.random_crop_prob = float(random_crop_prob)
+        self.random_crop_min_scale = float(random_crop_min_scale)
+        self.rng = np.random.default_rng(seed)
+
+    def __call__(self, image: PILImage.Image, target: dict):
+        image = image.convert("RGB")
+        target = _clone_target(target)
+        if self._should_apply(self.random_crop_prob):
+            image, target = self._random_crop_resize(image, target)
+        if self._should_apply(self.horizontal_flip_prob):
+            image, target = self._flip_horizontal(image, target)
+        if self._should_apply(self.vertical_flip_prob):
+            image, target = self._flip_vertical(image, target)
+        if self._should_apply(self.rotate90_prob):
+            image, target = self._rotate90(image, target)
+        image = self._photometric(image)
+        return _image_to_tensor(image), target
+
+    def _should_apply(self, probability: float):
+        return probability > 0 and self.rng.random() < min(max(probability, 0.0), 1.0)
+
+    def _set_masks(self, target: dict, masks: np.ndarray, image_size: tuple[int, int]):
+        masks = np.ascontiguousarray(masks.astype(np.uint8))
+        if masks.ndim == 2:
+            masks = masks[None, ...]
+        target["masks"] = torch.from_numpy(masks).to(torch.uint8)
+        return _recompute_target_boxes_from_masks(target, image_size)
+
+    def _flip_horizontal(self, image: PILImage.Image, target: dict):
+        width, height = image.size
+        image = image.transpose(PILImage.Transpose.FLIP_LEFT_RIGHT)
+        masks = target["masks"].cpu().numpy()
+        target = self._set_masks(target, np.flip(masks, axis=2), (height, width))
+        return image, target
+
+    def _flip_vertical(self, image: PILImage.Image, target: dict):
+        width, height = image.size
+        image = image.transpose(PILImage.Transpose.FLIP_TOP_BOTTOM)
+        masks = target["masks"].cpu().numpy()
+        target = self._set_masks(target, np.flip(masks, axis=1), (height, width))
+        return image, target
+
+    def _rotate90(self, image: PILImage.Image, target: dict):
+        masks = target["masks"].cpu().numpy()
+        k = int(self.rng.integers(1, 4))
+        image_array = np.rot90(np.asarray(image), k=k)
+        rotated_masks = np.rot90(masks, k=k, axes=(1, 2))
+        height, width = image_array.shape[:2]
+        image = PILImage.fromarray(np.ascontiguousarray(image_array))
+        target = self._set_masks(target, rotated_masks, (height, width))
+        return image, target
+
+    def _random_crop_resize(self, image: PILImage.Image, target: dict):
+        width, height = image.size
+        masks = target["masks"].cpu().numpy()
+        if height < 2 or width < 2:
+            return image, target
+
+        min_scale = min(max(self.random_crop_min_scale, 0.05), 1.0)
+        has_instances = masks.size > 0 and masks.any()
+        selected = None
+        for _ in range(10):
+            scale = float(self.rng.uniform(min_scale, 1.0))
+            crop_w = max(1, min(width, int(round(width * scale))))
+            crop_h = max(1, min(height, int(round(height * scale))))
+            left = int(self.rng.integers(0, width - crop_w + 1))
+            top = int(self.rng.integers(0, height - crop_h + 1))
+            cropped_masks = masks[:, top : top + crop_h, left : left + crop_w]
+            if not has_instances or cropped_masks.any():
+                selected = (left, top, crop_w, crop_h, cropped_masks)
+                break
+        if selected is None:
+            return image, target
+
+        left, top, crop_w, crop_h, cropped_masks = selected
+        image = image.crop((left, top, left + crop_w, top + crop_h))
+        image = image.resize((width, height), PILImage.Resampling.BILINEAR)
+        resized_masks = [
+            _resize_mask(mask, (height, width))
+            for mask in cropped_masks
+        ]
+        masks = (
+            np.stack(resized_masks, axis=0)
+            if resized_masks
+            else np.zeros((0, height, width), dtype=np.uint8)
+        )
+        target = self._set_masks(target, masks, (height, width))
+        return image, target
+
+    def _photometric(self, image: PILImage.Image):
+        if self.brightness > 0:
+            amount = max(self.brightness, 0.0)
+            factor = float(self.rng.uniform(max(0.0, 1.0 - amount), 1.0 + amount))
+            image = ImageEnhance.Brightness(image).enhance(factor)
+        if self.contrast > 0:
+            amount = max(self.contrast, 0.0)
+            factor = float(self.rng.uniform(max(0.0, 1.0 - amount), 1.0 + amount))
+            image = ImageEnhance.Contrast(image).enhance(factor)
+        if self.gaussian_noise_std > 0:
+            array = np.asarray(image, dtype=np.float32) / 255.0
+            noise = self.rng.normal(0.0, self.gaussian_noise_std, size=array.shape)
+            array = np.clip(array + noise, 0.0, 1.0)
+            image = PILImage.fromarray((array * 255.0).astype(np.uint8))
+        return image
 
 
 class COCOInstanceSegmentationDataset(Dataset):

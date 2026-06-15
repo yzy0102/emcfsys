@@ -535,6 +535,60 @@ def extra_mask_loss_with_logits(
     return extra
 
 
+def roi_mask_targets(
+    masks: torch.Tensor,
+    boxes: torch.Tensor,
+    output_size: int,
+    image_size: tuple[int, int],
+):
+    if masks.numel() == 0 or boxes.numel() == 0:
+        return masks.new_zeros((boxes.shape[0], output_size, output_size), dtype=torch.float32)
+    height, width = image_size
+    crops = []
+    for mask, box in zip(masks.float(), boxes):
+        x1, y1, x2, y2 = box.tolist()
+        x1 = max(0, min(width - 1, int(torch.floor(box.new_tensor(x1)).item())))
+        y1 = max(0, min(height - 1, int(torch.floor(box.new_tensor(y1)).item())))
+        x2 = max(x1 + 1, min(width, int(torch.ceil(box.new_tensor(x2)).item())))
+        y2 = max(y1 + 1, min(height, int(torch.ceil(box.new_tensor(y2)).item())))
+        crop = mask[y1:y2, x1:x2]
+        if crop.numel() == 0:
+            crop = mask.new_zeros((1, 1))
+        crop = F.interpolate(
+            crop.unsqueeze(0).unsqueeze(0),
+            size=(output_size, output_size),
+            mode="nearest",
+        ).squeeze(0).squeeze(0)
+        crops.append(crop)
+    return torch.stack(crops, dim=0)
+
+
+def paste_roi_masks(
+    mask_logits: torch.Tensor,
+    boxes: torch.Tensor,
+    image_size: tuple[int, int],
+):
+    if mask_logits.numel() == 0:
+        return mask_logits.new_zeros((mask_logits.shape[0], image_size[0], image_size[1]))
+    height, width = image_size
+    background_logit = torch.finfo(mask_logits.dtype).min
+    pasted = mask_logits.new_full((mask_logits.shape[0], height, width), background_logit)
+    for index, (mask_logit, box) in enumerate(zip(mask_logits, boxes)):
+        x1, y1, x2, y2 = box.tolist()
+        x1 = max(0, min(width - 1, int(torch.floor(box.new_tensor(x1)).item())))
+        y1 = max(0, min(height - 1, int(torch.floor(box.new_tensor(y1)).item())))
+        x2 = max(x1 + 1, min(width, int(torch.ceil(box.new_tensor(x2)).item())))
+        y2 = max(y1 + 1, min(height, int(torch.ceil(box.new_tensor(y2)).item())))
+        resized = F.interpolate(
+            mask_logit.unsqueeze(0).unsqueeze(0),
+            size=(y2 - y1, x2 - x1),
+            mode="bilinear",
+            align_corners=False,
+        ).squeeze(0).squeeze(0)
+        pasted[index, y1:y2, x1:x2] = resized
+    return pasted
+
+
 class RTMDetInsAssigner:
     """Dynamic center-prior assigner for the compact RTMDet-Ins head."""
 
@@ -1471,12 +1525,7 @@ class EMCellFoundMaskRCNNInstanceSegmenter(nn.Module):
                 torch.arange(mask_logits.shape[0], device=mask_logits.device),
                 class_mask_indices,
             ]
-            masks = F.interpolate(
-                selected_mask_logits.unsqueeze(1),
-                size=image_size,
-                mode="bilinear",
-                align_corners=False,
-            ).squeeze(1).sigmoid()
+            masks = paste_roi_masks(selected_mask_logits, boxes, image_size).sigmoid()
             if mask_threshold is not None:
                 masks = masks > mask_threshold
             results.append({"boxes": boxes, "scores": scores, "labels": labels, "masks": masks})
@@ -1490,6 +1539,7 @@ class EMCellFoundMaskRCNNInstanceSegmenter(nn.Module):
         box_losses = []
         mask_losses = []
         num_pos_total = 0
+        num_mask_pos_total = 0
 
         for batch_index, target in enumerate(targets):
             gt_boxes = target.get("boxes", torch.empty(0, 4, device=device)).to(device).float()
@@ -1564,6 +1614,7 @@ class EMCellFoundMaskRCNNInstanceSegmenter(nn.Module):
             positive_proposals = sampled_proposals[positive_roi_mask]
             positive_box_deltas = box_deltas[positive_roi_mask]
             positive_matched_indices = matched_indices[positive_roi_mask]
+            num_mask_pos_total += int(positive_roi_mask.sum().item())
             target_box_deltas = encode_box_deltas(
                 positive_proposals,
                 gt_boxes[positive_matched_indices],
@@ -1582,12 +1633,12 @@ class EMCellFoundMaskRCNNInstanceSegmenter(nn.Module):
                 torch.arange(positive_mask_logits.shape[0], device=device),
                 class_mask_indices,
             ]
-            matched_masks = gt_masks[positive_matched_indices].unsqueeze(1)
-            matched_masks = F.interpolate(
-                matched_masks,
-                size=selected_mask_logits.shape[-2:],
-                mode="nearest",
-            ).squeeze(1)
+            matched_masks = roi_mask_targets(
+                gt_masks[positive_matched_indices],
+                positive_proposals,
+                selected_mask_logits.shape[-1],
+                image_size,
+            )
             mask_bce = F.binary_cross_entropy_with_logits(
                 selected_mask_logits,
                 matched_masks,
@@ -1607,7 +1658,7 @@ class EMCellFoundMaskRCNNInstanceSegmenter(nn.Module):
         loss_obj = torch.stack(obj_losses).sum() / max(flat_outputs["objectness"].numel(), 1)
         loss_cls = torch.stack(cls_losses).sum() / normalizer
         loss_box = torch.stack(box_losses).sum() / normalizer
-        loss_mask = torch.stack(mask_losses).sum() / normalizer
+        loss_mask = torch.stack(mask_losses).sum() / max(num_mask_pos_total, 1)
         total_loss = (
             self.obj_loss_weight * loss_obj
             + self.cls_loss_weight * loss_cls
