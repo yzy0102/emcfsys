@@ -246,8 +246,9 @@ def _write_coco_json(path: Path, coco: dict):
     path.write_text(json.dumps(coco, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
-def convert_labelme_instance_folder_to_coco(
+def iter_labelme_instance_folder_to_coco(
     request: LabelMeInstanceToCOCORequest,
+    stop_flag_fn=None,
 ):
     json_dir = Path(request.labelme_json_dir)
     output_json = Path(request.output_json)
@@ -269,8 +270,29 @@ def convert_labelme_instance_folder_to_coco(
     annotations = []
     used_image_names: set[str] = set()
     annotation_id = 1
+    cancelled = False
+
+    yield {
+        "type": "start",
+        "phase": "setup",
+        "total": len(json_paths),
+        "message": (
+            f"Starting LabelMe instance conversion: {len(json_paths)} JSON files. "
+            f"Output: {output_json}"
+        ),
+    }
 
     for image_id, json_path in enumerate(json_paths, start=1):
+        if stop_flag_fn is not None and stop_flag_fn():
+            cancelled = True
+            yield {
+                "type": "cancelled",
+                "phase": "convert",
+                "index": image_id,
+                "total": len(json_paths),
+                "message": "LabelMe instance conversion cancelled.",
+            }
+            break
         data = _load_labelme_json(json_path)
         width, height = _image_size_from_labelme(data, json_path)
         file_name = _copy_or_reference_image(
@@ -320,6 +342,20 @@ def convert_labelme_instance_folder_to_coco(
                 }
             )
             annotation_id += 1
+        yield {
+            "type": "progress",
+            "phase": "convert",
+            "status": "success",
+            "index": image_id,
+            "total": len(json_paths),
+            "file": json_path.name,
+            "images": len(images),
+            "annotations": len(annotations),
+            "message": (
+                f"[{image_id}/{len(json_paths)}] converted: {json_path.name} "
+                f"(images={len(images)}, instances={len(annotations)})"
+            ),
+        }
 
     categories = [
         {"id": category_id, "name": name}
@@ -348,7 +384,7 @@ def convert_labelme_instance_folder_to_coco(
     else:
         _write_coco_json(output_json, coco)
 
-    return {
+    result = {
         "output_json": str(output_json),
         "output_jsons": output_jsons,
         "image_output_dir": "" if image_output_dir is None else str(image_output_dir),
@@ -357,4 +393,74 @@ def convert_labelme_instance_folder_to_coco(
         "num_categories": len(categories),
         "categories": [category["name"] for category in categories],
         "split_counts": split_counts,
+        "cancelled": bool(cancelled),
+        "num_cancelled_pending": max(len(json_paths) - len(images), 0) if cancelled else 0,
     }
+    yield {
+        "type": "done",
+        "phase": "done",
+        "result": result,
+        "message": (
+            "LabelMe instance conversion cancelled: "
+            if cancelled
+            else "LabelMe instance conversion finished: "
+        )
+        + f"images={result['num_images']}, instances={result['num_annotations']}.",
+    }
+
+
+def convert_labelme_instance_folder_to_coco(
+    request: LabelMeInstanceToCOCORequest,
+):
+    result = None
+    for event in iter_labelme_instance_folder_to_coco(request):
+        if event.get("type") == "done":
+            result = event.get("result")
+    if result is None:
+        raise RuntimeError("LabelMe instance conversion finished without a result.")
+    return result
+
+
+def format_labelme_instance_conversion_event(event: dict) -> str:
+    if not event:
+        return ""
+    if event.get("type") == "done" and event.get("result"):
+        return format_labelme_instance_conversion_result(event["result"])
+    return str(event.get("message") or event)
+
+
+def format_labelme_instance_conversion_result(result: dict) -> str:
+    if result.get("output_jsons"):
+        output_lines = "\n".join(
+            f"{name}: {path}" for name, path in result["output_jsons"].items()
+        )
+        split_lines = "\n".join(
+            f"{name}: {counts['images']} images, {counts['annotations']} instances"
+            for name, counts in result["split_counts"].items()
+        )
+        status = (
+            "LabelMe instance conversion cancelled with COCO splits."
+            if result.get("cancelled")
+            else "LabelMe instance annotations converted to COCO splits."
+        )
+        return (
+            f"{status}\n"
+            f"{output_lines}\n"
+            f"Images: {result['num_images']}; "
+            f"Instances: {result['num_annotations']}; "
+            f"Categories: {result['categories']}\n"
+            f"{split_lines}"
+        )
+
+    status = (
+        "LabelMe instance conversion cancelled with partial COCO."
+        if result.get("cancelled")
+        else "LabelMe instance annotations converted to COCO."
+    )
+    return (
+        f"{status}\n"
+        f"Output JSON: {result['output_json']}\n"
+        f"Images: {result['num_images']}; "
+        f"Instances: {result['num_annotations']}; "
+        f"Categories: {result['categories']}"
+    )

@@ -761,9 +761,10 @@ def _report_pixel_statistics(
     return named_counts, ratios
 
 
-def convert_labelme_semantic_folder(
+def iter_labelme_semantic_conversion(
     request: LabelMeSemanticConversionRequest,
-) -> dict[str, Any]:
+    stop_flag_fn=None,
+):
     json_dir = Path(request.labelme_json_dir)
     output_dir = Path(request.output_dir)
     if not json_dir.exists() or not json_dir.is_dir():
@@ -779,18 +780,43 @@ def convert_labelme_semantic_folder(
         ignore_id=request.ignore_id,
     )
     output_dir.mkdir(parents=True, exist_ok=True)
-    save_label_map(
+    label_map_path = save_label_map(
         output_dir / "label_map.json",
         label_map,
         background_id=request.background_id,
         ignore_id=request.ignore_id,
     )
+    yield {
+        "type": "start",
+        "phase": "setup",
+        "total": len(json_paths),
+        "message": (
+            f"Starting LabelMe semantic conversion: {len(json_paths)} JSON files. "
+            f"Output: {output_dir}"
+        ),
+    }
+    yield {
+        "type": "info",
+        "phase": "setup",
+        "message": f"Saved label map: {label_map_path}",
+    }
 
     used_stems: set[str] = set()
     failed_files: list[dict[str, str]] = []
-    prepared_samples: list[dict[str, Any]] = []
+    valid_records: list[dict[str, Any]] = []
+    cancelled = False
 
-    for json_path in json_paths:
+    for index, json_path in enumerate(json_paths, start=1):
+        if stop_flag_fn is not None and stop_flag_fn():
+            cancelled = True
+            yield {
+                "type": "cancelled",
+                "phase": "validate",
+                "index": index,
+                "total": len(json_paths),
+                "message": "LabelMe semantic conversion cancelled during validation.",
+            }
+            break
         try:
             data = _load_json(json_path)
             errors, _warnings = _validate_labelme_data(
@@ -800,36 +826,55 @@ def convert_labelme_semantic_folder(
             )
             if errors:
                 raise ValueError("; ".join(errors))
-
-            image, mask, sample_occurrences = _render_semantic_mask(
-                data,
-                json_path,
-                label_map,
-                background_id=request.background_id,
-                ignore_id=request.ignore_id,
-                unlabeled_mode=request.unlabeled_mode,
-            )
             stem = _safe_stem(data.get("imagePath") or json_path.stem, used_stems)
-            prepared_samples.append(
+            valid_records.append(
                 {
                     "json_path": str(json_path),
                     "json_path_obj": json_path,
                     "stem": stem,
-                    "image": image,
-                    "mask": mask,
-                    "class_occurrences": sample_occurrences,
+                    "data": data,
                 }
             )
+            yield {
+                "type": "progress",
+                "phase": "validate",
+                "status": "valid",
+                "index": index,
+                "total": len(json_paths),
+                "file": json_path.name,
+                "success": len(valid_records),
+                "failed": len(failed_files),
+                "message": f"[{index}/{len(json_paths)}] valid: {json_path.name}",
+            }
         except Exception as error:
             if not request.skip_invalid:
                 raise
-            failed_files.append({"json_path": str(json_path), "error": str(error)})
+            failed = {"json_path": str(json_path), "error": str(error)}
+            failed_files.append(failed)
+            yield {
+                "type": "progress",
+                "phase": "validate",
+                "status": "skipped",
+                "index": index,
+                "total": len(json_paths),
+                "file": json_path.name,
+                "success": len(valid_records),
+                "failed": len(failed_files),
+                "error": str(error),
+                "message": f"[{index}/{len(json_paths)}] skipped: {json_path.name} - {error}",
+            }
 
-    successful_paths = [sample["json_path_obj"] for sample in prepared_samples]
+    successful_paths = [sample["json_path_obj"] for sample in valid_records]
     split_by_path = _split_names(successful_paths, request)
     split_json: dict[str, list[str]] = {"train": [], "val": [], "test": []}
     if not request.split_dataset:
         split_json = {"all": []}
+    yield {
+        "type": "stage",
+        "phase": "save",
+        "total": len(valid_records),
+        "message": f"Saving converted samples: {len(valid_records)} valid files.",
+    }
 
     pixel_counts: Counter[int] = Counter()
     class_occurrences: Counter[str] = Counter()
@@ -841,34 +886,85 @@ def convert_labelme_semantic_folder(
         ignore_id=request.ignore_id,
     )
 
-    for sample in prepared_samples:
-        json_path = sample["json_path_obj"]
-        split_name = split_by_path.get(json_path, "") if request.split_dataset else ""
-        split_key = split_name if request.split_dataset else "all"
-        saved = _save_converted_sample(
-            image=sample["image"],
-            mask=sample["mask"],
-            label_map=label_map,
-            output_dir=output_dir,
-            split_name=split_name,
-            stem=sample["stem"],
-            request=request,
-        )
-        unique, counts = np.unique(sample["mask"], return_counts=True)
-        for class_id, count in zip(unique, counts):
-            pixel_counts[int(class_id)] += int(count)
-        class_occurrences.update(sample["class_occurrences"])
-        if foreground_ids and not np.isin(sample["mask"], list(foreground_ids)).any():
-            empty_mask_count += 1
-        split_json.setdefault(split_key, []).append(sample["stem"])
-        outputs.append(
-            {
-                "json_path": sample["json_path"],
-                "stem": sample["stem"],
-                "split": split_key,
-                "outputs": saved,
+    for save_index, sample in enumerate(valid_records, start=1):
+        if stop_flag_fn is not None and stop_flag_fn():
+            cancelled = True
+            yield {
+                "type": "cancelled",
+                "phase": "save",
+                "index": save_index,
+                "total": len(valid_records),
+                "message": "LabelMe semantic conversion cancelled during saving.",
             }
-        )
+            break
+        json_path = sample["json_path_obj"]
+        try:
+            image, mask, sample_occurrences = _render_semantic_mask(
+                sample["data"],
+                json_path,
+                label_map,
+                background_id=request.background_id,
+                ignore_id=request.ignore_id,
+                unlabeled_mode=request.unlabeled_mode,
+            )
+            split_name = split_by_path.get(json_path, "") if request.split_dataset else ""
+            split_key = split_name if request.split_dataset else "all"
+            saved = _save_converted_sample(
+                image=image,
+                mask=mask,
+                label_map=label_map,
+                output_dir=output_dir,
+                split_name=split_name,
+                stem=sample["stem"],
+                request=request,
+            )
+            unique, counts = np.unique(mask, return_counts=True)
+            for class_id, count in zip(unique, counts):
+                pixel_counts[int(class_id)] += int(count)
+            class_occurrences.update(sample_occurrences)
+            if foreground_ids and not np.isin(mask, list(foreground_ids)).any():
+                empty_mask_count += 1
+            split_json.setdefault(split_key, []).append(sample["stem"])
+            outputs.append(
+                {
+                    "json_path": sample["json_path"],
+                    "stem": sample["stem"],
+                    "split": split_key,
+                    "outputs": saved,
+                }
+            )
+            yield {
+                "type": "progress",
+                "phase": "save",
+                "status": "success",
+                "index": save_index,
+                "total": len(valid_records),
+                "file": json_path.name,
+                "split": split_key,
+                "success": len(outputs),
+                "failed": len(failed_files),
+                "message": (
+                    f"[{save_index}/{len(valid_records)}] converted: "
+                    f"{json_path.name} -> split={split_key}"
+                ),
+            }
+        except Exception as error:
+            if not request.skip_invalid:
+                raise
+            failed = {"json_path": sample["json_path"], "error": str(error)}
+            failed_files.append(failed)
+            yield {
+                "type": "progress",
+                "phase": "save",
+                "status": "skipped",
+                "index": save_index,
+                "total": len(valid_records),
+                "file": json_path.name,
+                "success": len(outputs),
+                "failed": len(failed_files),
+                "error": str(error),
+                "message": f"[{save_index}/{len(valid_records)}] skipped: {json_path.name} - {error}",
+            }
 
     if request.split_dataset:
         (output_dir / "split.json").write_text(
@@ -879,16 +975,18 @@ def convert_labelme_semantic_folder(
     class_pixel_counts, class_pixel_ratios = _report_pixel_statistics(pixel_counts, label_map)
     report = {
         "task": "labelme_semantic_conversion",
-        "ok": not failed_files,
+        "ok": not failed_files and not cancelled,
         "summary": {
             "labelme_json_dir": str(json_dir),
             "output_dir": str(output_dir),
             "num_json_files": len(json_paths),
             "num_success": len(outputs),
             "num_failed": len(failed_files),
+            "num_cancelled_pending": max(len(valid_records) - len(outputs), 0) if cancelled else 0,
             "empty_mask_count": int(empty_mask_count),
             "split_dataset": bool(request.split_dataset),
             "split_counts": {name: len(items) for name, items in split_json.items()},
+            "cancelled": bool(cancelled),
         },
         "statistics": {
             "class_pixel_counts": class_pixel_counts,
@@ -904,7 +1002,46 @@ def convert_labelme_semantic_folder(
     report["label_map_path"] = str(output_dir / "label_map.json")
     if request.split_dataset:
         report["split_path"] = str(output_dir / "split.json")
+    yield {
+        "type": "done",
+        "phase": "done",
+        "report": report,
+        "message": (
+            "LabelMe semantic conversion cancelled: "
+            if cancelled
+            else "LabelMe semantic conversion finished: "
+        )
+        + (
+            f"success={report['summary']['num_success']}, "
+            f"failed={report['summary']['num_failed']}."
+        ),
+    }
+
+
+def convert_labelme_semantic_folder(
+    request: LabelMeSemanticConversionRequest,
+) -> dict[str, Any]:
+    report = None
+    for event in iter_labelme_semantic_conversion(request):
+        if event.get("type") == "done":
+            report = event.get("report")
+    if report is None:
+        raise RuntimeError("LabelMe semantic conversion finished without a report.")
     return report
+
+
+def format_labelme_semantic_conversion_event(event: dict[str, Any]) -> str:
+    if not event:
+        return ""
+    if event.get("type") == "done" and event.get("report"):
+        if event["report"].get("summary", {}).get("cancelled"):
+            return (
+                str(event.get("message") or "LabelMe semantic conversion cancelled.")
+                + "\n"
+                + format_labelme_semantic_conversion_report(event["report"])
+            )
+        return format_labelme_semantic_conversion_report(event["report"])
+    return str(event.get("message") or event)
 
 
 def format_labelme_semantic_conversion_report(report: dict[str, Any]) -> str:

@@ -7,7 +7,9 @@ from emcfsys.utils.labelme_semantic_tasks import (
     LabelMeSemanticConversionRequest,
     check_labelme_semantic_folder,
     convert_labelme_semantic_folder,
+    format_labelme_semantic_conversion_event,
     infer_label_map,
+    iter_labelme_semantic_conversion,
     load_label_map,
     preview_labelme_semantic_item,
     save_label_map,
@@ -182,3 +184,59 @@ def test_labelme_semantic_convert_can_use_ignore_for_unlabeled_pixels(tmp_path):
 
     assert report["summary"]["num_success"] == 1
     assert 255 in np.unique(mask)
+
+
+def test_labelme_semantic_iter_conversion_yields_progress_events(tmp_path):
+    labelme_dir = tmp_path / "labelme"
+    _write_labelme_semantic_sample(labelme_dir, "img0", "mito")
+    (labelme_dir / "broken.json").write_text("{bad json", encoding="utf-8")
+    label_map = infer_label_map(labelme_dir)
+
+    events = list(
+        iter_labelme_semantic_conversion(
+            LabelMeSemanticConversionRequest(
+                labelme_json_dir=str(labelme_dir),
+                output_dir=str(tmp_path / "converted"),
+                label_map=label_map,
+                skip_invalid=True,
+            )
+        )
+    )
+
+    assert events[0]["type"] == "start"
+    assert any(event.get("phase") == "validate" for event in events)
+    assert any(event.get("status") == "skipped" for event in events)
+    assert any(event.get("phase") == "save" for event in events)
+    assert events[-1]["type"] == "done"
+    assert events[-1]["report"]["summary"]["num_success"] == 1
+    assert events[-1]["report"]["summary"]["num_failed"] == 1
+    assert "success=1" in format_labelme_semantic_conversion_event(events[-1])
+
+
+def test_labelme_semantic_iter_conversion_can_be_cancelled(tmp_path):
+    labelme_dir = tmp_path / "labelme"
+    _write_labelme_semantic_sample(labelme_dir, "img0", "mito")
+    _write_labelme_semantic_sample(labelme_dir, "img1", "mito")
+    label_map = infer_label_map(labelme_dir)
+    should_stop = {"value": False}
+    events = []
+
+    for event in iter_labelme_semantic_conversion(
+        LabelMeSemanticConversionRequest(
+            labelme_json_dir=str(labelme_dir),
+            output_dir=str(tmp_path / "converted"),
+            label_map=label_map,
+            skip_invalid=True,
+        ),
+        stop_flag_fn=lambda: should_stop["value"],
+    ):
+        events.append(event)
+        if event.get("phase") == "validate" and event.get("status") == "valid":
+            should_stop["value"] = True
+
+    assert any(event.get("type") == "cancelled" for event in events)
+    assert events[-1]["type"] == "done"
+    assert events[-1]["report"]["summary"]["cancelled"] is True
+    assert events[-1]["report"]["summary"]["num_success"] == 0
+    assert events[-1]["report"]["summary"]["num_cancelled_pending"] == 1
+    assert "cancelled" in format_labelme_semantic_conversion_event(events[-1])

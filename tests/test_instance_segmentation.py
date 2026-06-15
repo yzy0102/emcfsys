@@ -39,6 +39,8 @@ from emcfsys.utils.coco_instance_inspector import (
 from emcfsys.utils.labelme_coco_tasks import (
     LabelMeInstanceToCOCORequest,
     convert_labelme_instance_folder_to_coco,
+    format_labelme_instance_conversion_event,
+    iter_labelme_instance_folder_to_coco,
 )
 
 
@@ -287,6 +289,32 @@ def test_labelme_instance_converter_writes_train_val_test_splits(tmp_path):
         img_size=16,
     )
     assert len(dataset) == 3
+
+
+def test_labelme_instance_converter_yields_progress_and_can_cancel(tmp_path):
+    labelme_dir = _write_labelme_split_dataset(tmp_path / "labelme", num_images=3)
+    should_stop = {"value": False}
+    events = []
+
+    for event in iter_labelme_instance_folder_to_coco(
+        LabelMeInstanceToCOCORequest(
+            labelme_json_dir=str(labelme_dir),
+            output_json=str(tmp_path / "coco" / "instances.json"),
+            copy_images=True,
+        ),
+        stop_flag_fn=lambda: should_stop["value"],
+    ):
+        events.append(event)
+        if event.get("type") == "progress":
+            should_stop["value"] = True
+
+    assert events[0]["type"] == "start"
+    assert any(event.get("type") == "cancelled" for event in events)
+    assert events[-1]["type"] == "done"
+    assert events[-1]["result"]["cancelled"] is True
+    assert events[-1]["result"]["num_images"] == 1
+    assert events[-1]["result"]["num_cancelled_pending"] == 2
+    assert "cancelled" in format_labelme_instance_conversion_event(events[-1])
 
 
 def test_rtm_instance_segmenter_forward_shapes():

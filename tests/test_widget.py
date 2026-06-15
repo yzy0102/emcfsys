@@ -2,6 +2,7 @@ import json
 import numpy as np
 from pathlib import Path
 from PIL import Image
+from qtpy.QtCore import QEventLoop, QTimer
 from qtpy.QtWidgets import QTextEdit
 
 from emcfsys._widget import (
@@ -38,6 +39,50 @@ class FakeWindow:
 class FakeViewer:
     def __init__(self):
         self.window = FakeWindow()
+
+
+def _wait_for_condition(condition, timeout_ms=5000):
+    loop = QEventLoop()
+    deadline = QTimer()
+    deadline.setSingleShot(True)
+    poller = QTimer()
+
+    def _poll():
+        if condition():
+            poller.stop()
+            deadline.stop()
+            loop.quit()
+
+    poller.timeout.connect(_poll)
+    deadline.timeout.connect(loop.quit)
+    poller.start(20)
+    deadline.start(timeout_ms)
+    _poll()
+    if not condition():
+        loop.exec_()
+    poller.stop()
+    deadline.stop()
+    assert condition()
+
+
+def _write_labelme_instance_widget_sample(root, name="img"):
+    root.mkdir(parents=True, exist_ok=True)
+    image_path = root / f"{name}.png"
+    Image.fromarray(np.zeros((16, 16, 3), dtype=np.uint8)).save(image_path)
+    payload = {
+        "version": "5.0.0",
+        "imagePath": image_path.name,
+        "imageHeight": 16,
+        "imageWidth": 16,
+        "shapes": [
+            {
+                "label": "Mito",
+                "points": [[2, 3], [10, 3], [10, 9], [2, 9]],
+                "shape_type": "polygon",
+            }
+        ],
+    }
+    (root / f"{name}.json").write_text(json.dumps(payload), encoding="utf-8")
 
 
 def test_threshold_autogenerate_widget():
@@ -221,6 +266,40 @@ def test_instance_segmentation_widgets_construct(make_napari_viewer):
     assert converter_widget.train_ratio.value == 0.8
     assert converter_widget.val_ratio.value == 0.1
     assert converter_widget.test_ratio.value == 0.1
+    assert converter_widget._cancel_button.enabled is False
+
+
+def test_labelme_instance_converter_widget_runs_in_worker_and_can_cancel(make_napari_viewer, tmp_path):
+    labelme_dir = tmp_path / "labelme"
+    _write_labelme_instance_widget_sample(labelme_dir)
+
+    viewer = make_napari_viewer()
+    widget = LabelMe2COCOInstance(viewer)
+    widget.json_dir.value = labelme_dir
+    widget.output_json.value = tmp_path / "coco" / "instances.json"
+    widget.copy_images.value = True
+    widget.image_output_dir.value = tmp_path / "coco" / "images"
+
+    widget._convert_labelme_to_coco()
+    assert widget._worker is not None
+    assert widget._run_button.enabled is False
+    assert widget._cancel_button.enabled is True
+    _wait_for_condition(lambda: widget._worker is None)
+
+    assert "converted:" in widget.info.value
+    assert "Images: 1" in widget.info.value
+    assert widget._run_button.enabled is True
+    assert widget._cancel_button.enabled is False
+    assert (tmp_path / "coco" / "instances.json").exists()
+
+    widget._worker = object()
+    widget._cancel_button.enabled = True
+    widget._cancel_conversion()
+
+    assert widget._stop_conversion is True
+    assert widget._cancel_button.enabled is False
+    assert "Cancel requested" in widget.info.value
+    widget._worker = None
 
 
 def test_labelme_semantic_converter_widget_checks_previews_and_converts(make_napari_viewer, tmp_path):
@@ -248,6 +327,7 @@ def test_labelme_semantic_converter_widget_checks_previews_and_converts(make_nap
 
     viewer = make_napari_viewer()
     widget = LabelMe2Seg(viewer)
+    assert widget._cancel_button.enabled is False
     widget.json_path.value = labelme_dir
     widget.output_dir.value = tmp_path / "converted"
     widget.label_map_path.value = tmp_path / "label_map.json"
@@ -270,12 +350,58 @@ def test_labelme_semantic_converter_widget_checks_previews_and_converts(make_nap
     assert "LabelMe semantic preview overlay" in viewer.layers
 
     widget._convert_labelme_json_to_mask()
+    assert widget._worker is not None
+    assert widget._run_button.enabled is False
+    assert widget._cancel_button.enabled is True
+    _wait_for_condition(lambda: widget._worker is None)
+
     assert "success=1" in widget.info.value
+    assert "converted:" in widget.info.value
+    assert widget._run_button.enabled is True
     assert (tmp_path / "converted" / "split.json").exists()
     assert len(list((tmp_path / "converted" / "images").rglob("*.tif"))) == 1
     assert len(list((tmp_path / "converted" / "masks").rglob("*.png"))) == 1
     assert len(list((tmp_path / "converted" / "rgb_masks").rglob("*.png"))) == 1
     assert len(list((tmp_path / "converted" / "overlay").rglob("*.png"))) == 1
+
+
+def test_labelme_semantic_converter_cancel_button_sets_stop_flag(make_napari_viewer, tmp_path):
+    labelme_dir = tmp_path / "labelme"
+    labelme_dir.mkdir()
+    image = np.zeros((8, 8, 3), dtype=np.uint8)
+    Image.fromarray(image).save(labelme_dir / "img.png")
+    payload = {
+        "version": "5.0.0",
+        "flags": {},
+        "shapes": [
+            {
+                "label": "mito",
+                "points": [[1, 1], [6, 1], [6, 6], [1, 6]],
+                "shape_type": "polygon",
+                "flags": {},
+            }
+        ],
+        "imagePath": "img.png",
+        "imageData": None,
+        "imageHeight": 8,
+        "imageWidth": 8,
+    }
+    (labelme_dir / "img.json").write_text(json.dumps(payload), encoding="utf-8")
+
+    viewer = make_napari_viewer()
+    widget = LabelMe2Seg(viewer)
+    widget.json_path.value = labelme_dir
+    widget.output_dir.value = tmp_path / "converted"
+    widget._infer_label_map()
+    widget._convert_labelme_json_to_mask()
+
+    assert widget._worker is not None
+    widget._cancel_conversion()
+
+    assert widget._stop_conversion is True
+    assert widget._cancel_button.enabled is False
+    assert "Cancel requested" in widget.info.value
+    _wait_for_condition(lambda: widget._worker is None)
 
 
 def test_semantic_segmentation_training_widget_builds_advanced_loss_request(tmp_path):

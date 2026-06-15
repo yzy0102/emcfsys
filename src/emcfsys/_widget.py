@@ -107,15 +107,18 @@ from .utils.instance_segmentation_tasks import (
 from .utils.io_utils import collect_image_files, ensure_directory, normalize_optional_path
 from .utils.labelme_coco_tasks import (
     LabelMeInstanceToCOCORequest,
-    convert_labelme_instance_folder_to_coco,
+    format_labelme_instance_conversion_event,
+    format_labelme_instance_conversion_result,
+    iter_labelme_instance_folder_to_coco,
 )
 from .utils.labelme_semantic_tasks import (
     LabelMeSemanticConversionRequest,
     check_labelme_semantic_folder,
-    convert_labelme_semantic_folder,
     format_labelme_semantic_check_report,
+    format_labelme_semantic_conversion_event,
     format_labelme_semantic_conversion_report,
     infer_label_map,
+    iter_labelme_semantic_conversion,
     load_label_map,
     normalize_label_map,
     preview_labelme_semantic_item,
@@ -2755,6 +2758,8 @@ class LabelMe2COCOInstance(Container):
     def __init__(self, viewer: "napari.viewer.Viewer"):
         super().__init__()
         self.viewer = viewer
+        self._worker = None
+        self._stop_conversion = False
 
         self.json_dir = FileEdit(label="LabelMe JSON folder", mode="d", nullable=False)
         self.output_json = FileEdit(label="Output COCO JSON", mode="w", nullable=False)
@@ -2770,6 +2775,8 @@ class LabelMe2COCOInstance(Container):
             value="",
         )
         self._run_button = PushButton(text="Convert LabelMe to COCO Instance")
+        self._cancel_button = PushButton(text="Cancel Conversion")
+        self._cancel_button.enabled = False
         self.info = TextEdit(
             value=(
                 "Convert LabelMe polygon annotations to COCO instance segmentation JSON.\n"
@@ -2794,12 +2801,14 @@ class LabelMe2COCOInstance(Container):
             self.split_seed,
             self.category_names,
             self._run_button,
+            self._cancel_button,
             self.info,
         ])
 
         self.copy_images.changed.connect(self._update_image_output_state)
         self.split_dataset.changed.connect(self._update_split_state)
         self._run_button.clicked.connect(self._convert_labelme_to_coco)
+        self._cancel_button.clicked.connect(self._cancel_conversion)
         self._update_image_output_state()
         self._update_split_state()
 
@@ -2822,51 +2831,103 @@ class LabelMe2COCOInstance(Container):
                 names.append(name)
         return names or None
 
+    def _log(self, message):
+        text = str(message)
+        self.info.value = text
+        print(text)
+
+    def _append_log(self, message):
+        text = str(message)
+        current = str(self.info.value or "")
+        self.info.value = f"{current}\n{text}" if current else text
+        print(text)
+
+    def _set_conversion_running(self, running):
+        self._run_button.enabled = not running
+        self._cancel_button.enabled = running
+        self.json_dir.enabled = not running
+        self.output_json.enabled = not running
+        self.image_output_dir.enabled = not running
+        self.copy_images.enabled = not running
+        self.split_dataset.enabled = not running
+        self.train_ratio.enabled = not running
+        self.val_ratio.enabled = not running
+        self.test_ratio.enabled = not running
+        self.split_seed.enabled = not running
+        self.category_names.enabled = not running
+
+    def _cancel_conversion(self):
+        if self._worker is None:
+            self._append_log("No active LabelMe instance conversion to cancel.")
+            return
+        self._stop_conversion = True
+        self._cancel_button.enabled = False
+        self._append_log("Cancel requested. Instance conversion will stop after the current JSON file.")
+
+    def _build_conversion_request(self):
+        return LabelMeInstanceToCOCORequest(
+            labelme_json_dir=str(self.json_dir.value),
+            output_json=str(self.output_json.value),
+            image_output_dir=normalize_optional_path(self.image_output_dir.value),
+            copy_images=bool(self.copy_images.value),
+            category_names=self._parse_category_names(),
+            split_dataset=bool(self.split_dataset.value),
+            train_ratio=float(self.train_ratio.value),
+            val_ratio=float(self.val_ratio.value),
+            test_ratio=float(self.test_ratio.value),
+            split_seed=int(self.split_seed.value),
+        )
+
     def _convert_labelme_to_coco(self):
         try:
-            request = LabelMeInstanceToCOCORequest(
-                labelme_json_dir=str(self.json_dir.value),
-                output_json=str(self.output_json.value),
-                image_output_dir=normalize_optional_path(self.image_output_dir.value),
-                copy_images=bool(self.copy_images.value),
-                category_names=self._parse_category_names(),
-                split_dataset=bool(self.split_dataset.value),
-                train_ratio=float(self.train_ratio.value),
-                val_ratio=float(self.val_ratio.value),
-                test_ratio=float(self.test_ratio.value),
-                split_seed=int(self.split_seed.value),
-            )
-            result = convert_labelme_instance_folder_to_coco(request)
-            if result["output_jsons"]:
-                output_lines = "\n".join(
-                    f"{name}: {path}" for name, path in result["output_jsons"].items()
-                )
-                split_lines = "\n".join(
-                    f"{name}: {counts['images']} images, {counts['annotations']} instances"
-                    for name, counts in result["split_counts"].items()
-                )
-                message = (
-                    "LabelMe instance annotations converted to COCO splits.\n"
-                    f"{output_lines}\n"
-                    f"Images: {result['num_images']}; "
-                    f"Instances: {result['num_annotations']}; "
-                    f"Categories: {result['categories']}\n"
-                    f"{split_lines}"
-                )
-            else:
-                message = (
-                    "LabelMe instance annotations converted to COCO.\n"
-                    f"Output JSON: {result['output_json']}\n"
-                    f"Images: {result['num_images']}; "
-                    f"Instances: {result['num_annotations']}; "
-                    f"Categories: {result['categories']}"
-                )
-            self.info.value = message
-            print(message)
+            if self._worker is not None:
+                self._append_log("A LabelMe instance conversion is already running.")
+                return
+            request = self._build_conversion_request()
+            self._stop_conversion = False
+            self._set_conversion_running(True)
+            self._log("--- Starting LabelMe instance conversion ---")
+
+            @_get_thread_worker()
+            def _worker():
+                result = None
+                for event in iter_labelme_instance_folder_to_coco(
+                    request,
+                    stop_flag_fn=lambda: self._stop_conversion,
+                ):
+                    yield event
+                    if event.get("type") == "done":
+                        result = event.get("result")
+                return result
+
+            worker = _worker()
+            self._worker = worker
+            worker.yielded.connect(self._on_conversion_event)
+            worker.returned.connect(self._on_conversion_finished)
+            worker.errored.connect(self._on_conversion_error)
+            worker.finished.connect(self._on_conversion_worker_finished)
+            worker.start()
         except Exception as error:
-            message = f"LabelMe to COCO conversion failed: {error}"
-            self.info.value = message
-            print(message)
+            self._set_conversion_running(False)
+            self._worker = None
+            self._log(f"LabelMe to COCO conversion failed: {error}")
+
+    def _on_conversion_event(self, event):
+        self._append_log(format_labelme_instance_conversion_event(event))
+
+    def _on_conversion_finished(self, result):
+        if not result:
+            self._append_log("LabelMe instance conversion finished without a result.")
+            return
+        self._append_log(format_labelme_instance_conversion_result(result))
+
+    def _on_conversion_error(self, error):
+        self._append_log(f"LabelMe to COCO conversion error: {error}")
+
+    def _on_conversion_worker_finished(self):
+        self._set_conversion_running(False)
+        self._worker = None
+        self._stop_conversion = False
 
 
 class _LegacyLabelMe2Seg(Container):
@@ -3040,6 +3101,8 @@ class LabelMe2Seg(Container):
     def __init__(self, viewer: "napari.viewer.Viewer"):
         super().__init__()
         self.viewer = viewer
+        self._worker = None
+        self._stop_conversion = False
 
         self.json_path = FileEdit(label="LabelMe JSON folder", mode="d", nullable=False)
         self.output_dir = FileEdit(label="Output dataset folder", mode="d", nullable=False)
@@ -3083,6 +3146,8 @@ class LabelMe2Seg(Container):
         self.save_overlay = CheckBox(label="Output overlay preview", value=True)
 
         self._run_button = PushButton(text="Convert LabelMe to Semantic Dataset")
+        self._cancel_button = PushButton(text="Cancel Conversion")
+        self._cancel_button.enabled = False
         self.info = TextEdit(
             value=(
                 "LabelMe -> semantic segmentation dataset converter.\n"
@@ -3117,6 +3182,7 @@ class LabelMe2Seg(Container):
                 self.save_label_viz,
                 self.save_overlay,
                 self._run_button,
+                self._cancel_button,
                 self.info,
             ]
         )
@@ -3127,11 +3193,35 @@ class LabelMe2Seg(Container):
         self._check_button.clicked.connect(self._check_labelme_folder)
         self._preview_button.clicked.connect(self._preview_labelme_folder)
         self._run_button.clicked.connect(self._convert_labelme_json_to_mask)
+        self._cancel_button.clicked.connect(self._cancel_conversion)
 
     def _log(self, message):
         text = str(message)
         self.info.value = text
         print(text)
+
+    def _append_log(self, message):
+        text = str(message)
+        current = str(self.info.value or "")
+        self.info.value = f"{current}\n{text}" if current else text
+        print(text)
+
+    def _set_conversion_running(self, running):
+        self._run_button.enabled = not running
+        self._cancel_button.enabled = running
+        self._check_button.enabled = not running
+        self._preview_button.enabled = not running
+        self._infer_label_map_button.enabled = not running
+        self._load_label_map_button.enabled = not running
+        self._save_label_map_button.enabled = not running
+
+    def _cancel_conversion(self):
+        if self._worker is None:
+            self._append_log("No active LabelMe semantic conversion to cancel.")
+            return
+        self._stop_conversion = True
+        self._cancel_button.enabled = False
+        self._append_log("Cancel requested. Conversion will stop after the current file.")
 
     def _color_to_text(self, color):
         values = [int(value) for value in color[:3]]
@@ -3290,11 +3380,55 @@ class LabelMe2Seg(Container):
 
     def _convert_labelme_json_to_mask(self):
         try:
-            report = convert_labelme_semantic_folder(self._build_request())
-            self.label_map_path.value = Path(report["label_map_path"])
-            self._log(format_labelme_semantic_conversion_report(report))
+            if self._worker is not None:
+                self._append_log("A LabelMe semantic conversion is already running.")
+                return
+            request = self._build_request()
+            self._stop_conversion = False
+            self._set_conversion_running(True)
+            self._log("--- Starting LabelMe semantic conversion ---")
+
+            @_get_thread_worker()
+            def _worker():
+                report = None
+                for event in iter_labelme_semantic_conversion(
+                    request,
+                    stop_flag_fn=lambda: self._stop_conversion,
+                ):
+                    yield event
+                    if event.get("type") == "done":
+                        report = event.get("report")
+                return report
+
+            worker = _worker()
+            self._worker = worker
+            worker.yielded.connect(self._on_conversion_event)
+            worker.returned.connect(self._on_conversion_finished)
+            worker.errored.connect(self._on_conversion_error)
+            worker.finished.connect(self._on_conversion_worker_finished)
+            worker.start()
         except Exception as error:
+            self._set_conversion_running(False)
+            self._worker = None
             self._log(f"LabelMe semantic conversion failed: {error}")
+
+    def _on_conversion_event(self, event):
+        self._append_log(format_labelme_semantic_conversion_event(event))
+
+    def _on_conversion_finished(self, report):
+        if not report:
+            self._append_log("LabelMe semantic conversion finished without a report.")
+            return
+        self.label_map_path.value = Path(report["label_map_path"])
+        self._append_log(format_labelme_semantic_conversion_report(report))
+
+    def _on_conversion_error(self, error):
+        self._append_log(f"LabelMe semantic conversion error: {error}")
+
+    def _on_conversion_worker_finished(self):
+        self._set_conversion_running(False)
+        self._worker = None
+        self._stop_conversion = False
 
 
 class PhenotypeAnalysis(Container):
