@@ -2868,6 +2868,10 @@ class LabelMe2COCOInstance(Container):
         self.viewer = viewer
         self._worker = None
         self._stop_conversion = False
+        self._log_text, self._log_emitter = _create_log_dock(
+            self.viewer,
+            "LabelMe Instance Conversion Log",
+        )
 
         self.json_dir = FileEdit(label="LabelMe JSON folder", mode="d", nullable=False)
         self.output_json = FileEdit(label="Output COCO JSON", mode="w", nullable=False)
@@ -2940,15 +2944,10 @@ class LabelMe2COCOInstance(Container):
         return names or None
 
     def _log(self, message):
-        text = str(message)
-        self.info.value = text
-        print(text)
+        _append_log_message(self._log_text, message)
 
     def _append_log(self, message):
-        text = str(message)
-        current = str(self.info.value or "")
-        self.info.value = f"{current}\n{text}" if current else text
-        print(text)
+        _append_log_message(self._log_text, message)
 
     def _set_conversion_running(self, running):
         self._run_button.enabled = not running
@@ -3211,6 +3210,10 @@ class LabelMe2Seg(Container):
         self.viewer = viewer
         self._worker = None
         self._stop_conversion = False
+        self._log_text, self._log_emitter = _create_log_dock(
+            self.viewer,
+            "LabelMe Semantic Conversion Log",
+        )
 
         self.json_path = FileEdit(label="LabelMe JSON folder", mode="d", nullable=False)
         self.output_dir = FileEdit(label="Output dataset folder", mode="d", nullable=False)
@@ -3304,15 +3307,10 @@ class LabelMe2Seg(Container):
         self._cancel_button.clicked.connect(self._cancel_conversion)
 
     def _log(self, message):
-        text = str(message)
-        self.info.value = text
-        print(text)
+        _append_log_message(self._log_text, message)
 
     def _append_log(self, message):
-        text = str(message)
-        current = str(self.info.value or "")
-        self.info.value = f"{current}\n{text}" if current else text
-        print(text)
+        _append_log_message(self._log_text, message)
 
     def _set_conversion_running(self, running):
         self._run_button.enabled = not running

@@ -295,8 +295,8 @@ def test_labelme_instance_converter_widget_runs_in_worker_and_can_cancel(make_na
     assert widget._cancel_button.enabled is True
     _wait_for_condition(lambda: widget._worker is None)
 
-    assert "converted:" in widget.info.value
-    assert "Images: 1" in widget.info.value
+    assert "converted:" in widget._log_text.toPlainText()
+    assert "Images: 1" in widget._log_text.toPlainText()
     assert widget._run_button.enabled is True
     assert widget._cancel_button.enabled is False
     assert (tmp_path / "coco" / "instances.json").exists()
@@ -307,7 +307,7 @@ def test_labelme_instance_converter_widget_runs_in_worker_and_can_cancel(make_na
 
     assert widget._stop_conversion is True
     assert widget._cancel_button.enabled is False
-    assert "Cancel requested" in widget.info.value
+    assert "Cancel requested" in widget._log_text.toPlainText()
     widget._worker = None
 
 
@@ -351,7 +351,7 @@ def test_labelme_semantic_converter_widget_checks_previews_and_converts(make_nap
     assert (tmp_path / "label_map.json").exists()
 
     widget._check_labelme_folder()
-    assert "LabelMe semantic folder check: OK" in widget.info.value
+    assert "LabelMe semantic folder check: OK" in widget._log_text.toPlainText()
 
     widget._preview_labelme_folder()
     assert "LabelMe semantic preview image" in viewer.layers
@@ -364,8 +364,8 @@ def test_labelme_semantic_converter_widget_checks_previews_and_converts(make_nap
     assert widget._cancel_button.enabled is True
     _wait_for_condition(lambda: widget._worker is None)
 
-    assert "success=1" in widget.info.value
-    assert "converted:" in widget.info.value
+    assert "success=1" in widget._log_text.toPlainText()
+    assert "converted:" in widget._log_text.toPlainText()
     assert widget._run_button.enabled is True
     assert (tmp_path / "converted" / "split.json").exists()
     assert len(list((tmp_path / "converted" / "images").rglob("*.tif"))) == 1
@@ -409,7 +409,7 @@ def test_labelme_semantic_converter_cancel_button_sets_stop_flag(make_napari_vie
 
     assert widget._stop_conversion is True
     assert widget._cancel_button.enabled is False
-    assert "Cancel requested" in widget.info.value
+    assert "Cancel requested" in widget._log_text.toPlainText()
     _wait_for_condition(lambda: widget._worker is None)
 
 
@@ -678,6 +678,8 @@ def test_core_task_widgets_create_log_docks():
         (ClassificationInferenceContainer(viewer), "Classification Inference Log"),
         (EMCellFinerSingleInferWidget(viewer), "Super Resolution Single Inference Log"),
         (EMCellFinerBatchInferWidget(viewer), "Super Resolution Batch Inference Log"),
+        (LabelMe2COCOInstance(viewer), "LabelMe Instance Conversion Log"),
+        (LabelMe2Seg(viewer), "LabelMe Semantic Conversion Log"),
     ]
 
     for widget, dock_name in widgets:

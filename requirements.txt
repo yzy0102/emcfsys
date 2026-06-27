@@ -2,8 +2,12 @@ torch==2.4.1+cu118
 labelme
 numpy
 Pillow
-timm 
-opencv-python 
+timm
+opencv-python
 einops
 shapely
 albumentations
+transformers
+huggingface-hub
+safetensors
+seaborn
