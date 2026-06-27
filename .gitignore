@@ -214,3 +214,5 @@ __marimo__/
 
 # ignore local training outputs
 /save_logs/
+
+pypi_token.txt
