@@ -35,6 +35,7 @@ CUSTOM_COLORS = [
     "#B7D28D",
     "#d9b8f1",
 ]
+FIXED_TSNE_TICKS = np.array([-40, -20, 0, 20, 40], dtype=int)
 
 
 def ensure_tsne_dependencies() -> None:
@@ -101,15 +102,32 @@ def _display_names(class_names: list[str]) -> list[str]:
 
 
 def _set_square_limits(ax, x_values: np.ndarray, y_values: np.ndarray) -> None:
-    x_min, x_max = float(np.min(x_values)), float(np.max(x_values))
-    y_min, y_max = float(np.min(y_values)), float(np.max(y_values))
-    x_center = (x_min + x_max) / 2.0
-    y_center = (y_min + y_max) / 2.0
-    half_range = max(x_max - x_min, y_max - y_min) / 2.0
-    half_range = max(half_range * 1.08, 1e-6)
-    ax.set_xlim(x_center - half_range, x_center + half_range)
-    ax.set_ylim(y_center - half_range, y_center + half_range)
+    max_abs = float(np.max(np.abs(np.concatenate([x_values, y_values]))))
+    half_range = max(max_abs * 1.08, float(np.max(np.abs(FIXED_TSNE_TICKS))) * 1.1)
+    ax.set_xlim(-half_range, half_range)
+    ax.set_ylim(-half_range, half_range)
     ax.set_aspect("equal", adjustable="box")
+
+
+def _add_short_axis_ticks(ax) -> None:
+    ax.set_xticks(FIXED_TSNE_TICKS)
+    ax.set_yticks(FIXED_TSNE_TICKS)
+    ax.set_xticklabels([str(value) for value in FIXED_TSNE_TICKS], fontname="Arial")
+    ax.set_yticklabels([str(value) for value in FIXED_TSNE_TICKS], fontname="Arial")
+    ax.tick_params(
+        axis="both",
+        which="major",
+        bottom=True,
+        left=True,
+        top=False,
+        right=False,
+        labelbottom=True,
+        labelleft=True,
+        direction="out",
+        length=3.5,
+        width=1.1,
+        labelsize=8,
+    )
 
 
 def _add_class_ellipses(ax, df, ordered_names: list[str], palette: dict[str, str]) -> None:
@@ -200,8 +218,7 @@ def _plot_tsne_with_colorbar(
     _set_square_limits(ax_main, df["x"].to_numpy(), df["y"].to_numpy())
     ax_main.set_xlabel("")
     ax_main.set_ylabel("")
-    ax_main.set_xticks([])
-    ax_main.set_yticks([])
+    _add_short_axis_ticks(ax_main)
 
     bar_height = 1.0
     total_height = len(ordered_names) * bar_height

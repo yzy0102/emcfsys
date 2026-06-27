@@ -31,8 +31,8 @@ from emcfsys.utils.classification_tasks import (  # noqa: E402
 from knn_tsne_utils import ensure_tsne_dependencies, run_val_tsne  # noqa: E402
 
 
-DEFAULT_DATASET_DIR = REPO_ROOT / "datasets" / "OrgClassifyNew"
-DEFAULT_SAVE_DIR = REPO_ROOT / "save_logs" / "OrgClassifyNew_imagenet_vit_knn_cv"
+DEFAULT_DATASET_DIR = REPO_ROOT / "datasets" / "OrganelleClassifyDataset"
+DEFAULT_SAVE_DIR = REPO_ROOT / "save_logs" / "Google_ImageNet_ViTBase_knn_cv"
 DEFAULT_MODEL_NAME = "google/vit-base-patch16-224"
 
 

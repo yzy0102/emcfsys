@@ -32,7 +32,7 @@ from emcfsys.utils.classification_tasks import (  # noqa: E402
 from knn_tsne_utils import ensure_tsne_dependencies, run_val_tsne  # noqa: E402
 
 
-DEFAULT_DATASET_DIR = REPO_ROOT / "datasets" / "OrgClassifyNew"
+DEFAULT_DATASET_DIR = REPO_ROOT / "datasets" / "OrganelleClassifyDataset"
 DEFAULT_MODEL_NAME = "vit_base_patch16_224"
 DEFAULT_IMG_SIZE = 512
 DEFAULT_BATCH_SIZE = 4
@@ -111,6 +111,285 @@ def _clean_checkpoint_state(state_dict, model_state):
         cleaned[key] = value
 
     return cleaned, skipped_shape, skipped_other
+
+
+def _load_checkpoint_state_dict(checkpoint_path: str | Path):
+    checkpoint_path = Path(checkpoint_path)
+    try:
+        checkpoint = torch.load(
+            checkpoint_path,
+            map_location="cpu",
+            weights_only=True,
+        )
+    except TypeError:
+        checkpoint = torch.load(checkpoint_path, map_location="cpu")
+
+    state_dict = _select_state_dict(checkpoint)
+    if not isinstance(state_dict, dict):
+        raise ValueError(f"Unsupported checkpoint format: {checkpoint_path}")
+    return state_dict
+
+
+class DINOv3LayerScale(nn.Module):
+    def __init__(self, dim: int):
+        super().__init__()
+        self.gamma = nn.Parameter(torch.ones(dim))
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return x * self.gamma
+
+
+class DINOv3SwiGLUFFN(nn.Module):
+    def __init__(self, dim: int, hidden_dim: int):
+        super().__init__()
+        self.w1 = nn.Linear(dim, hidden_dim)
+        self.w2 = nn.Linear(dim, hidden_dim)
+        self.w3 = nn.Linear(hidden_dim, dim)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return self.w3(F.silu(self.w1(x)) * self.w2(x))
+
+
+class DINOv3RopeEmbed(nn.Module):
+    def __init__(self, periods: torch.Tensor | None = None):
+        super().__init__()
+        if periods is None:
+            periods = torch.ones(16)
+        self.register_buffer("periods", periods.float())
+
+    def _rotate_pair(
+        self,
+        first: torch.Tensor,
+        second: torch.Tensor,
+        angles: torch.Tensor,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        cos = torch.cos(angles)[None, None, :, :]
+        sin = torch.sin(angles)[None, None, :, :]
+        return first * cos - second * sin, first * sin + second * cos
+
+    def forward(
+        self,
+        tensor: torch.Tensor,
+        *,
+        num_prefix_tokens: int,
+        grid_size: tuple[int, int],
+    ) -> torch.Tensor:
+        head_dim = tensor.shape[-1]
+        period_count = int(self.periods.numel())
+        if head_dim != period_count * 4:
+            return tensor
+
+        patch_tokens = tensor[:, :, num_prefix_tokens:, :]
+        if patch_tokens.numel() == 0:
+            return tensor
+
+        height, width = grid_size
+        y_positions, x_positions = torch.meshgrid(
+            torch.arange(height, device=tensor.device, dtype=tensor.dtype),
+            torch.arange(width, device=tensor.device, dtype=tensor.dtype),
+            indexing="ij",
+        )
+        periods = self.periods.to(device=tensor.device, dtype=tensor.dtype)
+        y_angles = y_positions.reshape(-1, 1) / periods.reshape(1, -1)
+        x_angles = x_positions.reshape(-1, 1) / periods.reshape(1, -1)
+
+        chunks = patch_tokens.chunk(4, dim=-1)
+        y_first, y_second = self._rotate_pair(chunks[0], chunks[1], y_angles)
+        x_first, x_second = self._rotate_pair(chunks[2], chunks[3], x_angles)
+        rotated = torch.cat([y_first, y_second, x_first, x_second], dim=-1)
+        return torch.cat([tensor[:, :, :num_prefix_tokens, :], rotated], dim=2)
+
+
+class DINOv3Attention(nn.Module):
+    def __init__(self, dim: int, num_heads: int):
+        super().__init__()
+        self.num_heads = num_heads
+        self.head_dim = dim // num_heads
+        self.scale = self.head_dim ** -0.5
+        self.qkv = nn.Linear(dim, dim * 3, bias=False)
+        self.proj = nn.Linear(dim, dim)
+
+    def forward(
+        self,
+        x: torch.Tensor,
+        rope_embed: DINOv3RopeEmbed,
+        *,
+        num_prefix_tokens: int,
+        grid_size: tuple[int, int],
+    ) -> torch.Tensor:
+        batch_size, num_tokens, dim = x.shape
+        qkv = self.qkv(x)
+        qkv = qkv.reshape(batch_size, num_tokens, 3, self.num_heads, self.head_dim)
+        qkv = qkv.permute(2, 0, 3, 1, 4)
+        q, k, v = qkv[0], qkv[1], qkv[2]
+        q = rope_embed(q, num_prefix_tokens=num_prefix_tokens, grid_size=grid_size)
+        k = rope_embed(k, num_prefix_tokens=num_prefix_tokens, grid_size=grid_size)
+        attn = (q @ k.transpose(-2, -1)) * self.scale
+        attn = attn.softmax(dim=-1)
+        x = attn @ v
+        x = x.transpose(1, 2).reshape(batch_size, num_tokens, dim)
+        return self.proj(x)
+
+
+class DINOv3Block(nn.Module):
+    def __init__(self, dim: int, num_heads: int, mlp_hidden_dim: int):
+        super().__init__()
+        self.norm1 = nn.LayerNorm(dim)
+        self.attn = DINOv3Attention(dim, num_heads)
+        self.ls1 = DINOv3LayerScale(dim)
+        self.norm2 = nn.LayerNorm(dim)
+        self.mlp = DINOv3SwiGLUFFN(dim, mlp_hidden_dim)
+        self.ls2 = DINOv3LayerScale(dim)
+
+    def forward(
+        self,
+        x: torch.Tensor,
+        rope_embed: DINOv3RopeEmbed,
+        *,
+        num_prefix_tokens: int,
+        grid_size: tuple[int, int],
+    ) -> torch.Tensor:
+        x = x + self.ls1(
+            self.attn(
+                self.norm1(x),
+                rope_embed,
+                num_prefix_tokens=num_prefix_tokens,
+                grid_size=grid_size,
+            )
+        )
+        x = x + self.ls2(self.mlp(self.norm2(x)))
+        return x
+
+
+class DINOv3PatchEmbed(nn.Module):
+    def __init__(self, dim: int, patch_size: int):
+        super().__init__()
+        self.patch_size = patch_size
+        self.proj = nn.Conv2d(
+            3,
+            dim,
+            kernel_size=patch_size,
+            stride=patch_size,
+        )
+
+    def forward(self, x: torch.Tensor) -> tuple[torch.Tensor, tuple[int, int]]:
+        x = self.proj(x)
+        grid_size = (x.shape[-2], x.shape[-1])
+        x = x.flatten(2).transpose(1, 2)
+        return x, grid_size
+
+
+class DINOv3Backbone(nn.Module):
+    def __init__(
+        self,
+        *,
+        dim: int,
+        depth: int,
+        num_heads: int,
+        mlp_hidden_dim: int,
+        num_storage_tokens: int,
+        patch_size: int,
+        rope_periods: torch.Tensor,
+    ):
+        super().__init__()
+        self.cls_token = nn.Parameter(torch.zeros(1, 1, dim))
+        self.storage_tokens = nn.Parameter(torch.zeros(1, num_storage_tokens, dim))
+        self.mask_token = nn.Parameter(torch.zeros(1, dim))
+        self.patch_embed = DINOv3PatchEmbed(dim, patch_size)
+        self.blocks = nn.ModuleList(
+            [
+                DINOv3Block(dim, num_heads, mlp_hidden_dim)
+                for _ in range(depth)
+            ]
+        )
+        self.norm = nn.LayerNorm(dim)
+        self.local_cls_norm = nn.LayerNorm(dim)
+        self.rope_embed = DINOv3RopeEmbed(rope_periods)
+
+    @property
+    def num_prefix_tokens(self) -> int:
+        return 1 + self.storage_tokens.shape[1]
+
+    def forward_features(self, x: torch.Tensor) -> torch.Tensor:
+        patch_tokens, grid_size = self.patch_embed(x)
+        batch_size = patch_tokens.shape[0]
+        cls_tokens = self.cls_token.expand(batch_size, -1, -1)
+        storage_tokens = self.storage_tokens.expand(batch_size, -1, -1)
+        x = torch.cat([cls_tokens, storage_tokens, patch_tokens], dim=1)
+        for block in self.blocks:
+            x = block(
+                x,
+                self.rope_embed,
+                num_prefix_tokens=self.num_prefix_tokens,
+                grid_size=grid_size,
+            )
+        return self.norm(x)
+
+
+class LocalDINOv3BackboneFeatureExtractor(nn.Module):
+    """DINOv3 ViT-B feature extractor initialized from a local backbone checkpoint."""
+
+    def __init__(
+        self,
+        *,
+        checkpoint_path: str | Path,
+        feature_type: str = "local_cls",
+    ):
+        super().__init__()
+        if feature_type not in {"cls", "local_cls", "patch_mean", "cls_patch_mean"}:
+            raise ValueError(f"Unsupported feature_type: {feature_type}")
+
+        self.checkpoint_path = Path(checkpoint_path)
+        self.feature_type = feature_type
+        state_dict = _load_checkpoint_state_dict(self.checkpoint_path)
+        dim = int(state_dict["cls_token"].shape[-1])
+        depth = 1 + max(
+            int(key.split(".")[1])
+            for key in state_dict
+            if key.startswith("blocks.") and key.split(".")[1].isdigit()
+        )
+        mlp_hidden_dim = int(state_dict["blocks.0.mlp.w1.weight"].shape[0])
+        patch_size = int(state_dict["patch_embed.proj.weight"].shape[-1])
+        num_storage_tokens = int(state_dict["storage_tokens"].shape[1])
+        rope_periods = state_dict.get("rope_embed.periods", torch.ones(dim // 48))
+        self.model = DINOv3Backbone(
+            dim=dim,
+            depth=depth,
+            num_heads=max(dim // 64, 1),
+            mlp_hidden_dim=mlp_hidden_dim,
+            num_storage_tokens=num_storage_tokens,
+            patch_size=patch_size,
+            rope_periods=rope_periods,
+        )
+        incompatible = self.model.load_state_dict(state_dict, strict=False)
+        self.load_report = {
+            "checkpoint_path": str(self.checkpoint_path),
+            "raw_key_count": len(state_dict),
+            "loaded_key_count": len(state_dict)
+            - len(incompatible.unexpected_keys)
+            - len(incompatible.missing_keys),
+            "missing_key_count": len(incompatible.missing_keys),
+            "unexpected_key_count": len(incompatible.unexpected_keys),
+            "first_missing_keys": incompatible.missing_keys[:10],
+            "first_unexpected_keys": incompatible.unexpected_keys[:10],
+            "dim": dim,
+            "depth": depth,
+            "num_storage_tokens": num_storage_tokens,
+            "patch_size": patch_size,
+        }
+
+    def forward(self, images: torch.Tensor) -> torch.Tensor:
+        tokens = self.model.forward_features(images)
+        cls_token = tokens[:, 0, :]
+        patch_tokens = tokens[:, self.model.num_prefix_tokens :, :]
+        patch_mean = patch_tokens.mean(dim=1)
+        if self.feature_type == "local_cls":
+            return self.model.local_cls_norm(cls_token)
+        if self.feature_type == "cls":
+            return cls_token
+        if self.feature_type == "patch_mean":
+            return patch_mean
+        return torch.cat([cls_token, patch_mean], dim=1)
 
 
 class LocalCheckpointViTFeatureExtractor(nn.Module):
@@ -410,7 +689,7 @@ def write_predictions(
 def run_local_vit_knn(defaults: dict[str, object]) -> None:
     parser = argparse.ArgumentParser(
         description=(
-            "KNN classification demo with a local timm ViT checkpoint. "
+            "KNN classification demo with a local ViT/DINOv3 checkpoint. "
             "The train folder is used for 5-fold stratified CV, "
             "and the val folder is treated as the held-out 20% test set."
         )
@@ -419,10 +698,15 @@ def run_local_vit_knn(defaults: dict[str, object]) -> None:
     parser.add_argument("--save-dir", type=Path, default=defaults["save_dir"])
     parser.add_argument("--checkpoint-path", type=Path, default=defaults["checkpoint_path"])
     parser.add_argument("--checkpoint-name", default=defaults["checkpoint_name"])
+    parser.add_argument(
+        "--extractor-kind",
+        choices=("timm_vit", "dinov3"),
+        default=defaults.get("extractor_kind", "timm_vit"),
+    )
     parser.add_argument("--model-name", default=defaults.get("model_name", DEFAULT_MODEL_NAME))
     parser.add_argument(
         "--feature-type",
-        choices=("cls", "mean"),
+        choices=("cls", "mean", "local_cls", "patch_mean", "cls_patch_mean"),
         default=defaults.get("feature_type", "cls"),
     )
     parser.add_argument("--img-size", type=int, default=defaults.get("img_size", DEFAULT_IMG_SIZE))
@@ -446,6 +730,11 @@ def run_local_vit_knn(defaults: dict[str, object]) -> None:
     args.save_dir.mkdir(parents=True, exist_ok=True)
     if not args.skip_tsne:
         ensure_tsne_dependencies()
+    feature_backbone_name = (
+        "local_dinov3_backbone"
+        if args.extractor_kind == "dinov3"
+        else "local_timm_vit_checkpoint"
+    )
 
     train_dir = args.dataset_dir / "train"
     test_dir = args.dataset_dir / "val"
@@ -474,18 +763,25 @@ def run_local_vit_knn(defaults: dict[str, object]) -> None:
     print(f"Held-out test set: {len(test_dataset)} images")
     print(f"Classes ({len(class_names)}): {', '.join(class_names)}")
     print(f"Checkpoint: {args.checkpoint_path}")
+    print(f"Extractor kind: {args.extractor_kind}")
     print(f"timm model: {args.model_name}")
     print(f"Image size: {args.img_size}")
     print(f"Feature type: {args.feature_type}")
     print(f"Device: {device}")
     print("KNN uses deterministic resize + ImageNet normalization without random augmentation.")
 
-    feature_extractor = LocalCheckpointViTFeatureExtractor(
-        checkpoint_path=args.checkpoint_path,
-        model_name=args.model_name,
-        img_size=args.img_size,
-        feature_type=args.feature_type,
-    ).to(device)
+    if args.extractor_kind == "dinov3":
+        feature_extractor = LocalDINOv3BackboneFeatureExtractor(
+            checkpoint_path=args.checkpoint_path,
+            feature_type=args.feature_type,
+        ).to(device)
+    else:
+        feature_extractor = LocalCheckpointViTFeatureExtractor(
+            checkpoint_path=args.checkpoint_path,
+            model_name=args.model_name,
+            img_size=args.img_size,
+            feature_type=args.feature_type,
+        ).to(device)
     feature_extractor.eval()
     print("Checkpoint load report:")
     print(json.dumps(feature_extractor.load_report, indent=2))
@@ -629,7 +925,8 @@ def run_local_vit_knn(defaults: dict[str, object]) -> None:
             {
                 "task": "classification",
                 "head_name": HEAD_KNN,
-                "feature_backbone": "local_timm_vit_checkpoint",
+                "feature_backbone": feature_backbone_name,
+                "extractor_kind": args.extractor_kind,
                 "checkpoint_name": args.checkpoint_name,
                 "checkpoint_path": str(args.checkpoint_path),
                 "dataset_dir": str(args.dataset_dir),
@@ -658,7 +955,8 @@ def run_local_vit_knn(defaults: dict[str, object]) -> None:
         {
             "task": "classification",
             "head_name": HEAD_KNN,
-            "feature_backbone": "local_timm_vit_checkpoint",
+            "feature_backbone": feature_backbone_name,
+            "extractor_kind": args.extractor_kind,
             "checkpoint_name": args.checkpoint_name,
             "checkpoint_path": str(args.checkpoint_path),
             "model_name": args.model_name,

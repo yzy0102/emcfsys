@@ -31,8 +31,8 @@ from emcfsys.utils.classification_tasks import (
 from knn_tsne_utils import ensure_tsne_dependencies, run_val_tsne
 
 
-DEFAULT_DATASET_DIR = REPO_ROOT / "datasets" / "OrgClassifyNew"
-DEFAULT_SAVE_DIR = REPO_ROOT / "save_logs" / "OrgClassifyNew_knn_cv"
+DEFAULT_DATASET_DIR = REPO_ROOT / "datasets" / "OrganelleClassifyDataset"
+DEFAULT_SAVE_DIR = REPO_ROOT / "save_logs" / "EMCellFound_KNN"
 
 
 def set_seed(seed: int) -> None:

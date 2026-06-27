@@ -31,8 +31,8 @@ from emcfsys.utils.classification_tasks import HEAD_KNN  # noqa: E402
 from knn_tsne_utils import ensure_tsne_dependencies, run_val_tsne  # noqa: E402
 
 
-DEFAULT_DATASET_DIR = REPO_ROOT / "datasets" / "OrgClassifyNew"
-DEFAULT_SAVE_DIR = REPO_ROOT / "save_logs" / "OrgClassifyNew_dinov3_vitb16_knn_cv"
+DEFAULT_DATASET_DIR = REPO_ROOT / "datasets" / "OrganelleClassifyDataset"
+DEFAULT_SAVE_DIR = REPO_ROOT / "save_logs" / "facebook_dinov3_vitb16_knn"
 DEFAULT_MODEL_NAME = "facebook/dinov3-vitb16-pretrain-lvd1689m"
 DEFAULT_MEAN = (0.485, 0.456, 0.406)
 DEFAULT_STD = (0.229, 0.224, 0.225)

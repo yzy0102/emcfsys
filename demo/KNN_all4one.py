@@ -8,6 +8,6 @@ if __name__ == "__main__":
         {
             "checkpoint_name": "all4one",
             "checkpoint_path": REPO_ROOT / "save_logs" / "all4one.pth",
-            "save_dir": REPO_ROOT / "save_logs" / "OrgClassifyNew_all4one_knn_cv",
+            "save_dir": REPO_ROOT / "save_logs" / "Pretrained_all4one_Knn",
         }
     )

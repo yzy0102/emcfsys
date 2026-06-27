@@ -216,3 +216,5 @@ __marimo__/
 /save_logs/
 
 pypi_token.txt
+
+/demo/KNN_ImageNet_hugg.py
