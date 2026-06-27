@@ -403,12 +403,12 @@ def main() -> None:
         ensure_tsne_dependencies()
 
     train_dir = args.dataset_dir / "train"
-    test_dir = args.dataset_dir / "val"
+    test_dir = args.dataset_dir / "test"
     if not train_dir.exists() or not test_dir.exists():
         raise FileNotFoundError(
             "Expected classification dataset layout: dataset/train/class_x/*.tif "
-            "and dataset/val/class_x/*.tif. "
-            f"Missing train or val under: {args.dataset_dir}"
+            "and dataset/test/class_x/*.tif. "
+            f"Missing train or test under: {args.dataset_dir}"
         )
 
     image_processor = load_image_processor(
