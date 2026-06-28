@@ -150,6 +150,16 @@ class DINOv3SwiGLUFFN(nn.Module):
         return self.w3(F.silu(self.w1(x)) * self.w2(x))
 
 
+class DINOv3MLP(nn.Module):
+    def __init__(self, dim: int, hidden_dim: int):
+        super().__init__()
+        self.fc1 = nn.Linear(dim, hidden_dim)
+        self.fc2 = nn.Linear(hidden_dim, dim)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return self.fc2(F.gelu(self.fc1(x)))
+
+
 class DINOv3RopeEmbed(nn.Module):
     def __init__(self, periods: torch.Tensor | None = None):
         super().__init__()
@@ -201,12 +211,21 @@ class DINOv3RopeEmbed(nn.Module):
 
 
 class DINOv3Attention(nn.Module):
-    def __init__(self, dim: int, num_heads: int):
+    def __init__(
+        self,
+        dim: int,
+        num_heads: int,
+        *,
+        qkv_bias: bool,
+        qkv_bias_mask: bool,
+    ):
         super().__init__()
         self.num_heads = num_heads
         self.head_dim = dim // num_heads
         self.scale = self.head_dim ** -0.5
-        self.qkv = nn.Linear(dim, dim * 3, bias=False)
+        self.qkv = nn.Linear(dim, dim * 3, bias=qkv_bias)
+        if qkv_bias_mask:
+            self.qkv.register_buffer("bias_mask", torch.zeros(dim * 3))
         self.proj = nn.Linear(dim, dim)
 
     def forward(
@@ -232,13 +251,31 @@ class DINOv3Attention(nn.Module):
 
 
 class DINOv3Block(nn.Module):
-    def __init__(self, dim: int, num_heads: int, mlp_hidden_dim: int):
+    def __init__(
+        self,
+        dim: int,
+        num_heads: int,
+        mlp_hidden_dim: int,
+        mlp_kind: str,
+        qkv_bias: bool,
+        qkv_bias_mask: bool,
+    ):
         super().__init__()
         self.norm1 = nn.LayerNorm(dim)
-        self.attn = DINOv3Attention(dim, num_heads)
+        self.attn = DINOv3Attention(
+            dim,
+            num_heads,
+            qkv_bias=qkv_bias,
+            qkv_bias_mask=qkv_bias_mask,
+        )
         self.ls1 = DINOv3LayerScale(dim)
         self.norm2 = nn.LayerNorm(dim)
-        self.mlp = DINOv3SwiGLUFFN(dim, mlp_hidden_dim)
+        if mlp_kind == "swiglu":
+            self.mlp = DINOv3SwiGLUFFN(dim, mlp_hidden_dim)
+        elif mlp_kind == "gelu":
+            self.mlp = DINOv3MLP(dim, mlp_hidden_dim)
+        else:
+            raise ValueError(f"Unsupported DINOv3 MLP kind: {mlp_kind}")
         self.ls2 = DINOv3LayerScale(dim)
 
     def forward(
@@ -287,6 +324,9 @@ class DINOv3Backbone(nn.Module):
         depth: int,
         num_heads: int,
         mlp_hidden_dim: int,
+        mlp_kind: str,
+        qkv_bias: bool,
+        qkv_bias_mask: bool,
         num_storage_tokens: int,
         patch_size: int,
         rope_periods: torch.Tensor,
@@ -298,7 +338,14 @@ class DINOv3Backbone(nn.Module):
         self.patch_embed = DINOv3PatchEmbed(dim, patch_size)
         self.blocks = nn.ModuleList(
             [
-                DINOv3Block(dim, num_heads, mlp_hidden_dim)
+                DINOv3Block(
+                    dim,
+                    num_heads,
+                    mlp_hidden_dim,
+                    mlp_kind,
+                    qkv_bias,
+                    qkv_bias_mask,
+                )
                 for _ in range(depth)
             ]
         )
@@ -348,20 +395,40 @@ class LocalDINOv3BackboneFeatureExtractor(nn.Module):
             for key in state_dict
             if key.startswith("blocks.") and key.split(".")[1].isdigit()
         )
-        mlp_hidden_dim = int(state_dict["blocks.0.mlp.w1.weight"].shape[0])
+        if "blocks.0.mlp.w1.weight" in state_dict:
+            mlp_kind = "swiglu"
+            mlp_hidden_dim = int(state_dict["blocks.0.mlp.w1.weight"].shape[0])
+        elif "blocks.0.mlp.fc1.weight" in state_dict:
+            mlp_kind = "gelu"
+            mlp_hidden_dim = int(state_dict["blocks.0.mlp.fc1.weight"].shape[0])
+        else:
+            raise ValueError(
+                "Unsupported DINOv3 MLP checkpoint format. Expected either "
+                "blocks.0.mlp.w1.weight or blocks.0.mlp.fc1.weight."
+            )
         patch_size = int(state_dict["patch_embed.proj.weight"].shape[-1])
         num_storage_tokens = int(state_dict["storage_tokens"].shape[1])
         rope_periods = state_dict.get("rope_embed.periods", torch.ones(dim // 48))
+        qkv_bias = "blocks.0.attn.qkv.bias" in state_dict
+        qkv_bias_mask = "blocks.0.attn.qkv.bias_mask" in state_dict
         self.model = DINOv3Backbone(
             dim=dim,
             depth=depth,
             num_heads=max(dim // 64, 1),
             mlp_hidden_dim=mlp_hidden_dim,
+            mlp_kind=mlp_kind,
+            qkv_bias=qkv_bias,
+            qkv_bias_mask=qkv_bias_mask,
             num_storage_tokens=num_storage_tokens,
             patch_size=patch_size,
             rope_periods=rope_periods,
         )
-        incompatible = self.model.load_state_dict(state_dict, strict=False)
+        load_state = dict(state_dict)
+        if "local_cls_norm.weight" not in load_state:
+            load_state["local_cls_norm.weight"] = load_state["norm.weight"].clone()
+        if "local_cls_norm.bias" not in load_state:
+            load_state["local_cls_norm.bias"] = load_state["norm.bias"].clone()
+        incompatible = self.model.load_state_dict(load_state, strict=False)
         self.load_report = {
             "checkpoint_path": str(self.checkpoint_path),
             "raw_key_count": len(state_dict),
@@ -374,6 +441,9 @@ class LocalDINOv3BackboneFeatureExtractor(nn.Module):
             "first_unexpected_keys": incompatible.unexpected_keys[:10],
             "dim": dim,
             "depth": depth,
+            "mlp_kind": mlp_kind,
+            "qkv_bias": qkv_bias,
+            "qkv_bias_mask": qkv_bias_mask,
             "num_storage_tokens": num_storage_tokens,
             "patch_size": patch_size,
         }

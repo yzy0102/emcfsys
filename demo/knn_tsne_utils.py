@@ -126,7 +126,7 @@ def _add_short_axis_ticks(ax) -> None:
         direction="out",
         length=3.5,
         width=1.1,
-        labelsize=8,
+        labelsize=16,
     )
 
 
