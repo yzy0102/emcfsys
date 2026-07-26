@@ -29,7 +29,6 @@ from emcfsys.utils.classification_tasks import (  # noqa: E402
     HEAD_KNN,
     _classification_transform,
 )
-from knn_tsne_utils import ensure_tsne_dependencies, run_val_tsne  # noqa: E402
 
 
 DEFAULT_DATASET_DIR = REPO_ROOT / "datasets" / "OrganelleClassifyDataset"
@@ -322,8 +321,6 @@ def main() -> None:
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--device", default="auto")
     parser.add_argument("--no-pretrained", action="store_true")
-    parser.add_argument("--skip-tsne", action="store_true")
-    parser.add_argument("--tsne-perplexity", type=float, default=None)
     args = parser.parse_args()
 
     set_seed(args.seed)
@@ -333,8 +330,6 @@ def main() -> None:
         else ("cpu" if args.device == "auto" else args.device)
     )
     args.save_dir.mkdir(parents=True, exist_ok=True)
-    if not args.skip_tsne:
-        ensure_tsne_dependencies()
 
     train_dir = args.dataset_dir / "train"
     test_dir = args.dataset_dir / "test"
@@ -462,21 +457,6 @@ def main() -> None:
         f"accuracy={test_metrics['accuracy']:.4f}, "
         f"macro_f1={test_metrics['macro_f1']:.4f}"
     )
-    tsne_artifacts = None
-    if not args.skip_tsne:
-        print("\nRunning t-SNE visualization on the held-out val/test set...")
-        tsne_artifacts = run_val_tsne(
-            feature_extractor=final_model.feature_extractor,
-            dataset=test_dataset,
-            class_names=class_names,
-            batch_size=args.batch_size,
-            device=device,
-            num_workers=args.num_workers,
-            output_dir=args.save_dir,
-            random_state=args.seed,
-            perplexity=args.tsne_perplexity,
-        )
-        print(f"Saved t-SNE plot: {tsne_artifacts['figures']['png']}")
 
     fold_metrics_csv = args.save_dir / "fold_metrics.csv"
     cv_metrics_json = args.save_dir / "cv_metrics.json"
@@ -529,7 +509,6 @@ def main() -> None:
                 "seed": args.seed,
                 "device": str(device),
                 "class_names": class_names,
-                "tsne_artifacts": tsne_artifacts,
             },
             indent=2,
         ),
@@ -550,7 +529,6 @@ def main() -> None:
             "best_accuracy": test_metrics["accuracy"],
             "cv_summary": cv_summary,
             "test_metrics": test_metrics,
-            "tsne_artifacts": tsne_artifacts,
             "state_dict": final_model.state_dict(),
         },
         checkpoint_path,
@@ -560,8 +538,6 @@ def main() -> None:
     print(f"Saved CV metrics: {cv_metrics_json}")
     print(f"Saved test metrics: {test_metrics_json}")
     print(f"Saved test predictions: {test_predictions_csv}")
-    if tsne_artifacts is not None:
-        print(f"Saved t-SNE CSV: {tsne_artifacts['csv']}")
     print(f"Saved final KNN checkpoint: {checkpoint_path}")
 
 
