@@ -233,6 +233,37 @@ class Resize:
         return results
 
 
+class RandomResizeKeepRatio:
+    """Randomly resize an image/mask pair while preserving aspect ratio."""
+
+    def __init__(self, scale=(768, 512), ratio_range=(0.5, 2.0)):
+        self.scale = (int(scale[0]), int(scale[1]))
+        self.ratio_range = ratio_range
+
+    def __call__(self, results):
+        image = results["img"]
+        mask = results["mask"]
+        height, width = image.shape[:2]
+        ratio = random.uniform(*self.ratio_range)
+        target_width = max(1, int(round(self.scale[0] * ratio)))
+        target_height = max(1, int(round(self.scale[1] * ratio)))
+
+        resize_ratio = min(
+            target_width / max(width, 1),
+            target_height / max(height, 1),
+        )
+        target_width = max(1, int(round(width * resize_ratio)))
+        target_height = max(1, int(round(height * resize_ratio)))
+
+        results["img"] = cv2.resize(
+            image, (target_width, target_height), interpolation=cv2.INTER_LINEAR
+        )
+        results["mask"] = cv2.resize(
+            mask, (target_width, target_height), interpolation=cv2.INTER_NEAREST
+        )
+        return results
+
+
 class RandomScale:
     def __init__(self, scale_range=(0.5, 2.0)):
         self.scale_range = scale_range
@@ -289,6 +320,97 @@ class RandomCrop:
         results["mask"] = mask_crop
         return results
     
+class RandomCropWithCategoryRatio:
+    """Random crop with mmseg-style dominant-category rejection."""
+
+    def __init__(
+        self,
+        crop_size,
+        cat_max_ratio=0.75,
+        ignore_index=None,
+        max_attempts=10,
+        pad_val=0,
+        seg_pad_val=0,
+    ):
+        self.ch, self.cw = crop_size
+        self.cat_max_ratio = float(cat_max_ratio)
+        self.ignore_index = ignore_index
+        self.max_attempts = max(1, int(max_attempts))
+        self.pad_val = pad_val
+        self.seg_pad_val = seg_pad_val
+
+    def _pad_to_crop_size(self, image, mask):
+        height, width = image.shape[:2]
+        pad_h = max(self.ch - height, 0)
+        pad_w = max(self.cw - width, 0)
+        if pad_h == 0 and pad_w == 0:
+            return image, mask
+        image = cv2.copyMakeBorder(
+            image, 0, pad_h, 0, pad_w, cv2.BORDER_CONSTANT, value=self.pad_val
+        )
+        mask = cv2.copyMakeBorder(
+            mask, 0, pad_h, 0, pad_w, cv2.BORDER_CONSTANT, value=self.seg_pad_val
+        )
+        return image, mask
+
+    def _valid_category_ratio(self, mask):
+        if self.cat_max_ratio >= 1.0:
+            return True
+        valid = mask
+        if self.ignore_index is not None:
+            valid = valid[valid != self.ignore_index]
+        if valid.size == 0:
+            return True
+        _, counts = np.unique(valid, return_counts=True)
+        return float(counts.max()) / float(valid.size) <= self.cat_max_ratio
+
+    def __call__(self, results):
+        image, mask = self._pad_to_crop_size(results["img"], results["mask"])
+        height, width = image.shape[:2]
+        selected_image = None
+        selected_mask = None
+
+        for _ in range(self.max_attempts):
+            top = random.randint(0, height - self.ch)
+            left = random.randint(0, width - self.cw)
+            selected_image = image[top:top + self.ch, left:left + self.cw]
+            selected_mask = mask[top:top + self.ch, left:left + self.cw]
+            if self._valid_category_ratio(selected_mask):
+                break
+
+        results["img"] = selected_image
+        results["mask"] = selected_mask
+        return results
+
+
+class SegmentationPad:
+    """Pad image/mask to a fixed size using separate image and mask values."""
+
+    def __init__(self, size, pad_val=0, seg_pad_val=0):
+        self.size = size
+        self.pad_val = pad_val
+        self.seg_pad_val = seg_pad_val
+
+    def __call__(self, results):
+        image, mask = results["img"], results["mask"]
+        height, width = image.shape[:2]
+        pad_h = max(self.size[0] - height, 0)
+        pad_w = max(self.size[1] - width, 0)
+        results["img"] = cv2.copyMakeBorder(
+            image, 0, pad_h, 0, pad_w, cv2.BORDER_CONSTANT, value=self.pad_val
+        )
+        results["mask"] = cv2.copyMakeBorder(
+            mask,
+            0,
+            pad_h,
+            0,
+            pad_w,
+            cv2.BORDER_CONSTANT,
+            value=self.seg_pad_val,
+        )
+        return results
+
+
 class Pad:
     def __init__(self, size):
         self.size = size

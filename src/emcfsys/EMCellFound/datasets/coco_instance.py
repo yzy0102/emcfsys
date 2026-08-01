@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 from typing import Callable
 
+import cv2
 import numpy as np
 import torch
 from PIL import Image as PILImage
@@ -277,6 +278,263 @@ class InstanceSegmentationAugmentation:
         return image
 
 
+class RTMDetInstanceSegmentationAugmentation(InstanceSegmentationAugmentation):
+    """RTMDet/YOLOX-style augmentation with synchronized instance targets.
+
+    The pipeline follows ``rtmdet_tiny_8xb32-300e_coco.py``:
+    optional Mosaic and MixUp, keep-ratio random resize, crop to the model
+    size, HSV jitter, horizontal flip, and padding with value 114.
+    """
+
+    def __init__(
+        self,
+        *,
+        target_size: int | tuple[int, int] = 512,
+        random_resize_scale: tuple[int, int] | None = None,
+        random_resize_ratio_range: tuple[float, float] = (0.5, 2.0),
+        mosaic_prob: float = 1.0,
+        mixup_prob: float = 0.5,
+        hsv_hgain: float = 5.0,
+        hsv_sgain: float = 30.0,
+        hsv_vgain: float = 30.0,
+        pad_value: int = 114,
+        **kwargs,
+    ):
+        super().__init__(**kwargs)
+        if isinstance(target_size, int):
+            target_size = (target_size, target_size)
+        self.target_size = (int(target_size[0]), int(target_size[1]))
+        self.random_resize_scale = random_resize_scale or (
+            self.target_size[1] * 2,
+            self.target_size[0] * 2,
+        )
+        self.random_resize_ratio_range = random_resize_ratio_range
+        self.mosaic_prob = float(mosaic_prob)
+        self.mixup_prob = float(mixup_prob)
+        self.hsv_hgain = float(hsv_hgain)
+        self.hsv_sgain = float(hsv_sgain)
+        self.hsv_vgain = float(hsv_vgain)
+        self.pad_value = int(pad_value)
+        self._sample_provider = None
+        self._sample_count = 0
+
+    def set_sample_provider(self, provider, sample_count: int):
+        """Attach a raw sample loader used by Mosaic and MixUp."""
+
+        self._sample_provider = provider
+        self._sample_count = max(0, int(sample_count))
+
+    def __call__(self, image: PILImage.Image, target: dict):
+        image = image.convert("RGB")
+        target = _clone_target(target)
+
+        if self._sample_provider is not None and self._should_apply(self.mosaic_prob):
+            image, target = self._mosaic(image, target)
+
+        image, target = self._random_resize(image, target)
+        image, target = self._crop_to_target(image, target)
+        image = self._yolox_hsv_random_aug(image)
+
+        if self._should_apply(self.horizontal_flip_prob):
+            image, target = self._flip_horizontal(image, target)
+        if self._should_apply(self.vertical_flip_prob):
+            image, target = self._flip_vertical(image, target)
+        if self._should_apply(self.rotate90_prob):
+            image, target = self._rotate90(image, target)
+
+        if self._sample_provider is not None and self._should_apply(self.mixup_prob):
+            image, target = self._mixup(image, target)
+
+        image = self._photometric(image)
+        image, target = self._pad_to_target(image, target)
+        return _image_to_tensor(image), target
+
+    def _resize_pair(self, image, target, size):
+        target_h, target_w = size
+        old_w, old_h = image.size
+        if (old_h, old_w) == (target_h, target_w):
+            return image, target
+
+        image = image.resize((target_w, target_h), PILImage.Resampling.BILINEAR)
+        masks = target["masks"].cpu().numpy()
+        resized_masks = [_resize_mask(mask, (target_h, target_w)) for mask in masks]
+        masks = (
+            np.stack(resized_masks, axis=0)
+            if resized_masks
+            else np.zeros((0, target_h, target_w), dtype=np.uint8)
+        )
+        target = self._set_masks(target, masks, (target_h, target_w))
+        return image, target
+
+    def _random_resize(self, image, target):
+        width, height = image.size
+        ratio = float(self.rng.uniform(*self.random_resize_ratio_range))
+        target_w = max(1, int(round(self.random_resize_scale[0] * ratio)))
+        target_h = max(1, int(round(self.random_resize_scale[1] * ratio)))
+        resize_ratio = min(target_w / max(width, 1), target_h / max(height, 1))
+        resized_w = max(1, int(round(width * resize_ratio)))
+        resized_h = max(1, int(round(height * resize_ratio)))
+        return self._resize_pair(image, target, (resized_h, resized_w))
+
+    def _crop_to_target(self, image, target):
+        target_h, target_w = self.target_size
+        width, height = image.size
+        masks = target["masks"].cpu().numpy()
+
+        pad_h = max(target_h - height, 0)
+        pad_w = max(target_w - width, 0)
+        if pad_h or pad_w:
+            array = np.asarray(image)
+            array = cv2.copyMakeBorder(
+                array,
+                0,
+                pad_h,
+                0,
+                pad_w,
+                cv2.BORDER_CONSTANT,
+                value=(self.pad_value, self.pad_value, self.pad_value),
+            )
+            padded_masks = [
+                np.pad(mask, ((0, pad_h), (0, pad_w)), mode="constant")
+                for mask in masks
+            ]
+            masks = (
+                np.stack(padded_masks, axis=0)
+                if padded_masks
+                else np.zeros((0, target_h, target_w), dtype=np.uint8)
+            )
+            image = PILImage.fromarray(np.ascontiguousarray(array))
+            target = self._set_masks(target, masks, (image.height, image.width))
+            width, height = image.size
+
+        if width <= target_w and height <= target_h:
+            return image, target
+
+        random_crop = self._should_apply(self.random_crop_prob)
+        max_left = width - target_w
+        max_top = height - target_h
+        has_instances = target["masks"].numel() > 0 and target["masks"].any()
+        selected = None
+        for _ in range(10):
+            left = int(self.rng.integers(0, max_left + 1)) if random_crop else max_left // 2
+            top = int(self.rng.integers(0, max_top + 1)) if random_crop else max_top // 2
+            cropped_masks = target["masks"].cpu().numpy()[:, top:top + target_h, left:left + target_w]
+            if not has_instances or cropped_masks.any() or not random_crop:
+                selected = (left, top, cropped_masks)
+                break
+        if selected is None:
+            selected = (max_left // 2, max_top // 2, target["masks"].cpu().numpy()[:, max_top // 2:max_top // 2 + target_h, max_left // 2:max_left // 2 + target_w])
+
+        left, top, cropped_masks = selected
+        image = image.crop((left, top, left + target_w, top + target_h))
+        target = self._set_masks(target, cropped_masks, (target_h, target_w))
+        return image, target
+
+    def _pad_to_target(self, image, target):
+        target_h, target_w = self.target_size
+        width, height = image.size
+        if (height, width) == (target_h, target_w):
+            return image, target
+        if height > target_h or width > target_w:
+            return self._crop_to_target(image, target)
+
+        array = cv2.copyMakeBorder(
+            np.asarray(image),
+            0,
+            target_h - height,
+            0,
+            target_w - width,
+            cv2.BORDER_CONSTANT,
+            value=(self.pad_value, self.pad_value, self.pad_value),
+        )
+        masks = target["masks"].cpu().numpy()
+        padded_masks = [
+            np.pad(mask, ((0, target_h - height), (0, target_w - width)), mode="constant")
+            for mask in masks
+        ]
+        masks = (
+            np.stack(padded_masks, axis=0)
+            if padded_masks
+            else np.zeros((0, target_h, target_w), dtype=np.uint8)
+        )
+        image = PILImage.fromarray(np.ascontiguousarray(array))
+        target = self._set_masks(target, masks, (target_h, target_w))
+        return image, target
+
+    def _yolox_hsv_random_aug(self, image):
+        array = np.asarray(image.convert("RGB"))
+        hsv = cv2.cvtColor(array, cv2.COLOR_RGB2HSV).astype(np.float32)
+        deltas = self.rng.uniform(-1.0, 1.0, size=3) * np.array(
+            [self.hsv_hgain, self.hsv_sgain, self.hsv_vgain], dtype=np.float32
+        )
+        hsv[..., 0] = (hsv[..., 0] + deltas[0]) % 180.0
+        hsv[..., 1] = np.clip(hsv[..., 1] + deltas[1], 0.0, 255.0)
+        hsv[..., 2] = np.clip(hsv[..., 2] + deltas[2], 0.0, 255.0)
+        array = cv2.cvtColor(hsv.astype(np.uint8), cv2.COLOR_HSV2RGB)
+        return PILImage.fromarray(np.ascontiguousarray(array))
+
+    def _mosaic(self, image, target):
+        target_h, target_w = self.target_size
+        samples = [(image, target)]
+        for _ in range(3):
+            index = int(self.rng.integers(0, self._sample_count))
+            samples.append(self._sample_provider(index))
+
+        canvas = np.full(
+            (target_h * 2, target_w * 2, 3),
+            self.pad_value,
+            dtype=np.uint8,
+        )
+        merged_masks = []
+        merged_fields = {key: [] for key in ("labels", "iscrowd", "annotation_ids")}
+        for position, (sample_image, sample_target) in enumerate(samples):
+            sample_image, sample_target = self._resize_pair(
+                sample_image.convert("RGB"),
+                _clone_target(sample_target),
+                self.target_size,
+            )
+            row, column = divmod(position, 2)
+            y0, x0 = row * target_h, column * target_w
+            canvas[y0:y0 + target_h, x0:x0 + target_w] = np.asarray(sample_image)
+            for mask in sample_target["masks"].cpu().numpy():
+                full_mask = np.zeros((target_h * 2, target_w * 2), dtype=np.uint8)
+                full_mask[y0:y0 + target_h, x0:x0 + target_w] = mask
+                merged_masks.append(full_mask)
+            for key in merged_fields:
+                merged_fields[key].append(sample_target[key])
+
+        merged = _clone_target(target)
+        masks = (
+            np.stack(merged_masks, axis=0)
+            if merged_masks
+            else np.zeros((0, target_h * 2, target_w * 2), dtype=np.uint8)
+        )
+        merged["masks"] = torch.from_numpy(masks).to(torch.uint8)
+        for key, values in merged_fields.items():
+            merged[key] = torch.cat(values, dim=0) if values else torch.empty(0, dtype=torch.long)
+        return PILImage.fromarray(canvas), _recompute_target_boxes_from_masks(
+            merged, (target_h * 2, target_w * 2)
+        )
+
+    def _mixup(self, image, target):
+        index = int(self.rng.integers(0, self._sample_count))
+        other_image, other_target = self._sample_provider(index)
+        other_image, other_target = self._resize_pair(
+            other_image.convert("RGB"),
+            _clone_target(other_target),
+            self.target_size,
+        )
+        current = np.asarray(image, dtype=np.float32)
+        other = np.asarray(other_image, dtype=np.float32)
+        image = PILImage.fromarray(np.clip(0.5 * current + 0.5 * other, 0, 255).astype(np.uint8))
+        merged = _clone_target(target)
+        merged["masks"] = torch.cat((target["masks"], other_target["masks"]), dim=0)
+        for key in ("labels", "iscrowd", "annotation_ids"):
+            merged[key] = torch.cat((target[key], other_target[key]), dim=0)
+        merged = _recompute_target_boxes_from_masks(merged, self.target_size)
+        return image, merged
+
+
 class COCOInstanceSegmentationDataset(Dataset):
     """COCO-format instance segmentation dataset.
 
@@ -333,6 +591,8 @@ class COCOInstanceSegmentationDataset(Dataset):
             raise ValueError(
                 f"No image files referenced by COCO annotations in: {self.image_dir}"
             )
+        if hasattr(self.transforms, "set_sample_provider"):
+            self.transforms.set_sample_provider(self._load_raw, len(self.image_ids))
 
     def __len__(self):
         return len(self.image_ids)
@@ -425,14 +685,18 @@ class COCOInstanceSegmentationDataset(Dataset):
         target["size"] = torch.tensor([target_h, target_w], dtype=torch.long)
         return image, target
 
-    def __getitem__(self, index: int):
+    def _load_raw(self, index: int):
+        index = int(index) % len(self.image_ids)
         image_id = self.image_ids[index]
         image_info = self.images[image_id]
         image = self._load_image(image_info)
         width, height = image.size
         target = self._build_target(image_id, height, width)
         image, target = self._resize(image, target)
+        return image, target
 
+    def __getitem__(self, index: int):
+        image, target = self._load_raw(index)
         if self.transforms is not None:
             return self.transforms(image, target)
 

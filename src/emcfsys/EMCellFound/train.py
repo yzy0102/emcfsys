@@ -22,7 +22,7 @@ from .transforms.transforms import Compose, LoadImage, LoadMask, PhotometricDist
 import albumentations as A
 from PIL import Image
 from .datasets.segmentation2D import SegmentationDataset
-from .transforms.augmentations import get_train_transform
+from .transforms.augmentations import get_train_transform, get_val_transform
 import gc
 from .models.PSPNet import PSPNet
 from .models.model_factory import get_model
@@ -51,14 +51,35 @@ def train_loop(images_dir, masks_dir,
     if device is None:
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         
-    # transforms pipline
-    pipeline = get_train_transform(target_size)
-    dataset = SegmentationDataset(images_dir, masks_dir, transforms = pipeline)
-    
-    val_size = int(0.2 * len(dataset))
-    train_size = len(dataset) - val_size
-    train_dataset, val_dataset = torch.utils.data.random_split(dataset, [train_size, val_size])
-    dataset = train_dataset
+    # Keep the split indices shared, but use separate train/validation transforms.
+    # This prevents random augmentation from leaking into validation metrics.
+    base_dataset = SegmentationDataset(images_dir, masks_dir, transforms=None)
+    val_size = int(0.2 * len(base_dataset))
+    if len(base_dataset) >= 2:
+        val_size = max(1, val_size)
+    val_size = min(val_size, max(len(base_dataset) - 1, 0))
+    train_size = len(base_dataset) - val_size
+
+    split_generator = torch.Generator().manual_seed(42)
+    permutation = torch.randperm(len(base_dataset), generator=split_generator).tolist()
+    train_indices = permutation[:train_size]
+    val_indices = permutation[train_size:]
+
+    train_dataset_source = SegmentationDataset(
+        images_dir,
+        masks_dir,
+        transforms=get_train_transform(
+            target_size,
+            ignore_index=ignore_index if ignore_index >= 0 else None,
+        ),
+    )
+    val_dataset_source = SegmentationDataset(
+        images_dir,
+        masks_dir,
+        transforms=get_val_transform(target_size),
+    )
+    train_dataset = torch.utils.data.Subset(train_dataset_source, train_indices)
+    val_dataset = torch.utils.data.Subset(val_dataset_source, val_indices)
     train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=0)
     val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False, num_workers=0)
     

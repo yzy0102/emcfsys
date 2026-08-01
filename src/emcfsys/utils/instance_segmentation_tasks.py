@@ -13,7 +13,7 @@ from torch.utils.data import DataLoader, Subset
 
 from ..EMCellFound.datasets import (
     COCOInstanceSegmentationDataset,
-    InstanceSegmentationAugmentation,
+    RTMDetInstanceSegmentationAugmentation,
 )
 from ..EMCellFound.models.RTMInstanceSeg import (
     EMCellFoundRTMInstanceSegmenter,
@@ -40,6 +40,12 @@ DEFAULT_INSTANCE_AUGMENTATION = {
     "aug_gaussian_noise_std": 0.0,
     "aug_random_crop_prob": 0.3,
     "aug_random_crop_min_scale": 0.7,
+    "aug_mosaic_prob": 1.0,
+    "aug_mixup_prob": 0.5,
+    "aug_hsv_hgain": 5.0,
+    "aug_hsv_sgain": 30.0,
+    "aug_hsv_vgain": 30.0,
+    "aug_pad_value": 114,
 }
 
 
@@ -78,6 +84,12 @@ class InstanceSegmentationTrainingRequest:
     aug_gaussian_noise_std: float = DEFAULT_INSTANCE_AUGMENTATION["aug_gaussian_noise_std"]
     aug_random_crop_prob: float = DEFAULT_INSTANCE_AUGMENTATION["aug_random_crop_prob"]
     aug_random_crop_min_scale: float = DEFAULT_INSTANCE_AUGMENTATION["aug_random_crop_min_scale"]
+    aug_mosaic_prob: float = DEFAULT_INSTANCE_AUGMENTATION["aug_mosaic_prob"]
+    aug_mixup_prob: float = DEFAULT_INSTANCE_AUGMENTATION["aug_mixup_prob"]
+    aug_hsv_hgain: float = DEFAULT_INSTANCE_AUGMENTATION["aug_hsv_hgain"]
+    aug_hsv_sgain: float = DEFAULT_INSTANCE_AUGMENTATION["aug_hsv_sgain"]
+    aug_hsv_vgain: float = DEFAULT_INSTANCE_AUGMENTATION["aug_hsv_vgain"]
+    aug_pad_value: int = DEFAULT_INSTANCE_AUGMENTATION["aug_pad_value"]
 
 
 @dataclass(slots=True)
@@ -333,7 +345,8 @@ def _build_optional_coco_dataset(
 def _build_instance_train_transform(request: InstanceSegmentationTrainingRequest):
     if not request.use_data_augmentation:
         return None
-    return InstanceSegmentationAugmentation(
+    return RTMDetInstanceSegmentationAugmentation(
+        target_size=request.img_size,
         horizontal_flip_prob=request.aug_horizontal_flip_prob,
         vertical_flip_prob=request.aug_vertical_flip_prob,
         rotate90_prob=request.aug_rotate90_prob,
@@ -342,6 +355,12 @@ def _build_instance_train_transform(request: InstanceSegmentationTrainingRequest
         gaussian_noise_std=request.aug_gaussian_noise_std,
         random_crop_prob=request.aug_random_crop_prob,
         random_crop_min_scale=request.aug_random_crop_min_scale,
+        mosaic_prob=request.aug_mosaic_prob,
+        mixup_prob=request.aug_mixup_prob,
+        hsv_hgain=request.aug_hsv_hgain,
+        hsv_sgain=request.aug_hsv_sgain,
+        hsv_vgain=request.aug_hsv_vgain,
+        pad_value=request.aug_pad_value,
     )
 
 
@@ -369,7 +388,7 @@ def _make_data_loaders(request: InstanceSegmentationTrainingRequest):
     train_aug_dataset = COCOInstanceSegmentationDataset(
         request.image_dir,
         request.annotation_path,
-        img_size=request.img_size,
+        img_size=None if train_transform is not None else request.img_size,
         transforms=train_transform,
     )
     val_dataset = _build_optional_coco_dataset(
@@ -770,7 +789,11 @@ def iter_instance_segmentation_training_task(
             f"contrast={request.aug_contrast}, "
             f"noise_std={request.aug_gaussian_noise_std}, "
             f"crop={request.aug_random_crop_prob}, "
-            f"crop_min_scale={request.aug_random_crop_min_scale}."
+            f"crop_min_scale={request.aug_random_crop_min_scale}, "
+            f"mosaic={request.aug_mosaic_prob}, "
+            f"mixup={request.aug_mixup_prob}, "
+            f"hsv=({request.aug_hsv_hgain}, {request.aug_hsv_sgain}, "
+            f"{request.aug_hsv_vgain}), pad={request.aug_pad_value}."
         )
     else:
         yield emit("Instance segmentation augmentation disabled.")

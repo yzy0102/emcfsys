@@ -218,3 +218,5 @@ __marimo__/
 pypi_token.txt
 
 /demo/KNN_ImageNet_hugg.py
+
+/mmseg_configs

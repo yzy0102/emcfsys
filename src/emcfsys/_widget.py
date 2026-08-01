@@ -2036,6 +2036,48 @@ class InstanceSegmentationTrainingContainer(Container):
             step=0.05,
             value=DEFAULT_INSTANCE_AUGMENTATION["aug_random_crop_min_scale"],
         )
+        self.aug_mosaic_prob = FloatSpinBox(
+            label="Aug Mosaic prob",
+            min=0.0,
+            max=1.0,
+            step=0.05,
+            value=DEFAULT_INSTANCE_AUGMENTATION["aug_mosaic_prob"],
+        )
+        self.aug_mixup_prob = FloatSpinBox(
+            label="Aug MixUp prob",
+            min=0.0,
+            max=1.0,
+            step=0.05,
+            value=DEFAULT_INSTANCE_AUGMENTATION["aug_mixup_prob"],
+        )
+        self.aug_hsv_hgain = FloatSpinBox(
+            label="Aug HSV hue delta",
+            min=0.0,
+            max=180.0,
+            step=1.0,
+            value=DEFAULT_INSTANCE_AUGMENTATION["aug_hsv_hgain"],
+        )
+        self.aug_hsv_sgain = FloatSpinBox(
+            label="Aug HSV saturation delta",
+            min=0.0,
+            max=255.0,
+            step=1.0,
+            value=DEFAULT_INSTANCE_AUGMENTATION["aug_hsv_sgain"],
+        )
+        self.aug_hsv_vgain = FloatSpinBox(
+            label="Aug HSV value delta",
+            min=0.0,
+            max=255.0,
+            step=1.0,
+            value=DEFAULT_INSTANCE_AUGMENTATION["aug_hsv_vgain"],
+        )
+        self.aug_pad_value = SpinBox(
+            label="Aug image pad value",
+            min=0,
+            max=255,
+            step=1,
+            value=DEFAULT_INSTANCE_AUGMENTATION["aug_pad_value"],
+        )
         self.val_split = FloatSpinBox(label="Validation split", min=0.0, max=0.9, step=0.05, value=0.0)
         self.use_separate_eval_sets = CheckBox(label="Use separate val/test datasets", value=False)
         self.val_image_dir = FileEdit(label="Val COCO images folder (optional)", mode="d", nullable=True)
@@ -2078,6 +2120,12 @@ class InstanceSegmentationTrainingContainer(Container):
             self.aug_gaussian_noise_std,
             self.aug_random_crop_prob,
             self.aug_random_crop_min_scale,
+            self.aug_mosaic_prob,
+            self.aug_mixup_prob,
+            self.aug_hsv_hgain,
+            self.aug_hsv_sgain,
+            self.aug_hsv_vgain,
+            self.aug_pad_value,
             self.val_split,
             self.use_separate_eval_sets,
             self.val_image_dir,
@@ -2176,6 +2224,12 @@ class InstanceSegmentationTrainingContainer(Container):
         self.aug_gaussian_noise_std.visible = enabled
         self.aug_random_crop_prob.visible = enabled
         self.aug_random_crop_min_scale.visible = enabled
+        self.aug_mosaic_prob.visible = enabled
+        self.aug_mixup_prob.visible = enabled
+        self.aug_hsv_hgain.visible = enabled
+        self.aug_hsv_sgain.visible = enabled
+        self.aug_hsv_vgain.visible = enabled
+        self.aug_pad_value.visible = enabled
 
     def _config_widget_map(self):
         return {
@@ -2213,6 +2267,12 @@ class InstanceSegmentationTrainingContainer(Container):
             "aug_gaussian_noise_std": self.aug_gaussian_noise_std,
             "aug_random_crop_prob": self.aug_random_crop_prob,
             "aug_random_crop_min_scale": self.aug_random_crop_min_scale,
+            "aug_mosaic_prob": self.aug_mosaic_prob,
+            "aug_mixup_prob": self.aug_mixup_prob,
+            "aug_hsv_hgain": self.aug_hsv_hgain,
+            "aug_hsv_sgain": self.aug_hsv_sgain,
+            "aug_hsv_vgain": self.aug_hsv_vgain,
+            "aug_pad_value": self.aug_pad_value,
         }
 
     def _save_config(self):
@@ -2303,6 +2363,12 @@ class InstanceSegmentationTrainingContainer(Container):
             aug_gaussian_noise_std=self.aug_gaussian_noise_std.value,
             aug_random_crop_prob=self.aug_random_crop_prob.value,
             aug_random_crop_min_scale=self.aug_random_crop_min_scale.value,
+            aug_mosaic_prob=self.aug_mosaic_prob.value,
+            aug_mixup_prob=self.aug_mixup_prob.value,
+            aug_hsv_hgain=self.aug_hsv_hgain.value,
+            aug_hsv_sgain=self.aug_hsv_sgain.value,
+            aug_hsv_vgain=self.aug_hsv_vgain.value,
+            aug_pad_value=self.aug_pad_value.value,
         )
 
     def _start_training(self):
