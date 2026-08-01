@@ -4,7 +4,13 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+try:
+    from scipy.optimize import linear_sum_assignment
+except ImportError:  # pragma: no cover - scipy is a project dependency
+    linear_sum_assignment = None
+
 from .BackboneWrapper import CasualBackbones
+from .Mask2Former import Mask2FormerDecoderHead
 
 
 MODEL_RTM_INSTANCE = "rtm_instance"
@@ -200,12 +206,12 @@ def get_instance_model_config(model_name: str):
     if name == MODEL_MASK2FORMER_INSTANCE:
         return {
             "head_type": "mask2former",
-            "neck_channels": 128,
-            "head_channels": 128,
+            "neck_channels": 256,
+            "head_channels": 256,
             "num_queries": 100,
-            "mask_dim": 128,
-            "transformer_heads": 4,
-            "transformer_layers": 2,
+            "mask_dim": 256,
+            "transformer_heads": 8,
+            "transformer_layers": 6,
         }
     raise ValueError(f"Unknown instance segmentation model: {model_name}")
 
@@ -832,7 +838,12 @@ class SOLOv2InstanceHead(YOLACTInstanceHead):
 
 
 class Mask2FormerInstanceHead(nn.Module):
-    """Compact query-based Mask2Former-style instance head."""
+    """Local-dependency Mask2Former instance head.
+
+    The query decoder is shared with semantic Mask2Former, but its output
+    keeps one class slot for no-object followed by the instance classes, which
+    matches the COCO instance-segmentation target convention used here.
+    """
 
     def __init__(
         self,
@@ -840,51 +851,49 @@ class Mask2FormerInstanceHead(nn.Module):
         num_classes: int,
         feat_channels: int = 128,
         num_queries: int = 100,
-        mask_dim: int = 128,
-        transformer_heads: int = 4,
-        transformer_layers: int = 2,
+        mask_dim: int = 256,
+        transformer_heads: int = 8,
+        transformer_layers: int = 6,
+        num_feature_levels: int = 4,
+        feedforward_dim: int = 2048,
     ):
         super().__init__()
         self.num_classes = num_classes
         self.num_queries = num_queries
         self.mask_dim = mask_dim
-        self.query_embed = nn.Embedding(num_queries, feat_channels)
-        self.input_proj = nn.Conv2d(in_channels, feat_channels, kernel_size=1)
-        encoder_layer = nn.TransformerEncoderLayer(
-            d_model=feat_channels,
-            nhead=transformer_heads,
-            dim_feedforward=feat_channels * 4,
-            batch_first=True,
-            activation="gelu",
-        )
-        self.transformer = nn.TransformerEncoder(
-            encoder_layer,
-            num_layers=transformer_layers,
-        )
-        self.query_norm = nn.LayerNorm(feat_channels)
-        self.class_embed = nn.Linear(feat_channels, num_classes + 1)
-        self.mask_embed = nn.Linear(feat_channels, mask_dim)
-        self.mask_feature = nn.Sequential(
-            _make_conv_block(in_channels, feat_channels),
-            nn.Conv2d(feat_channels, mask_dim, kernel_size=1),
+        self.decoder_head = Mask2FormerDecoderHead(
+            in_channels=(in_channels,) * int(num_feature_levels),
+            num_classes=num_classes,
+            hidden_dim=feat_channels,
+            num_queries=num_queries,
+            num_heads=transformer_heads,
+            num_decoder_layers=transformer_layers,
+            feedforward_dim=feedforward_dim,
+            mask_dim=mask_dim,
+            aux_on=True,
         )
 
     def forward(self, features: list[torch.Tensor]):
-        feature = features[0]
-        batch_size = feature.shape[0]
-        pooled = F.adaptive_avg_pool2d(self.input_proj(feature), output_size=(8, 8))
-        tokens = pooled.flatten(2).transpose(1, 2)
-        queries = self.query_embed.weight.unsqueeze(0).expand(batch_size, -1, -1)
-        sequence = torch.cat([queries, tokens], dim=1)
-        encoded = self.transformer(sequence)
-        query_features = self.query_norm(encoded[:, : self.num_queries])
-        class_logits = self.class_embed(query_features)
-        mask_coefficients = self.mask_embed(query_features)
-        mask_features = self.mask_feature(feature)
-        mask_logits = torch.einsum("bqc,bchw->bqhw", mask_coefficients, mask_features)
+        _, class_predictions, mask_predictions = self.decoder_head._forward_queries(
+            features,
+            output_size=features[0].shape[-2:],
+            build_semantic_outputs=False,
+        )
+
+        def reorder_no_object(class_logits):
+            # Shared semantic head stores no-object at the last index; the
+            # instance pipeline stores it at index zero.
+            return torch.cat(
+                [class_logits[..., -1:], class_logits[..., :-1]],
+                dim=-1,
+            )
+
+        reordered_classes = [reorder_no_object(logits) for logits in class_predictions]
         return {
-            "query_logits": class_logits,
-            "query_masks": mask_logits,
+            "query_logits": reordered_classes[-1],
+            "query_masks": mask_predictions[-1],
+            "aux_query_logits": reordered_classes[:-1],
+            "aux_query_masks": mask_predictions[:-1],
         }
 
 
@@ -1740,6 +1749,8 @@ class EMCellFoundMask2FormerInstanceSegmenter(nn.Module):
             mask_dim=mask_dim,
             transformer_heads=transformer_heads,
             transformer_layers=transformer_layers,
+            num_feature_levels=len(self.in_channels),
+            feedforward_dim=max(head_channels * 4, 256),
         )
 
     def _build_fpn(self, features: list[torch.Tensor]):
@@ -1843,53 +1854,120 @@ class EMCellFoundMask2FormerInstanceSegmenter(nn.Module):
             )
         return results
 
-    def compute_loss(self, outputs: dict, targets: list[dict], image_size: tuple[int, int]):
-        device = outputs["query_logits"].device
-        cls_losses = []
-        box_losses = []
-        mask_losses = []
-        total_matches = 0
-        query_logits = outputs["query_logits"]
+    def _match_query_targets(self, logits, masks, gt_labels, gt_masks):
+        """Match queries using the reference classification/focal/dice costs."""
+
+        if gt_labels.numel() == 0 or gt_masks.numel() == 0 or masks.numel() == 0:
+            return (
+                torch.empty(0, dtype=torch.long, device=logits.device),
+                torch.empty(0, dtype=torch.long, device=logits.device),
+            )
+
+        gt_labels = gt_labels.clamp(min=1, max=self.num_classes)
+        gt_masks = F.interpolate(
+            gt_masks.unsqueeze(1).float(),
+            size=masks.shape[-2:],
+            mode="nearest",
+        ).squeeze(1)
+        class_probabilities = logits.softmax(dim=-1)
+        classification_cost = -class_probabilities[:, gt_labels]
+
+        pred_flat = masks.flatten(1)
+        target_flat = gt_masks.flatten(1)
+        probabilities = pred_flat.sigmoid()
+        eps = 1e-12
+        neg_cost = -(1.0 - probabilities + eps).log() * 0.75 * probabilities.pow(2.0)
+        pos_cost = -(
+            probabilities + eps
+        ).log() * 0.25 * (1.0 - probabilities).pow(2.0)
+        focal_cost = (
+            torch.einsum("qc,gc->qg", pos_cost, target_flat)
+            + torch.einsum("qc,gc->qg", neg_cost, 1.0 - target_flat)
+        ) / max(pred_flat.shape[1], 1)
+
+        intersection = torch.einsum("qc,gc->qg", probabilities, target_flat)
+        dice_cost = 1.0 - (
+            2.0 * intersection + 1.0
+        ) / (
+            probabilities.sum(dim=1, keepdim=True)
+            + target_flat.sum(dim=1).unsqueeze(0)
+            + 1.0
+        )
+        matching_cost = classification_cost + 20.0 * focal_cost + dice_cost
+        if linear_sum_assignment is not None:
+            query_indices, gt_indices = linear_sum_assignment(
+                matching_cost.detach().cpu().numpy()
+            )
+            query_indices = torch.as_tensor(
+                query_indices, dtype=torch.long, device=logits.device
+            )
+            gt_indices = torch.as_tensor(
+                gt_indices, dtype=torch.long, device=logits.device
+            )
+            return query_indices, gt_indices
+
+        # A deterministic fallback keeps the model usable if scipy is absent.
+        available = set(range(matching_cost.shape[1]))
+        pairs = []
+        for query_index in torch.argsort(matching_cost.min(dim=1).values).tolist():
+            if not available:
+                break
+            gt_index = min(
+                available,
+                key=lambda index: float(matching_cost[query_index, index]),
+            )
+            pairs.append((query_index, gt_index))
+            available.remove(gt_index)
+        if not pairs:
+            return (
+                torch.empty(0, dtype=torch.long, device=logits.device),
+                torch.empty(0, dtype=torch.long, device=logits.device),
+            )
+        return (
+            torch.tensor([pair[0] for pair in pairs], device=logits.device),
+            torch.tensor([pair[1] for pair in pairs], device=logits.device),
+        )
+
+    def _compute_layer_loss(self, query_logits, query_masks, targets, image_size):
+        device = query_logits.device
         query_masks = F.interpolate(
-            outputs["query_masks"],
+            query_masks,
             size=image_size,
             mode="bilinear",
             align_corners=False,
         )
+        class_weight = query_logits.new_ones(self.num_classes + 1)
+        class_weight[0] = 0.1
+        cls_losses = []
+        mask_losses = []
+        total_matches = 0
+
         for batch_index, target in enumerate(targets):
-            gt_labels = target.get("labels", torch.empty(0, device=device)).to(device).long()
+            gt_labels = target.get(
+                "labels", torch.empty(0, device=device)
+            ).to(device).long()
             gt_masks = target.get(
                 "masks",
                 torch.empty(0, image_size[0], image_size[1], device=device),
             ).to(device).float()
-            gt_boxes = target.get("boxes", torch.empty(0, 4, device=device)).to(device).float()
             logits = query_logits[batch_index]
             masks = query_masks[batch_index]
-            target_classes = torch.zeros(logits.shape[0], dtype=torch.long, device=device)
-            if gt_labels.numel() == 0:
-                cls_losses.append(F.cross_entropy(logits, target_classes, reduction="sum"))
-                box_losses.append(masks.sum() * 0.0)
-                mask_losses.append(masks.sum() * 0.0)
-                continue
-
-            mask_ious = _mask_iou_matrix_for_logits(masks, gt_masks)
-            available_queries = set(range(logits.shape[0]))
-            matched_pairs = []
-            for gt_index in range(gt_labels.numel()):
-                if not available_queries:
-                    break
-                candidate_indices = torch.tensor(sorted(available_queries), device=device)
-                best_local = mask_ious[candidate_indices, gt_index].argmax()
-                query_index = int(candidate_indices[best_local].item())
-                available_queries.remove(query_index)
-                matched_pairs.append((query_index, gt_index))
-
-            if matched_pairs:
-                query_indices = torch.tensor([item[0] for item in matched_pairs], device=device)
-                gt_indices = torch.tensor([item[1] for item in matched_pairs], device=device)
-                target_classes[query_indices] = gt_labels[gt_indices].clamp(min=1, max=self.num_classes)
-                matched_masks = gt_masks[gt_indices]
+            target_classes = torch.zeros(
+                logits.shape[0], dtype=torch.long, device=device
+            )
+            query_indices, gt_indices = self._match_query_targets(
+                logits,
+                masks,
+                gt_labels,
+                gt_masks,
+            )
+            if query_indices.numel() > 0:
+                target_classes[query_indices] = gt_labels[gt_indices].clamp(
+                    min=1,
+                    max=self.num_classes,
+                )
                 selected_masks = masks[query_indices]
+                matched_masks = gt_masks[gt_indices]
                 mask_bce = F.binary_cross_entropy_with_logits(
                     selected_masks,
                     matched_masks,
@@ -1903,22 +1981,47 @@ class EMCellFoundMask2FormerInstanceSegmenter(nn.Module):
                     focal_weight=self.focal_mask_loss_weight,
                     tversky_weight=self.tversky_loss_weight,
                 )
-                mask_losses.append((mask_bce + mask_dice + extra).sum())
-                pred_boxes = self._masks_to_boxes(selected_masks.sigmoid() > 0.5)
-                box_losses.append(aligned_giou_loss(pred_boxes, gt_boxes[gt_indices]).sum())
-                total_matches += len(matched_pairs)
+                mask_losses.append((mask_bce + mask_dice + extra).mean())
+                total_matches += int(query_indices.numel())
             else:
-                box_losses.append(masks.sum() * 0.0)
                 mask_losses.append(masks.sum() * 0.0)
-            cls_losses.append(F.cross_entropy(logits, target_classes, reduction="sum"))
+            cls_losses.append(
+                F.cross_entropy(
+                    logits,
+                    target_classes,
+                    weight=class_weight,
+                )
+            )
 
-        normalizer = max(total_matches, 1)
-        loss_cls = torch.stack(cls_losses).sum() / max(query_logits.shape[0] * query_logits.shape[1], 1)
-        loss_box = torch.stack(box_losses).sum() / normalizer
-        loss_mask = torch.stack(mask_losses).sum() / normalizer
+        loss_cls = torch.stack(cls_losses).mean()
+        loss_mask = torch.stack(mask_losses).mean()
+        return loss_cls, loss_mask, total_matches
+
+    def compute_loss(self, outputs: dict, targets: list[dict], image_size: tuple[int, int]):
+        query_logits = [outputs["query_logits"]]
+        query_masks = [outputs["query_masks"]]
+        query_logits.extend(outputs.get("aux_query_logits", []))
+        query_masks.extend(outputs.get("aux_query_masks", []))
+
+        layer_cls_losses = []
+        layer_mask_losses = []
+        total_matches = 0
+        for logits, masks in zip(query_logits, query_masks):
+            loss_cls, loss_mask, layer_matches = self._compute_layer_loss(
+                logits,
+                masks,
+                targets,
+                image_size,
+            )
+            layer_cls_losses.append(loss_cls)
+            layer_mask_losses.append(loss_mask)
+            total_matches += layer_matches
+
+        loss_cls = torch.stack(layer_cls_losses).mean()
+        loss_mask = torch.stack(layer_mask_losses).mean()
+        loss_box = loss_mask * 0.0
         total_loss = (
             self.cls_loss_weight * loss_cls
-            + self.box_loss_weight * loss_box
             + self.mask_loss_weight * loss_mask
         )
         return {
@@ -1927,7 +2030,7 @@ class EMCellFoundMask2FormerInstanceSegmenter(nn.Module):
             "loss_obj": loss_cls.detach() * 0.0,
             "loss_box": loss_box.detach(),
             "loss_mask": loss_mask.detach(),
-            "num_pos": torch.tensor(float(total_matches), device=device),
+            "num_pos": torch.tensor(float(total_matches), device=loss_cls.device),
         }
 
     def loss(self, x: torch.Tensor, targets: list[dict]):

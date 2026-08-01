@@ -88,6 +88,7 @@ def train_loop(images_dir, masks_dir,
     # 动态选择模型
     model = get_model(model_name=model_name, backbone_name=backbone_name, img_size=target_size[0],
                       num_classes=classes_num, aux_on=True, pretrained=pretrained).to(device)
+    use_mask2former_query_loss = str(model_name).lower() == "mask2former"
     
     if pretrained_model is not None:
         model = load_pretrained(model, pretrained_model, device)
@@ -132,9 +133,26 @@ def train_loop(images_dir, masks_dir,
                 msk = msk.to(device).long().squeeze(1)                     # shape (B,H,W), 类别索引
 
                 opt.zero_grad()
-                out, aux = model(img)                                 # shape (B,C,H,W)
-                aux_loss = criterion(aux, msk)
-                loss = criterion(out, msk)
+                if use_mask2former_query_loss:
+                    out, aux, query_outputs = model(
+                        img,
+                        return_query_outputs=True,
+                    )
+                    dense_loss = criterion(out, msk)
+                    dense_aux_loss = criterion(aux, msk)
+                    query_loss = model.query_loss(
+                        query_outputs,
+                        msk,
+                        ignore_index=ignore_index,
+                    )
+                    # Query-level set supervision is the primary objective;
+                    # the dense adapter remains as a stable semantic auxiliary.
+                    loss = query_loss + 0.4 * dense_loss
+                    aux_loss = 0.4 * dense_aux_loss
+                else:
+                    out, aux = model(img)                                 # shape (B,C,H,W)
+                    aux_loss = criterion(aux, msk)
+                    loss = criterion(out, msk)
                 
                 loss = loss + 0.4 * aux_loss # aux loss 加权
                 loss.backward()

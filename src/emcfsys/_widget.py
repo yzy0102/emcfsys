@@ -169,7 +169,7 @@ backbone_zoom = [   "emcellfound_vit_base",
                     "vit_large_patch16_dinov3.lvd1689m", "vit_huge_patch16_dinov3.lvd1689m"]
 
 
-model_zoom = ["deeplabv3plus", "unet", "pspnet", "upernet", "orgsegnetv2"]
+model_zoom = ["deeplabv3plus", "unet", "pspnet", "upernet", "mask2former", "orgsegnetv2"]
 classification_head_zoom = ["knn", "linear"]
 TRAINING_PRESET_CHOICES = [
     "Custom",

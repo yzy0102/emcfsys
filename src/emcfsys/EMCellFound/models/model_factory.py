@@ -4,6 +4,7 @@ from .UNet import UNet
 from .PSPNet import PSPNet
 from .DeepLabv3Plus import DeepLabV3Plus
 from .UperNet import UPerNet
+from .Mask2Former import Mask2Former
 from .RTMInstanceSeg import build_emcellfound_instance_segmenter, is_supported_instance_model
 
 def get_model(model_name, backbone_name='resnet34', img_size = 512, num_classes=2, aux_on=True, pretrained=True, **kwargs):
@@ -11,7 +12,8 @@ def get_model(model_name, backbone_name='resnet34', img_size = 512, num_classes=
     动态选择模型
 
     Args:
-        model_name (str): 'unet', 'pspnet', 'deeplabv3plus', 'upernet'
+        model_name (str): 'unet', 'pspnet', 'deeplabv3plus', 'upernet',
+            or 'mask2former'
         backbone_name (str): timm backbone name
         num_classes (int): 分类数量
         aux_on (bool): 是否使用 deep supervision
@@ -31,6 +33,15 @@ def get_model(model_name, backbone_name='resnet34', img_size = 512, num_classes=
         model = DeepLabV3Plus(num_classes=num_classes, img_size=img_size, backbone_name=backbone_name, aux_on=aux_on, pretrained=pretrained)
     elif model_name == "upernet":
         model = UPerNet(num_classes=num_classes, img_size=img_size, backbone_name=backbone_name, aux_on=aux_on, pretrained=pretrained)
+    elif model_name == "mask2former":
+        model = Mask2Former(
+            num_classes=num_classes,
+            img_size=img_size,
+            backbone_name=backbone_name,
+            aux_on=aux_on,
+            pretrained=pretrained,
+            **kwargs,
+        )
     elif is_supported_instance_model(model_name):
         model = build_emcellfound_instance_segmenter(
             model_name,
