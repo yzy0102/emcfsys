@@ -17,7 +17,12 @@ from PIL import Image
 from skimage.transform import resize
 import torch
 import time
-from .metrics.metrics import compute_metrics, build_segmentation_loss
+from .metrics.metrics import (
+    build_segmentation_loss,
+    compute_confusion_matrix,
+    compute_metrics,
+    per_class_metrics_from_confusion,
+)
 from .transforms.transforms import Compose, LoadImage, LoadMask, PhotometricDistortion, AlbumentationsTransform, RandomErasing, RandomScale, Pad, ToTensor,  RandomCrop, Resize, Normalize
 import albumentations as A
 from PIL import Image
@@ -44,7 +49,9 @@ def train_loop(images_dir, masks_dir,
                tversky_loss_weight=0.0,
                boundary_loss_weight=0.0,
                lovasz_loss_weight=0.0,
-               ohem_ce_loss_weight=0.0):
+               ohem_ce_loss_weight=0.0,
+               matching_sampling="random",
+               matching_uncertainty_per_query=True):
     
     if not os.path.exists(save_path):
         os.makedirs(save_path, exist_ok=True)
@@ -86,8 +93,15 @@ def train_loop(images_dir, masks_dir,
     
     # loader = DataLoader(dataset, batch_size=batch_size, shuffle=True, num_workers=0)
     # 动态选择模型
+    model_kwargs = {}
+    if str(model_name).lower() == "mask2former":
+        model_kwargs = {
+            "matching_sampling": matching_sampling,
+            "matching_uncertainty_per_query": matching_uncertainty_per_query,
+        }
     model = get_model(model_name=model_name, backbone_name=backbone_name, img_size=target_size[0],
-                      num_classes=classes_num, aux_on=True, pretrained=pretrained).to(device)
+                      num_classes=classes_num, aux_on=True, pretrained=pretrained,
+                      **model_kwargs).to(device)
     use_mask2former_query_loss = str(model_name).lower() == "mask2former"
     
     if pretrained_model is not None:
@@ -182,6 +196,11 @@ def train_loop(images_dir, masks_dir,
             if len(val_loader) > 0:
                 # 评估
                 val_metrics_accum = []
+                val_confusion = torch.zeros(
+                    (classes_num, classes_num),
+                    dtype=torch.long,
+                    device=device,
+                )
                 with torch.no_grad():
                     for val_img, val_msk in val_loader:
                         val_img = val_img.to(device).float()
@@ -192,6 +211,12 @@ def train_loop(images_dir, masks_dir,
 
                         val_batch_metrics = compute_metrics(val_pred, val_msk, num_classes=classes_num, ignore_index=ignore_index)
                         val_metrics_accum.append(val_batch_metrics)
+                        val_confusion += compute_confusion_matrix(
+                            val_pred,
+                            val_msk,
+                            num_classes=classes_num,
+                            ignore_index=ignore_index,
+                        )
                 avg_val_metrics = {}
                 for k in val_metrics_accum[0].keys():
                     avg_val_metrics[k] = sum([m[k] for m in val_metrics_accum]) / len(val_metrics_accum)
@@ -200,6 +225,7 @@ def train_loop(images_dir, masks_dir,
                 avg_metrics['Val_IoU'] = avg_val_metrics.get('IoU', 0.0)
                 avg_metrics['Val_Accuracy'] = avg_val_metrics.get('Accuracy', 0.0)
                 avg_metrics['Val_F1'] = avg_val_metrics.get('F1', 0.0)
+                avg_metrics['Val_Per_Class'] = per_class_metrics_from_confusion(val_confusion)
                 
                 current_iou = avg_metrics["Val_IoU"]  # 你也可以换成 F1 或 Accuracy
             else:

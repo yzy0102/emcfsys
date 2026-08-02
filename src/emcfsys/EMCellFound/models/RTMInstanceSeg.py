@@ -11,6 +11,16 @@ except ImportError:  # pragma: no cover - scipy is a project dependency
 
 from .BackboneWrapper import CasualBackbones
 from .Mask2Former import Mask2FormerDecoderHead
+from ..ops import (
+    DEFAULT_MATCHING_SAMPLING,
+    DEFAULT_IMPORTANCE_SAMPLE_RATIO,
+    DEFAULT_OVERSAMPLE_RATIO,
+    DEFAULT_POINT_SAMPLING_NUM,
+    get_matching_point_coords,
+    get_uncertain_point_coords_with_randomness,
+    point_sample,
+    sample_matching_mask_points,
+)
 
 
 MODEL_RTM_INSTANCE = "rtm_instance"
@@ -100,6 +110,8 @@ _MASK2FORMER_INSTANCE_KWARGS = _COMMON_INSTANCE_KWARGS | {
     "mask_dim",
     "transformer_heads",
     "transformer_layers",
+    "matching_sampling",
+    "matching_uncertainty_per_query",
 }
 
 
@@ -856,6 +868,8 @@ class Mask2FormerInstanceHead(nn.Module):
         transformer_layers: int = 6,
         num_feature_levels: int = 4,
         feedforward_dim: int = 2048,
+        matching_sampling: str = DEFAULT_MATCHING_SAMPLING,
+        matching_uncertainty_per_query: bool = True,
     ):
         super().__init__()
         self.num_classes = num_classes
@@ -871,6 +885,8 @@ class Mask2FormerInstanceHead(nn.Module):
             feedforward_dim=feedforward_dim,
             mask_dim=mask_dim,
             aux_on=True,
+            matching_sampling=matching_sampling,
+            matching_uncertainty_per_query=matching_uncertainty_per_query,
         )
 
     def forward(self, features: list[torch.Tensor]):
@@ -919,6 +935,8 @@ class EMCellFoundRTMInstanceSegmenter(nn.Module):
         boundary_loss_weight: float = 0.0,
         focal_mask_loss_weight: float = 0.0,
         tversky_loss_weight: float = 0.0,
+        matching_sampling: str = DEFAULT_MATCHING_SAMPLING,
+        matching_uncertainty_per_query: bool = True,
     ):
         super().__init__()
         self.backbone_name = backbone_name
@@ -936,6 +954,10 @@ class EMCellFoundRTMInstanceSegmenter(nn.Module):
         self.boundary_loss_weight = boundary_loss_weight
         self.focal_mask_loss_weight = focal_mask_loss_weight
         self.tversky_loss_weight = tversky_loss_weight
+        self.matching_sampling = str(matching_sampling).strip().lower()
+        self.matching_uncertainty_per_query = bool(
+            matching_uncertainty_per_query
+        )
         self.assigner = RTMDetInsAssigner(topk=assigner_topk)
         self.backbone = CasualBackbones(
             backbone_name=backbone_name,
@@ -1709,6 +1731,8 @@ class EMCellFoundMask2FormerInstanceSegmenter(nn.Module):
         boundary_loss_weight: float = 0.0,
         focal_mask_loss_weight: float = 0.0,
         tversky_loss_weight: float = 0.0,
+        matching_sampling: str = DEFAULT_MATCHING_SAMPLING,
+        matching_uncertainty_per_query: bool = True,
     ):
         super().__init__()
         self.backbone_name = backbone_name
@@ -1726,6 +1750,13 @@ class EMCellFoundMask2FormerInstanceSegmenter(nn.Module):
         self.boundary_loss_weight = boundary_loss_weight
         self.focal_mask_loss_weight = focal_mask_loss_weight
         self.tversky_loss_weight = tversky_loss_weight
+        self.matching_sampling = str(matching_sampling).strip().lower()
+        self.matching_uncertainty_per_query = bool(
+            matching_uncertainty_per_query
+        )
+        self.num_points = DEFAULT_POINT_SAMPLING_NUM
+        self.oversample_ratio = DEFAULT_OVERSAMPLE_RATIO
+        self.importance_sample_ratio = DEFAULT_IMPORTANCE_SAMPLE_RATIO
         self.backbone = CasualBackbones(
             backbone_name=backbone_name,
             pretrained=pretrained,
@@ -1751,6 +1782,8 @@ class EMCellFoundMask2FormerInstanceSegmenter(nn.Module):
             transformer_layers=transformer_layers,
             num_feature_levels=len(self.in_channels),
             feedforward_dim=max(head_channels * 4, 256),
+            matching_sampling=self.matching_sampling,
+            matching_uncertainty_per_query=self.matching_uncertainty_per_query,
         )
 
     def _build_fpn(self, features: list[torch.Tensor]):
@@ -1872,25 +1905,44 @@ class EMCellFoundMask2FormerInstanceSegmenter(nn.Module):
         class_probabilities = logits.softmax(dim=-1)
         classification_cost = -class_probabilities[:, gt_labels]
 
-        pred_flat = masks.flatten(1)
-        target_flat = gt_masks.flatten(1)
-        probabilities = pred_flat.sigmoid()
+        with torch.no_grad():
+            matching_points = get_matching_point_coords(
+                masks.unsqueeze(1),
+                num_points=self.num_points,
+                sampling=self.matching_sampling,
+                oversample_ratio=self.oversample_ratio,
+                importance_sample_ratio=self.importance_sample_ratio,
+                per_query=self.matching_uncertainty_per_query,
+            )
+        pred_points, target_points = sample_matching_mask_points(
+            masks,
+            gt_masks,
+            matching_points,
+        )
+        pair_targets = (
+            target_points
+            if target_points.ndim == 3
+            else target_points.unsqueeze(0)
+        )
+        probabilities = pred_points.sigmoid()
         eps = 1e-12
         neg_cost = -(1.0 - probabilities + eps).log() * 0.75 * probabilities.pow(2.0)
         pos_cost = -(
             probabilities + eps
         ).log() * 0.25 * (1.0 - probabilities).pow(2.0)
         focal_cost = (
-            torch.einsum("qc,gc->qg", pos_cost, target_flat)
-            + torch.einsum("qc,gc->qg", neg_cost, 1.0 - target_flat)
-        ) / max(pred_flat.shape[1], 1)
+            pos_cost[:, None, :] * pair_targets
+            + neg_cost[:, None, :] * (1.0 - pair_targets)
+        ).mean(dim=-1)
 
-        intersection = torch.einsum("qc,gc->qg", probabilities, target_flat)
+        intersection = (
+            probabilities[:, None, :] * pair_targets
+        ).sum(dim=-1)
         dice_cost = 1.0 - (
             2.0 * intersection + 1.0
         ) / (
             probabilities.sum(dim=1, keepdim=True)
-            + target_flat.sum(dim=1).unsqueeze(0)
+            + pair_targets.sum(dim=-1)
             + 1.0
         )
         matching_cost = classification_cost + 20.0 * focal_cost + dice_cost
@@ -1930,12 +1982,6 @@ class EMCellFoundMask2FormerInstanceSegmenter(nn.Module):
 
     def _compute_layer_loss(self, query_logits, query_masks, targets, image_size):
         device = query_logits.device
-        query_masks = F.interpolate(
-            query_masks,
-            size=image_size,
-            mode="bilinear",
-            align_corners=False,
-        )
         class_weight = query_logits.new_ones(self.num_classes + 1)
         class_weight[0] = 0.1
         cls_losses = []
@@ -1967,13 +2013,33 @@ class EMCellFoundMask2FormerInstanceSegmenter(nn.Module):
                     max=self.num_classes,
                 )
                 selected_masks = masks[query_indices]
-                matched_masks = gt_masks[gt_indices]
+                matched_masks = F.interpolate(
+                    gt_masks[gt_indices].unsqueeze(1),
+                    size=selected_masks.shape[-2:],
+                    mode="nearest",
+                ).squeeze(1)
+                with torch.no_grad():
+                    loss_points = get_uncertain_point_coords_with_randomness(
+                        selected_masks.unsqueeze(1),
+                        num_points=self.num_points,
+                        oversample_ratio=self.oversample_ratio,
+                        importance_sample_ratio=self.importance_sample_ratio,
+                    )
+                selected_points = point_sample(
+                    selected_masks.unsqueeze(1), loss_points
+                ).squeeze(1)
+                target_points = point_sample(
+                    matched_masks.unsqueeze(1), loss_points
+                ).squeeze(1)
                 mask_bce = F.binary_cross_entropy_with_logits(
-                    selected_masks,
-                    matched_masks,
+                    selected_points,
+                    target_points,
                     reduction="none",
-                ).flatten(1).mean(dim=1)
-                mask_dice = dice_loss_with_logits(selected_masks, matched_masks)
+                ).mean(dim=1)
+                mask_dice = dice_loss_with_logits(
+                    selected_points.unsqueeze(1),
+                    target_points.unsqueeze(1),
+                )
                 extra = extra_mask_loss_with_logits(
                     selected_masks,
                     matched_masks,

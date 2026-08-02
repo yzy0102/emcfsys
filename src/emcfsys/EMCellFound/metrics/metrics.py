@@ -61,6 +61,155 @@ def compute_metrics(pred, target, num_classes=2, ignore_index=None):
     return metrics
 
 
+def compute_confusion_matrix(pred, target, num_classes=2, ignore_index=None):
+    """Return a pixel confusion matrix with target classes on rows."""
+
+    pred = pred.long()
+    target = target.long()
+    valid = _valid_pixel_mask(target, ignore_index=ignore_index, num_classes=num_classes)
+    valid = valid & (pred >= 0) & (pred < num_classes)
+    confusion = torch.zeros(
+        (num_classes, num_classes),
+        dtype=torch.long,
+        device=pred.device,
+    )
+    if not valid.any():
+        return confusion
+
+    encoded = target[valid] * num_classes + pred[valid]
+    return torch.bincount(encoded, minlength=num_classes * num_classes).reshape(
+        num_classes,
+        num_classes,
+    )
+
+
+def per_class_metrics_from_confusion(confusion, class_names=None):
+    """Compute mmseg-style per-class metrics from a pixel confusion matrix.
+
+    ``Acc`` is class-wise pixel accuracy (TP / ground-truth support), which is
+    equivalent to recall for this segmentation table.
+    """
+
+    confusion = confusion.detach().to(dtype=torch.float64)
+    num_classes = confusion.shape[0]
+    true_positive = torch.diag(confusion)
+    ground_truth = confusion.sum(dim=1)
+    predicted = confusion.sum(dim=0)
+    union = ground_truth + predicted - true_positive
+
+    def safe_divide(numerator, denominator):
+        return torch.where(
+            denominator > 0,
+            numerator / denominator,
+            torch.zeros_like(numerator),
+        )
+
+    precision = safe_divide(true_positive, predicted)
+    recall = safe_divide(true_positive, ground_truth)
+    f1 = safe_divide(2.0 * precision * recall, precision + recall)
+    iou = safe_divide(true_positive, union)
+
+    if class_names is None:
+        class_names = [
+            "background" if index == 0 else f"class_{index}"
+            for index in range(num_classes)
+        ]
+    else:
+        class_names = list(class_names)
+        if len(class_names) < num_classes:
+            class_names.extend(
+                f"class_{index}" for index in range(len(class_names), num_classes)
+            )
+
+    rows = []
+    for index in range(num_classes):
+        rows.append(
+            {
+                "class_index": index,
+                "class_name": class_names[index],
+                "Acc": float(recall[index].item()),
+                "Prec": float(precision[index].item()),
+                "Recall": float(recall[index].item()),
+                "F1": float(f1[index].item()),
+                "Dice": float(f1[index].item()),
+                "IoU": float(iou[index].item()),
+            }
+        )
+    return rows
+
+
+def compute_per_class_metrics(pred, target, num_classes=2, ignore_index=None, class_names=None):
+    """Compute per-class segmentation metrics for one prediction batch."""
+
+    confusion = compute_confusion_matrix(
+        pred,
+        target,
+        num_classes=num_classes,
+        ignore_index=ignore_index,
+    )
+    return per_class_metrics_from_confusion(confusion, class_names=class_names)
+
+
+def format_metric_summary(metrics):
+    """Format scalar training metrics with a stable four-decimal precision."""
+
+    if not isinstance(metrics, dict):
+        return str(metrics)
+    parts = []
+    for key, value in metrics.items():
+        if isinstance(value, (int, float)):
+            parts.append(f"'{key}': {float(value):.4f}")
+    return "{" + ", ".join(parts) + "}"
+
+
+def format_per_class_metrics_table(rows):
+    """Format per-class metrics as an mmseg-style ASCII table.
+
+    Values are displayed as percentages while the stored metrics remain in
+    the standard [0, 1] range.
+    """
+
+    headers = ["Class", "Acc", "Prec", "Recall", "F1", "Dice", "IoU"]
+    table_rows = []
+    for row in rows:
+        table_rows.append(
+            [
+                str(row["class_name"]),
+                f"{100.0 * row['Acc']:.4f}",
+                f"{100.0 * row['Prec']:.4f}",
+                f"{100.0 * row['Recall']:.4f}",
+                f"{100.0 * row['F1']:.4f}",
+                f"{100.0 * row['Dice']:.4f}",
+                f"{100.0 * row['IoU']:.4f}",
+            ]
+        )
+
+    widths = [len(header) for header in headers]
+    for row in table_rows:
+        for index, value in enumerate(row):
+            widths[index] = max(widths[index], len(value))
+
+    separator = "+" + "+".join("-" * (width + 2) for width in widths) + "+"
+    lines = [separator]
+    lines.append(
+        "| "
+        + " | ".join(header.center(widths[index]) for index, header in enumerate(headers))
+        + " |"
+    )
+    lines.append(separator)
+    for row in table_rows:
+        lines.append(
+            "| "
+            + " | ".join(
+                value.ljust(widths[index]) if index == 0 else value.rjust(widths[index])
+                for index, value in enumerate(row)
+            )
+            + " |"
+        )
+    lines.append(separator)
+    return "\n".join(lines)
+
+
 def semantic_dice_loss(logits, target, num_classes: int, ignore_index=None, smooth: float = 1.0):
     probs = F.softmax(logits, dim=1)
     target_1hot, valid = _one_hot_target(target, num_classes, ignore_index)

@@ -67,7 +67,8 @@ include-package-data = true
 where = ["src"]
 
 [tool.setuptools.package-data]
-"*" = ["*.yaml"]
+"*" = ["*.yaml", "*.cpp", "*.cu", "*.cuh"]
+"emcfsys.EMCellFound.ops" = ["csrc/*.cpp", "csrc/*.cu", "csrc/*.cuh"]
 
 [tool.setuptools_scm]
 write_to = "src/emcfsys/_version.py"

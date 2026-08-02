@@ -3,6 +3,7 @@ from dataclasses import dataclass
 
 import torch
 
+from ..EMCellFound.metrics.metrics import format_metric_summary, format_per_class_metrics_table
 from ..EMCellFound.train import train_loop
 from .model_registry import register_training_result
 from .training_artifacts import export_training_artifacts
@@ -30,6 +31,8 @@ class SegmentationTrainingRequest:
     boundary_loss_weight: float = 0.0
     lovasz_loss_weight: float = 0.0
     ohem_ce_loss_weight: float = 0.0
+    matching_sampling: str = "random"
+    matching_uncertainty_per_query: bool = True
 
 
 def run_training_task(
@@ -64,9 +67,14 @@ def run_training_task(
             emit_log(f"Epoch {epoch} batch {batch}/{n_batches} loss {loss:.4f}")
 
         if batch == 0 and finished_epoch and epoch_time is not None:
+            metric_summary = format_metric_summary(metrics)
             emit_log(
-                f"Epoch {epoch} finished, avg loss {loss:.4f}, time {epoch_time:.2f}s, metric {metrics}"
+                f"Epoch {epoch} finished, avg loss {loss:.4f}, time {epoch_time:.4f}s, metric {metric_summary}"
             )
+            per_class_metrics = metrics.get("Val_Per_Class") if isinstance(metrics, dict) else None
+            if per_class_metrics:
+                emit_log("Validation per-class metrics (%):")
+                emit_log(format_per_class_metrics_table(per_class_metrics))
 
         if stop_flag_fn is not None and stop_flag_fn() and model_dict is not None:
             interrupted_path = os.path.join(request.save_path, "interrupted_model.pth")
@@ -99,6 +107,8 @@ def run_training_task(
             boundary_loss_weight=request.boundary_loss_weight,
             lovasz_loss_weight=request.lovasz_loss_weight,
             ohem_ce_loss_weight=request.ohem_ce_loss_weight,
+            matching_sampling=request.matching_sampling,
+            matching_uncertainty_per_query=request.matching_uncertainty_per_query,
         )
     except StopIteration:
         emit_log("Training stopped by user.")

@@ -20,6 +20,18 @@ except ImportError:  # pragma: no cover - scipy is a project dependency
     linear_sum_assignment = None
 
 from .BackboneWrapper import CasualBackbones
+from ..ops import (
+    DEFAULT_IMPORTANCE_SAMPLE_RATIO,
+    DEFAULT_MATCHING_SAMPLING,
+    DEFAULT_OVERSAMPLE_RATIO,
+    DEFAULT_POINT_SAMPLING_NUM,
+    MATCHING_SAMPLING_MODES,
+    LocalMultiScaleDeformableAttention,
+    get_matching_point_coords,
+    get_uncertain_point_coords_with_randomness,
+    point_sample,
+    sample_matching_mask_points,
+)
 
 
 def _group_count(channels: int) -> int:
@@ -61,133 +73,6 @@ def _sine_position_embedding(
     return torch.cat((y, x), dim=-1).permute(2, 0, 1).contiguous().to(dtype)
 
 
-class LocalMultiScaleDeformableAttention(nn.Module):
-    """Pure-PyTorch equivalent of MMDetection's deformable attention op."""
-
-    def __init__(
-        self,
-        embed_dim: int,
-        num_heads: int,
-        num_levels: int,
-        num_points: int = 4,
-    ):
-        super().__init__()
-        if embed_dim % num_heads != 0:
-            raise ValueError("embed_dim must be divisible by num_heads")
-        self.embed_dim = embed_dim
-        self.num_heads = num_heads
-        self.num_levels = num_levels
-        self.num_points = num_points
-        self.head_dim = embed_dim // num_heads
-        self.value_proj = nn.Linear(embed_dim, embed_dim)
-        self.sampling_offsets = nn.Linear(
-            embed_dim,
-            num_heads * num_levels * num_points * 2,
-        )
-        self.attention_weights = nn.Linear(
-            embed_dim,
-            num_heads * num_levels * num_points,
-        )
-        self.output_proj = nn.Linear(embed_dim, embed_dim)
-        nn.init.constant_(self.sampling_offsets.weight, 0.0)
-        angles = torch.arange(num_heads, dtype=torch.float32) * (
-            2.0 * math.pi / num_heads
-        )
-        grid = torch.stack((angles.cos(), angles.sin()), dim=-1)
-        grid = (grid / grid.abs().amax(dim=-1, keepdim=True)).view(
-            num_heads, 1, 1, 2
-        ).repeat(1, num_levels, num_points, 1)
-        for point in range(num_points):
-            grid[:, :, point] *= point + 1
-        nn.init.constant_(self.sampling_offsets.weight, 0.0)
-        with torch.no_grad():
-            self.sampling_offsets.bias.copy_(grid.reshape(-1))
-        nn.init.constant_(self.attention_weights.weight, 0.0)
-        nn.init.constant_(self.attention_weights.bias, 0.0)
-
-    def forward(self, query, reference_points, spatial_shapes, query_pos=None):
-        if query_pos is not None:
-            query_with_position = query + query_pos
-        else:
-            query_with_position = query
-
-        batch_size, query_length, _ = query.shape
-        value = self.value_proj(query).view(
-            batch_size,
-            query_length,
-            self.num_heads,
-            self.head_dim,
-        )
-        offsets = self.sampling_offsets(query_with_position).view(
-            batch_size,
-            query_length,
-            self.num_heads,
-            self.num_levels,
-            self.num_points,
-            2,
-        )
-        weights = self.attention_weights(query_with_position).view(
-            batch_size,
-            query_length,
-            self.num_heads,
-            self.num_levels * self.num_points,
-        ).softmax(dim=-1).view(
-            batch_size,
-            query_length,
-            self.num_heads,
-            self.num_levels,
-            self.num_points,
-        )
-        normalizer = spatial_shapes[:, [1, 0]].to(offsets.dtype)
-        locations = reference_points[:, :, None, :, None, :] + offsets / normalizer[
-            None, None, None, :, None, :
-        ]
-
-        output = query.new_zeros(
-            batch_size,
-            query_length,
-            self.num_heads,
-            self.num_points,
-            self.head_dim,
-        )
-        start = 0
-        for level, (height, width) in enumerate(spatial_shapes.tolist()):
-            length = int(height * width)
-            value_level = value[:, start : start + length]
-            value_level = value_level.permute(0, 2, 3, 1).reshape(
-                batch_size * self.num_heads,
-                self.head_dim,
-                int(height),
-                int(width),
-            )
-            grid = locations[:, :, :, level].permute(0, 2, 1, 3, 4)
-            grid = (grid * 2.0 - 1.0).reshape(
-                batch_size * self.num_heads,
-                query_length,
-                self.num_points,
-                2,
-            )
-            sampled = F.grid_sample(
-                value_level,
-                grid,
-                mode="bilinear",
-                padding_mode="zeros",
-                align_corners=False,
-            )
-            sampled = sampled.view(
-                batch_size,
-                self.num_heads,
-                self.head_dim,
-                query_length,
-                self.num_points,
-            ).permute(0, 3, 1, 4, 2)
-            output = output + sampled * weights[:, :, :, level, :, None]
-            start += length
-
-        output = output.sum(dim=3).reshape(batch_size, query_length, self.embed_dim)
-        return self.output_proj(output)
-
-
 class LocalMask2FormerEncoderLayer(nn.Module):
     """Deformable encoder layer used by the local pixel decoder."""
 
@@ -197,6 +82,7 @@ class LocalMask2FormerEncoderLayer(nn.Module):
             hidden_dim,
             num_heads,
             num_levels,
+            batch_first=True,
         )
         self.feedforward = nn.Sequential(
             nn.Linear(hidden_dim, feedforward_dim),
@@ -204,20 +90,17 @@ class LocalMask2FormerEncoderLayer(nn.Module):
             nn.Dropout(0.1),
             nn.Linear(feedforward_dim, hidden_dim),
         )
-        self.dropout1 = nn.Dropout(0.1)
         self.dropout2 = nn.Dropout(0.1)
         self.norm1 = nn.LayerNorm(hidden_dim)
         self.norm2 = nn.LayerNorm(hidden_dim)
 
     def forward(self, query, query_pos, reference_points, spatial_shapes):
         query = self.norm1(
-            query + self.dropout1(
-                self.attention(
-                    query,
-                    reference_points,
-                    spatial_shapes,
-                    query_pos=query_pos,
-                )
+            self.attention(
+                query=query,
+                reference_points=reference_points,
+                spatial_shapes=spatial_shapes,
+                query_pos=query_pos,
             )
         )
         query = self.norm2(query + self.dropout2(self.feedforward(query)))
@@ -483,6 +366,11 @@ class Mask2FormerDecoderHead(nn.Module):
         memory_max_size: int = 64,
         mask_dim: int | None = None,
         aux_on: bool = True,
+        num_points: int = DEFAULT_POINT_SAMPLING_NUM,
+        oversample_ratio: float = DEFAULT_OVERSAMPLE_RATIO,
+        importance_sample_ratio: float = DEFAULT_IMPORTANCE_SAMPLE_RATIO,
+        matching_sampling: str = DEFAULT_MATCHING_SAMPLING,
+        matching_uncertainty_per_query: bool = True,
     ):
         super().__init__()
         if hidden_dim % num_heads != 0:
@@ -492,6 +380,16 @@ class Mask2FormerDecoderHead(nn.Module):
         self.num_queries = int(num_queries)
         self.memory_max_size = None if memory_max_size is None else int(memory_max_size)
         self.aux_on = bool(aux_on)
+        self.num_points = int(num_points)
+        self.oversample_ratio = float(oversample_ratio)
+        self.importance_sample_ratio = float(importance_sample_ratio)
+        self.matching_sampling = str(matching_sampling).strip().lower()
+        if self.matching_sampling not in MATCHING_SAMPLING_MODES:
+            valid = ", ".join(sorted(MATCHING_SAMPLING_MODES))
+            raise ValueError(f"matching_sampling must be one of: {valid}")
+        self.matching_uncertainty_per_query = bool(
+            matching_uncertainty_per_query
+        )
         self.mask_dim = hidden_dim if mask_dim is None else int(mask_dim)
         self.num_transformer_feat_level = min(
             int(num_transformer_feat_level), len(in_channels)
@@ -544,6 +442,7 @@ class Mask2FormerDecoderHead(nn.Module):
         decoder_features = self._select_feature_levels(projected_features)
         decoder_inputs = []
         decoder_positions = []
+        decoder_target_sizes = []
 
         for level, feature in enumerate(decoder_features):
             height, width = feature.shape[-2:]
@@ -552,6 +451,7 @@ class Mask2FormerDecoderHead(nn.Module):
                 pooled_width = min(width, self.memory_max_size)
             else:
                 pooled_height, pooled_width = height, width
+            decoder_target_sizes.append((pooled_height, pooled_width))
             if (pooled_height, pooled_width) != (height, width):
                 feature = F.adaptive_avg_pool2d(
                     feature,
@@ -576,7 +476,12 @@ class Mask2FormerDecoderHead(nn.Module):
             decoder_inputs.append(decoder_input)
             decoder_positions.append(decoder_position)
 
-        return decoder_features, decoder_inputs, decoder_positions
+        return (
+            decoder_features,
+            decoder_inputs,
+            decoder_positions,
+            decoder_target_sizes,
+        )
 
     def _forward_head(self, decoder_out, mask_features, attn_mask_target_size):
         normalized = self.decoder_norm(decoder_out)
@@ -630,7 +535,12 @@ class Mask2FormerDecoderHead(nn.Module):
 
     def _forward_queries(self, features, output_size, build_semantic_outputs=True):
         mask_features, projected_features = self.pixel_decoder(features)
-        decoder_features, decoder_inputs, decoder_positions = (
+        (
+            decoder_features,
+            decoder_inputs,
+            decoder_positions,
+            decoder_target_sizes,
+        ) = (
             self._build_decoder_inputs(projected_features)
         )
         batch_size = mask_features.shape[0]
@@ -646,7 +556,7 @@ class Mask2FormerDecoderHead(nn.Module):
         class_logits, mask_logits, attn_mask = self._forward_head(
             query_feat,
             mask_features,
-            decoder_features[0].shape[-2:],
+            decoder_target_sizes[0],
         )
         class_predictions = [class_logits]
         mask_predictions = [mask_logits]
@@ -678,9 +588,9 @@ class Mask2FormerDecoderHead(nn.Module):
             class_logits, mask_logits, attn_mask = self._forward_head(
                 query_feat,
                 mask_features,
-                decoder_features[
+                decoder_target_sizes[
                     (level_index + 1) % self.num_transformer_feat_level
-                ].shape[-2:],
+                ],
             )
             class_predictions.append(class_logits)
             mask_predictions.append(mask_logits)
@@ -752,25 +662,41 @@ class Mask2FormerDecoderHead(nn.Module):
             mode="nearest",
         ).squeeze(1)
         query_probabilities = class_logits.softmax(dim=-1)
-        mask_probabilities = mask_logits.sigmoid()
+        with torch.no_grad():
+            matching_points = get_matching_point_coords(
+                mask_logits.unsqueeze(1),
+                num_points=self.num_points,
+                sampling=self.matching_sampling,
+                oversample_ratio=self.oversample_ratio,
+                importance_sample_ratio=self.importance_sample_ratio,
+                per_query=self.matching_uncertainty_per_query,
+            )
+        query_points, target_points = sample_matching_mask_points(
+            mask_logits,
+            gt_masks,
+            matching_points,
+        )
+        pair_targets = (
+            target_points
+            if target_points.ndim == 3
+            else target_points.unsqueeze(0)
+        )
 
         classification_cost = -query_probabilities[:, gt_labels]
-        pred_flat = mask_logits.flatten(1)
-        target_flat = gt_masks.flatten(1)
+        mask_probabilities = query_points.sigmoid()
         bce_cost = F.binary_cross_entropy_with_logits(
-            pred_flat[:, None, :].expand(-1, gt_labels.numel(), -1),
-            target_flat[None, :, :].expand(self.num_queries, -1, -1),
+            query_points[:, None, :].expand(-1, gt_labels.numel(), -1),
+            pair_targets,
             reduction="none",
         ).mean(dim=-1)
-        pred_prob_flat = mask_probabilities.flatten(1)
         intersection = (
-            pred_prob_flat[:, None, :] * target_flat[None, :, :]
+            mask_probabilities[:, None, :] * pair_targets
         ).sum(dim=-1)
         dice_cost = 1.0 - (
             (2.0 * intersection + 1.0)
             / (
-                pred_prob_flat[:, None, :].sum(dim=-1)
-                + target_flat[None, :, :].sum(dim=-1)
+                mask_probabilities[:, None, :].sum(dim=-1)
+                + pair_targets.sum(dim=-1)
                 + 1.0
             )
         )
@@ -799,12 +725,24 @@ class Mask2FormerDecoderHead(nn.Module):
         )
         selected_masks = mask_logits[query_indices]
         selected_targets = gt_masks[target_indices]
+        with torch.no_grad():
+            loss_points = get_uncertain_point_coords_with_randomness(
+                selected_masks.unsqueeze(1),
+                num_points=self.num_points,
+                oversample_ratio=self.oversample_ratio,
+                importance_sample_ratio=self.importance_sample_ratio,
+            )
+        selected_masks = point_sample(
+            selected_masks.unsqueeze(1), loss_points
+        ).squeeze(1)
+        selected_targets = point_sample(
+            selected_targets.unsqueeze(1), loss_points
+        ).squeeze(1)
         loss_mask = F.binary_cross_entropy_with_logits(
             selected_masks,
             selected_targets,
         )
-        selected_probabilities = selected_masks.sigmoid().flatten(1)
-        selected_targets = selected_targets.flatten(1)
+        selected_probabilities = selected_masks.sigmoid()
         dice = (
             2.0 * (selected_probabilities * selected_targets).sum(dim=1) + 1.0
         ) / (
@@ -872,10 +810,16 @@ class Mask2Former(nn.Module):
         feedforward_dim=2048,
         num_transformer_feat_level=3,
         memory_max_size=64,
+        matching_sampling=DEFAULT_MATCHING_SAMPLING,
+        matching_uncertainty_per_query=True,
     ):
         super().__init__()
         self.num_classes = int(num_classes)
         self.aux_on = bool(aux_on)
+        self.matching_sampling = str(matching_sampling).strip().lower()
+        self.matching_uncertainty_per_query = bool(
+            matching_uncertainty_per_query
+        )
         self.backbone = CasualBackbones(
             backbone_name,
             pretrained=pretrained,
@@ -893,6 +837,8 @@ class Mask2Former(nn.Module):
             num_transformer_feat_level=num_transformer_feat_level,
             memory_max_size=memory_max_size,
             aux_on=aux_on,
+            matching_sampling=matching_sampling,
+            matching_uncertainty_per_query=matching_uncertainty_per_query,
         )
 
     def forward(self, x, return_query_outputs=False):

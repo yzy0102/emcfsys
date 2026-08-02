@@ -1466,6 +1466,15 @@ class DLTrainingContainer(Container):
 
         self.backbone_name = ComboBox(label="Backbone", choices=backbone_zoom, value="resnet34")
         self.model_name = ComboBox(label="Model", choices=model_zoom, value="deeplabv3plus")
+        self.matching_sampling = ComboBox(
+            label="Mask2Former matching points",
+            choices=["random", "uncertain"],
+            value="random",
+        )
+        self.matching_uncertainty_per_query = CheckBox(
+            label="Uncertain points per query",
+            value=True,
+        )
 
         self.training_preset = ComboBox(
             label="Training preset",
@@ -1501,6 +1510,8 @@ class DLTrainingContainer(Container):
             self.pretrained_model,
             self.backbone_name,
             self.model_name,
+            self.matching_sampling,
+            self.matching_uncertainty_per_query,
             self.training_preset,
             self.lr,
             self.batch_size,
@@ -1528,7 +1539,9 @@ class DLTrainingContainer(Container):
         self._save_config_button.clicked.connect(self._save_config)
         self._load_config_button.clicked.connect(self._load_config)
         self.training_preset.changed.connect(self._apply_training_preset)
+        self.model_name.changed.connect(self._update_matching_state)
         self.use_advanced_losses.changed.connect(self._update_advanced_loss_state)
+        self._update_matching_state()
         self._update_advanced_loss_state()
 
         self._fig, self._ax = plt.subplots()
@@ -1586,6 +1599,11 @@ class DLTrainingContainer(Container):
         self.lovasz_loss_weight.visible = enabled
         self.ohem_ce_loss_weight.visible = enabled
 
+    def _update_matching_state(self):
+        enabled = self.model_name.value == "mask2former"
+        self.matching_sampling.visible = enabled
+        self.matching_uncertainty_per_query.visible = enabled
+
     def _config_widget_map(self):
         return {
             "images_dir": self.images_dir,
@@ -1594,6 +1612,8 @@ class DLTrainingContainer(Container):
             "pretrained_model": self.pretrained_model,
             "backbone_name": self.backbone_name,
             "model_name": self.model_name,
+            "matching_sampling": self.matching_sampling,
+            "matching_uncertainty_per_query": self.matching_uncertainty_per_query,
             "training_preset": self.training_preset,
             "lr": self.lr,
             "batch_size": self.batch_size,
@@ -1631,6 +1651,7 @@ class DLTrainingContainer(Container):
         try:
             config = load_training_config(config_path, expected_task="semantic_segmentation")
             _apply_widget_values(self._config_widget_map(), config.get("parameters", {}))
+            self._update_matching_state()
             self._update_advanced_loss_state()
             self._log(f"Semantic segmentation config loaded from: {config_path}")
         except Exception as error:
@@ -1642,6 +1663,7 @@ class DLTrainingContainer(Container):
         if not preset:
             return
         _apply_widget_values(self._config_widget_map(), preset)
+        self._update_matching_state()
         self._update_advanced_loss_state()
         self._log(f"Applied semantic segmentation preset: {preset_name}")
 
@@ -1667,6 +1689,8 @@ class DLTrainingContainer(Container):
             boundary_loss_weight=self.boundary_loss_weight.value,
             lovasz_loss_weight=self.lovasz_loss_weight.value,
             ohem_ce_loss_weight=self.ohem_ce_loss_weight.value,
+            matching_sampling=self.matching_sampling.value,
+            matching_uncertainty_per_query=self.matching_uncertainty_per_query.value,
         )
 
     def _create_training_worker(self, request):
@@ -1961,6 +1985,15 @@ class InstanceSegmentationTrainingContainer(Container):
         self.save_path = FileEdit(label="Save model folder", mode="d")
         self.backbone_name = ComboBox(label="Backbone", choices=backbone_zoom, value="emcellfound_vit_base")
         self.model_name = ComboBox(label="Model", choices=INSTANCE_MODEL_CHOICES, value="rtm_instance")
+        self.matching_sampling = ComboBox(
+            label="Mask2Former matching points",
+            choices=["random", "uncertain"],
+            value="random",
+        )
+        self.matching_uncertainty_per_query = CheckBox(
+            label="Uncertain points per query",
+            value=True,
+        )
         self.img_size = SpinBox(label="Image size", min=1, max=40960, step=1, value=512)
         self.num_classes = SpinBox(label="Num classes (0=from COCO)", min=0, max=1000, step=1, value=0)
         self.training_preset = ComboBox(
@@ -2100,6 +2133,8 @@ class InstanceSegmentationTrainingContainer(Container):
             self.save_path,
             self.backbone_name,
             self.model_name,
+            self.matching_sampling,
+            self.matching_uncertainty_per_query,
             self.img_size,
             self.num_classes,
             self.training_preset,
@@ -2147,9 +2182,11 @@ class InstanceSegmentationTrainingContainer(Container):
         self._save_config_button.clicked.connect(self._save_config)
         self._load_config_button.clicked.connect(self._load_config)
         self.training_preset.changed.connect(self._apply_training_preset)
+        self.model_name.changed.connect(self._update_matching_state)
         self.use_separate_eval_sets.changed.connect(self._update_eval_dataset_state)
         self.use_advanced_mask_losses.changed.connect(self._update_advanced_loss_state)
         self.use_data_augmentation.changed.connect(self._update_data_augmentation_state)
+        self._update_matching_state()
         self._update_eval_dataset_state()
         self._update_advanced_loss_state()
         self._update_data_augmentation_state()
@@ -2208,6 +2245,11 @@ class InstanceSegmentationTrainingContainer(Container):
         self.test_image_dir.visible = use_separate
         self.test_annotation_path.visible = use_separate
 
+    def _update_matching_state(self):
+        enabled = self.model_name.value == "mask2former_instance"
+        self.matching_sampling.visible = enabled
+        self.matching_uncertainty_per_query.visible = enabled
+
     def _update_advanced_loss_state(self):
         enabled = self.use_advanced_mask_losses.value
         self.boundary_loss_weight.visible = enabled
@@ -2238,6 +2280,8 @@ class InstanceSegmentationTrainingContainer(Container):
             "save_path": self.save_path,
             "backbone_name": self.backbone_name,
             "model_name": self.model_name,
+            "matching_sampling": self.matching_sampling,
+            "matching_uncertainty_per_query": self.matching_uncertainty_per_query,
             "img_size": self.img_size,
             "num_classes": self.num_classes,
             "training_preset": self.training_preset,
@@ -2354,6 +2398,8 @@ class InstanceSegmentationTrainingContainer(Container):
             boundary_loss_weight=self.boundary_loss_weight.value,
             focal_mask_loss_weight=self.focal_mask_loss_weight.value,
             tversky_loss_weight=self.tversky_loss_weight.value,
+            matching_sampling=self.matching_sampling.value,
+            matching_uncertainty_per_query=self.matching_uncertainty_per_query.value,
             use_data_augmentation=self.use_data_augmentation.value,
             aug_horizontal_flip_prob=self.aug_horizontal_flip_prob.value,
             aug_vertical_flip_prob=self.aug_vertical_flip_prob.value,

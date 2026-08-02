@@ -3,7 +3,12 @@ import json
 
 from emcfsys.utils.training_tasks import SegmentationTrainingRequest, run_training_task
 from emcfsys.utils.training_artifacts import export_training_artifacts, load_training_config
-from emcfsys.EMCellFound.metrics.metrics import build_segmentation_loss
+from emcfsys.EMCellFound.metrics.metrics import (
+    build_segmentation_loss,
+    compute_per_class_metrics,
+    format_metric_summary,
+    format_per_class_metrics_table,
+)
 import torch
 
 
@@ -123,6 +128,22 @@ def test_advanced_segmentation_loss_backpropagates():
 
     assert torch.isfinite(loss)
     assert logits.grad is not None
+
+
+def test_per_class_metrics_and_log_format():
+    pred = torch.tensor([[[0, 1, 1, 0], [0, 1, 0, 0]]])
+    target = torch.tensor([[[0, 1, 0, 0], [1, 1, 0, 0]]])
+
+    rows = compute_per_class_metrics(pred, target, num_classes=2)
+    summary = format_metric_summary({"IoU": 0.79417278, "Val_F1": 0.8724278})
+    table = format_per_class_metrics_table(rows)
+
+    assert rows[0]["class_name"] == "background"
+    assert rows[1]["class_name"] == "class_1"
+    assert summary == "{'IoU': 0.7942, 'Val_F1': 0.8724}"
+    assert "|   Class    |   Acc" in table
+    assert "| background " in table
+    assert "66.6667" in table
 
 
 def test_export_training_artifacts_writes_config_log_and_metrics(tmp_path):

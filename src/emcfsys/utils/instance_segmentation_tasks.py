@@ -75,6 +75,8 @@ class InstanceSegmentationTrainingRequest:
     boundary_loss_weight: float = 0.0
     focal_mask_loss_weight: float = 0.0
     tversky_loss_weight: float = 0.0
+    matching_sampling: str = "random"
+    matching_uncertainty_per_query: bool = True
     use_data_augmentation: bool = DEFAULT_INSTANCE_AUGMENTATION["use_data_augmentation"]
     aug_horizontal_flip_prob: float = DEFAULT_INSTANCE_AUGMENTATION["aug_horizontal_flip_prob"]
     aug_vertical_flip_prob: float = DEFAULT_INSTANCE_AUGMENTATION["aug_vertical_flip_prob"]
@@ -249,8 +251,12 @@ def _load_instance_checkpoint(request: InstanceSegmentationInferenceRequest, dev
                     "num_queries": int(checkpoint.get("num_queries", 100)),
                     "mask_dim": int(checkpoint.get("mask_dim", 128)),
                     "transformer_heads": int(checkpoint.get("transformer_heads", 4)),
-                    "transformer_layers": int(checkpoint.get("transformer_layers", 2)),
-                    "boundary_loss_weight": float(checkpoint.get("boundary_loss_weight", 0.0)),
+                     "transformer_layers": int(checkpoint.get("transformer_layers", 2)),
+                     "matching_sampling": checkpoint.get("matching_sampling", "random"),
+                     "matching_uncertainty_per_query": bool(
+                         checkpoint.get("matching_uncertainty_per_query", True)
+                     ),
+                     "boundary_loss_weight": float(checkpoint.get("boundary_loss_weight", 0.0)),
                     "focal_mask_loss_weight": float(checkpoint.get("focal_mask_loss_weight", 0.0)),
                     "tversky_loss_weight": float(checkpoint.get("tversky_loss_weight", 0.0)),
                 },
@@ -298,6 +304,10 @@ def _checkpoint_payload(
         "mask_dim": getattr(model, "mask_dim", 128),
         "transformer_heads": getattr(model, "transformer_heads", 4),
         "transformer_layers": getattr(model, "transformer_layers", 2),
+        "matching_sampling": getattr(model, "matching_sampling", "random"),
+        "matching_uncertainty_per_query": getattr(
+            model, "matching_uncertainty_per_query", True
+        ),
         "boundary_loss_weight": getattr(model, "boundary_loss_weight", 0.0),
         "focal_mask_loss_weight": getattr(model, "focal_mask_loss_weight", 0.0),
         "tversky_loss_weight": getattr(model, "tversky_loss_weight", 0.0),
@@ -751,6 +761,8 @@ def iter_instance_segmentation_training_task(
             "tversky_loss_weight": request.tversky_loss_weight
             if request.use_advanced_mask_losses
             else 0.0,
+            "matching_sampling": request.matching_sampling,
+            "matching_uncertainty_per_query": request.matching_uncertainty_per_query,
         },
     )
     if request.checkpoint_path:

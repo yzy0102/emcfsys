@@ -278,6 +278,32 @@ def test_instance_segmentation_widgets_construct(make_napari_viewer):
     assert converter_widget._cancel_button.enabled is False
 
 
+def test_mask2former_matching_controls_only_show_for_mask2former_models():
+    semantic_widget = DLTrainingContainer(None)
+    assert semantic_widget.matching_sampling.native.isHidden()
+    assert semantic_widget.matching_uncertainty_per_query.native.isHidden()
+
+    semantic_widget.model_name.value = "mask2former"
+    assert not semantic_widget.matching_sampling.native.isHidden()
+    assert not semantic_widget.matching_uncertainty_per_query.native.isHidden()
+
+    semantic_widget.model_name.value = "unet"
+    assert semantic_widget.matching_sampling.native.isHidden()
+    assert semantic_widget.matching_uncertainty_per_query.native.isHidden()
+
+    instance_widget = InstanceSegmentationTrainingContainer(None)
+    assert instance_widget.matching_sampling.native.isHidden()
+    assert instance_widget.matching_uncertainty_per_query.native.isHidden()
+
+    instance_widget.model_name.value = "mask2former_instance"
+    assert not instance_widget.matching_sampling.native.isHidden()
+    assert not instance_widget.matching_uncertainty_per_query.native.isHidden()
+
+    instance_widget.model_name.value = "rtm_instance"
+    assert instance_widget.matching_sampling.native.isHidden()
+    assert instance_widget.matching_uncertainty_per_query.native.isHidden()
+
+
 def test_labelme_instance_converter_widget_runs_in_worker_and_can_cancel(make_napari_viewer, tmp_path):
     labelme_dir = tmp_path / "labelme"
     _write_labelme_instance_widget_sample(labelme_dir)
