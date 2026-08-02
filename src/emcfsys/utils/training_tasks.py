@@ -33,6 +33,11 @@ class SegmentationTrainingRequest:
     ohem_ce_loss_weight: float = 0.0
     matching_sampling: str = "random"
     matching_uncertainty_per_query: bool = True
+    split_dir: str | None = None
+    use_split_files: bool = False
+    train_split_path: str | None = None
+    val_split_path: str | None = None
+    test_split_path: str | None = None
 
 
 def run_training_task(
@@ -109,6 +114,7 @@ def run_training_task(
             ohem_ce_loss_weight=request.ohem_ce_loss_weight,
             matching_sampling=request.matching_sampling,
             matching_uncertainty_per_query=request.matching_uncertainty_per_query,
+            split_dir=request.split_dir,
         )
     except StopIteration:
         emit_log("Training stopped by user.")

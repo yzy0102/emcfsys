@@ -1,5 +1,6 @@
 import json
 import numpy as np
+import pytest
 from pathlib import Path
 from PIL import Image
 from qtpy.QtCore import QEventLoop, QTimer
@@ -469,6 +470,39 @@ def test_semantic_segmentation_training_widget_builds_advanced_loss_request(tmp_
     assert request.boundary_loss_weight == 0.8
     assert request.lovasz_loss_weight == 0.9
     assert request.ohem_ce_loss_weight == 1.0
+
+
+def test_semantic_segmentation_split_controls_are_conditional(tmp_path):
+    training_widget = DLTrainingContainer(None)
+
+    assert training_widget.train_split_path.native.isHidden()
+    assert training_widget.val_split_path.native.isHidden()
+    assert training_widget.test_split_path.native.isHidden()
+
+    training_widget.use_split_files.value = True
+    assert not training_widget.train_split_path.native.isHidden()
+    assert not training_widget.val_split_path.native.isHidden()
+    assert not training_widget.test_split_path.native.isHidden()
+    training_widget.train_split_path.value = tmp_path / "train.txt"
+    training_widget.val_split_path.value = tmp_path / "val.txt"
+    training_widget.test_split_path.value = tmp_path / "test.txt"
+
+    assert not training_widget.val_split_path.native.isHidden()
+    assert not training_widget.test_split_path.native.isHidden()
+    request = training_widget._build_training_request()
+
+    assert request.split_dir == str(tmp_path)
+    assert request.use_split_files is True
+    assert str(request.test_split_path) == str(tmp_path / "test.txt")
+
+
+def test_semantic_segmentation_split_controls_require_all_split_files(tmp_path):
+    training_widget = DLTrainingContainer(None)
+    training_widget.use_split_files.value = True
+    training_widget.train_split_path.value = tmp_path / "train.txt"
+
+    with pytest.raises(ValueError, match="val split file"):
+        training_widget._build_training_request()
 
 
 def test_semantic_segmentation_training_widget_applies_preset():

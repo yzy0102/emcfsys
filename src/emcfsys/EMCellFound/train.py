@@ -32,6 +32,47 @@ import gc
 from .models.PSPNet import PSPNet
 from .models.model_factory import get_model
 
+
+def _load_split_indices(split_dir, dataset):
+    """Resolve train/val split stems to indices in ``SegmentationDataset``."""
+
+    split_root = Path(split_dir)
+    image_indices = {
+        Path(image_name).stem: index
+        for index, image_name in enumerate(dataset.img_list)
+    }
+    resolved = {}
+    for split_name in ("train", "val"):
+        split_path = split_root / f"{split_name}.txt"
+        if not split_path.is_file():
+            raise FileNotFoundError(
+                f"Missing semantic segmentation split file: {split_path}"
+            )
+        names = [
+            line.strip()
+            for line in split_path.read_text(encoding="utf-8").splitlines()
+            if line.strip()
+        ]
+        indices = []
+        for name in names:
+            stem = Path(name).stem
+            if stem not in image_indices:
+                raise ValueError(
+                    f"Split entry {name!r} is not present in "
+                    f"{dataset.img_dir}"
+                )
+            indices.append(image_indices[stem])
+        if len(indices) != len(set(indices)):
+            raise ValueError(f"Duplicate entries found in {split_path}")
+        resolved[split_name] = indices
+
+    overlap = set(resolved["train"]).intersection(resolved["val"])
+    if overlap:
+        names = [dataset.img_list[index] for index in sorted(overlap)]
+        raise ValueError(f"Train/val split overlap detected: {names[:5]}")
+    return resolved["train"], resolved["val"]
+
+
 def train_loop(images_dir, masks_dir, 
                save_path, 
                model_name='deeplabv3plus',
@@ -51,7 +92,8 @@ def train_loop(images_dir, masks_dir,
                lovasz_loss_weight=0.0,
                ohem_ce_loss_weight=0.0,
                matching_sampling="random",
-               matching_uncertainty_per_query=True):
+               matching_uncertainty_per_query=True,
+               split_dir=None):
     
     if not os.path.exists(save_path):
         os.makedirs(save_path, exist_ok=True)
@@ -61,16 +103,24 @@ def train_loop(images_dir, masks_dir,
     # Keep the split indices shared, but use separate train/validation transforms.
     # This prevents random augmentation from leaking into validation metrics.
     base_dataset = SegmentationDataset(images_dir, masks_dir, transforms=None)
-    val_size = int(0.2 * len(base_dataset))
-    if len(base_dataset) >= 2:
-        val_size = max(1, val_size)
-    val_size = min(val_size, max(len(base_dataset) - 1, 0))
-    train_size = len(base_dataset) - val_size
+    if split_dir is None:
+        val_size = int(0.2 * len(base_dataset))
+        if len(base_dataset) >= 2:
+            val_size = max(1, val_size)
+        val_size = min(val_size, max(len(base_dataset) - 1, 0))
+        train_size = len(base_dataset) - val_size
 
-    split_generator = torch.Generator().manual_seed(42)
-    permutation = torch.randperm(len(base_dataset), generator=split_generator).tolist()
-    train_indices = permutation[:train_size]
-    val_indices = permutation[train_size:]
+        split_generator = torch.Generator().manual_seed(42)
+        permutation = torch.randperm(
+            len(base_dataset), generator=split_generator
+        ).tolist()
+        train_indices = permutation[:train_size]
+        val_indices = permutation[train_size:]
+    else:
+        train_indices, val_indices = _load_split_indices(
+            split_dir,
+            base_dataset,
+        )
 
     train_dataset_source = SegmentationDataset(
         images_dir,

@@ -1,8 +1,11 @@
 import csv
 import json
+from PIL import Image
 
 from emcfsys.utils.training_tasks import SegmentationTrainingRequest, run_training_task
 from emcfsys.utils.training_artifacts import export_training_artifacts, load_training_config
+from emcfsys.EMCellFound.datasets.segmentation2D import SegmentationDataset
+from emcfsys.EMCellFound.train import _load_split_indices
 from emcfsys.EMCellFound.metrics.metrics import (
     build_segmentation_loss,
     compute_per_class_metrics,
@@ -105,6 +108,57 @@ def test_run_training_task_passes_advanced_loss_config(monkeypatch, tmp_path):
     assert captured["boundary_loss_weight"] == 0.8
     assert captured["lovasz_loss_weight"] == 0.9
     assert captured["ohem_ce_loss_weight"] == 1.0
+
+
+def test_run_training_task_passes_split_directory(monkeypatch, tmp_path):
+    captured = {}
+
+    def fake_train_loop(images_dir, masks_dir, save_path, **kwargs):
+        captured.update(kwargs)
+        return save_path
+
+    monkeypatch.setattr("emcfsys.utils.training_tasks.train_loop", fake_train_loop)
+    request = SegmentationTrainingRequest(
+        images_dir="images",
+        masks_dir="masks",
+        save_path=str(tmp_path / "save_dir"),
+        backbone_name="resnet34",
+        model_name="unet",
+        lr=1e-4,
+        batch_size=2,
+        epochs=1,
+        device="cpu",
+        classes_num=2,
+        target_size=64,
+        ignore_index=-1,
+        split_dir="splits",
+    )
+
+    run_training_task(request)
+
+    assert captured["split_dir"] == "splits"
+
+
+def test_load_split_indices_uses_train_and_val_files(tmp_path):
+    images_dir = tmp_path / "images"
+    masks_dir = tmp_path / "masks"
+    split_dir = tmp_path / "splits"
+    images_dir.mkdir()
+    masks_dir.mkdir()
+    split_dir.mkdir()
+
+    for name in ("a", "b", "c"):
+        Image.new("RGB", (4, 4)).save(images_dir / f"{name}.tif")
+        Image.new("L", (4, 4)).save(masks_dir / f"{name}.png")
+
+    (split_dir / "train.txt").write_text("c\n", encoding="utf-8")
+    (split_dir / "val.txt").write_text("a\n", encoding="utf-8")
+    dataset = SegmentationDataset(str(images_dir), str(masks_dir))
+
+    train_indices, val_indices = _load_split_indices(split_dir, dataset)
+
+    assert train_indices == [2]
+    assert val_indices == [0]
 
 
 def test_advanced_segmentation_loss_backpropagates():

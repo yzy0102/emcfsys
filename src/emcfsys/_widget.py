@@ -1461,6 +1461,13 @@ class DLTrainingContainer(Container):
 
         self.images_dir = FileEdit(label="Images folder", mode="d")
         self.masks_dir = FileEdit(label="Masks folder", mode="d")
+        self.use_split_files = CheckBox(
+            label="Use split files (train/val/test)",
+            value=False,
+        )
+        self.train_split_path = FileEdit(label="Train split (train.txt)", mode="r", nullable=True)
+        self.val_split_path = FileEdit(label="Val split (val.txt)", mode="r", nullable=True)
+        self.test_split_path = FileEdit(label="Test split (test.txt)", mode="r", nullable=True)
         self.save_path = FileEdit(label="Save model as (.pth)", mode="d")
         self.pretrained_model = FileEdit(label="Pretrained model (.pth)", nullable=True, mode="r")
 
@@ -1506,6 +1513,10 @@ class DLTrainingContainer(Container):
         self.extend([
             self.images_dir,
             self.masks_dir,
+            self.use_split_files,
+            self.train_split_path,
+            self.val_split_path,
+            self.test_split_path,
             self.save_path,
             self.pretrained_model,
             self.backbone_name,
@@ -1541,8 +1552,10 @@ class DLTrainingContainer(Container):
         self.training_preset.changed.connect(self._apply_training_preset)
         self.model_name.changed.connect(self._update_matching_state)
         self.use_advanced_losses.changed.connect(self._update_advanced_loss_state)
+        self.use_split_files.changed.connect(self._update_split_state)
         self._update_matching_state()
         self._update_advanced_loss_state()
+        self._update_split_state()
 
         self._fig, self._ax = plt.subplots()
         self._canvas = FigureCanvas(self._fig)
@@ -1604,10 +1617,43 @@ class DLTrainingContainer(Container):
         self.matching_sampling.visible = enabled
         self.matching_uncertainty_per_query.visible = enabled
 
+    def _update_split_state(self):
+        enabled = bool(self.use_split_files.value)
+        self.train_split_path.visible = enabled
+        self.val_split_path.visible = enabled
+        self.test_split_path.visible = enabled
+
+    def _resolve_split_dir(self):
+        if not self.use_split_files.value:
+            return None
+
+        train_path = normalize_optional_path(self.train_split_path.value)
+        val_path = normalize_optional_path(self.val_split_path.value)
+        test_path = normalize_optional_path(self.test_split_path.value)
+
+        required_paths = {
+            "train": train_path,
+            "val": val_path,
+            "test": test_path,
+        }
+        for split_name, split_path in required_paths.items():
+            expected_name = f"{split_name}.txt"
+            if not split_path or Path(split_path).name.lower() != expected_name:
+                raise ValueError(f"The {split_name} split file must be named {expected_name}.")
+
+        split_parents = {Path(split_path).parent.resolve() for split_path in required_paths.values()}
+        if len(split_parents) != 1:
+            raise ValueError("train.txt, val.txt, and test.txt must be in the same folder.")
+        return str(Path(train_path).parent)
+
     def _config_widget_map(self):
         return {
             "images_dir": self.images_dir,
             "masks_dir": self.masks_dir,
+            "use_split_files": self.use_split_files,
+            "train_split_path": self.train_split_path,
+            "val_split_path": self.val_split_path,
+            "test_split_path": self.test_split_path,
             "save_path": self.save_path,
             "pretrained_model": self.pretrained_model,
             "backbone_name": self.backbone_name,
@@ -1653,6 +1699,7 @@ class DLTrainingContainer(Container):
             _apply_widget_values(self._config_widget_map(), config.get("parameters", {}))
             self._update_matching_state()
             self._update_advanced_loss_state()
+            self._update_split_state()
             self._log(f"Semantic segmentation config loaded from: {config_path}")
         except Exception as error:
             self._log(f"Failed to load semantic segmentation config: {error}")
@@ -1665,6 +1712,7 @@ class DLTrainingContainer(Container):
         _apply_widget_values(self._config_widget_map(), preset)
         self._update_matching_state()
         self._update_advanced_loss_state()
+        self._update_split_state()
         self._log(f"Applied semantic segmentation preset: {preset_name}")
 
     def _build_training_request(self):
@@ -1691,6 +1739,11 @@ class DLTrainingContainer(Container):
             ohem_ce_loss_weight=self.ohem_ce_loss_weight.value,
             matching_sampling=self.matching_sampling.value,
             matching_uncertainty_per_query=self.matching_uncertainty_per_query.value,
+            split_dir=self._resolve_split_dir(),
+            use_split_files=self.use_split_files.value,
+            train_split_path=normalize_optional_path(self.train_split_path.value),
+            val_split_path=normalize_optional_path(self.val_split_path.value),
+            test_split_path=normalize_optional_path(self.test_split_path.value),
         )
 
     def _create_training_worker(self, request):
