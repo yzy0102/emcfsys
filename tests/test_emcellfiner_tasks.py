@@ -1,12 +1,33 @@
+import pytest
+import torch
+from torch import nn
+
 import numpy as np
 from PIL import Image
 
+from emcfsys.EMCellFiner.hat.models.hat_model import HATModel
 from emcfsys.utils.emcellfiner_tasks import (
     EMCellFinerRequest,
     iter_emcellfiner_batch_inference,
     resolve_emcellfiner_device,
     run_emcellfiner_single_inference,
 )
+
+
+@pytest.mark.parametrize("scale", [1, 2, 4])
+def test_hat_model_forward_returns_requested_scale(scale):
+    model = HATModel.__new__(HATModel)
+    nn.Module.__init__(model)
+    model.net_g = nn.Upsample(scale_factor=4, mode="nearest")
+    model.tile_size = 512
+    model.tile_pad = 32
+    model.window_size = 16
+    model.scale = 4
+    model.scale_temp = scale
+
+    output = model(torch.zeros(1, 3, 16, 24))
+
+    assert output.shape[-2:] == (16 * scale, 24 * scale)
 
 
 def test_resolve_emcellfiner_device(monkeypatch):

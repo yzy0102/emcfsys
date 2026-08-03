@@ -29,7 +29,9 @@ class HATModel(nn.Module):
         self.tile_pad = tile_pad
         self.window_size = window_size
         self.scale = 4
-        self.scale_temp = scale
+        self.scale_temp = int(scale)
+        if self.scale_temp not in (1, 2, 4):
+            raise ValueError("EMCellFiner scale must be one of: 1, 2, 4")
     
         checkpoint = None 
         
@@ -161,10 +163,15 @@ class HATModel(nn.Module):
         self.pre_process()
         self.tile_process()
         self.post_process()
-        if self.scale_temp == 1:
-            # resze self.output to match self.lq
-            self.output = F.interpolate(self.output, size=self.lq.size()[2:], mode='bicubic', align_corners=False)
-        if self.scale_temp == 2:
-            # return self.output to match self.lq *2
-            self.output = F.interpolate(self.output, size=self.lq.size()[2:]*2, mode='bicubic', align_corners=False)
+        target_size = tuple(
+            dimension * self.scale_temp
+            for dimension in self.lq.shape[-2:]
+        )
+        if tuple(self.output.shape[-2:]) != target_size:
+            self.output = F.interpolate(
+                self.output,
+                size=target_size,
+                mode="bicubic",
+                align_corners=False,
+            )
         return self.output

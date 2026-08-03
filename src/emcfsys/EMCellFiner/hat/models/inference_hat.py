@@ -39,11 +39,11 @@ def hat_infer_numpy(
     #     img = image.astype(np.float32) / 255.0
     # else:
     #     img = image.copy()
-    # 保证输入是8bit图
+    # 8bit image to 0-1 float32
     image = normalize_to_uint8(image)
-    # 然后转成float32
+    # convert to float32
     image = np.array(image).astype(np.float32) / 255.
-    # 确保image是3通道 输入
+    # 3 channel image input is must
     if image.ndim == 2:
         image = np.stack([image] * 3, axis=-1)
     elif image.shape[-1] == 1:
