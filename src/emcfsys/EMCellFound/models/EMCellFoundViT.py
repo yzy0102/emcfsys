@@ -9,10 +9,7 @@ from emcfsys.model_cache import (
     resolve_pretrained_weight_path,
 )
 # 🔥 你自己的 GitHub Release 权重链接
-EMCELLFINER_PRETRAINED = {
-    "emcellfiner_vit_base_512": 
-        "https://github.com/YOUR_USERNAME/YOUR_REPO/releases/download/v1.0/emcellfiner_vit_base_512.pth"
-}
+
 MAE_EMCELLFOUND_VIT_BASE_WEIGHTS = "MAE_EMCellFoundVit_base_224_inEMCF.pth"
 MAE_EMCELLFOUND_VIT_BASE_URL = (
     "https://github.com/yzy0102/emcfsys/releases/latest/download/"
@@ -22,7 +19,7 @@ MAE_EMCELLFOUND_VIT_BASE_URL = (
 
 def load_pretrained_from_hub(url):
     """使用 torch.hub 下载并缓存模型文件"""
-    print(f"[EMCellFiner] Downloading pretrained model via torch.hub:\n  {url}")
+    print(f"[EMCellFound Model] Downloading pretrained model via torch.hub:\n  {url}")
 
     cached_file = load_state_dict_from_project_url(
         url,
@@ -54,7 +51,7 @@ def interpolate_pos_encoding_state_dict(state_dict, new_img_size,patch_size=16):
     if orig_size == new_size:
         return state_dict
 
-    print(f"[EMCellFiner] interpolate pos embedding: {orig_size} → {new_size}")
+    print(f"[EMCellFound] interpolate pos embedding: {orig_size} → {new_size}")
 
     orig_pos_tokens = orig_pos_tokens.reshape(1, orig_size, orig_size, -1).permute(0, 3, 1, 2)
     new_pos_tokens = F.interpolate(orig_pos_tokens, size=(new_size, new_size), mode="bicubic", align_corners=False)
@@ -203,8 +200,8 @@ def load_pretrained(model,
             state_dict = interpolate_pos_encoding_state_dict(state_dict, new_img_size=img_size, patch_size=16)
             
         missing, unexpected = model.load_state_dict(state_dict, strict=False)
-        print("[EMCellFiner] missing keys:", missing)
-        print("[EMCellFiner] unexpected keys:", unexpected)
+        print("[EMCellFound] missing keys:", missing)
+        print("[EMCellFound] unexpected keys:", unexpected)
         
 
         source = "project model cache" if weight_path.parent == project_model_cache_dir() else "local path"

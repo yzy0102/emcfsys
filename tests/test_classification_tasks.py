@@ -2,9 +2,13 @@ import numpy as np
 import torch
 from PIL import Image
 from torch import nn
+from torch.utils.data import DataLoader, TensorDataset
 
 from emcfsys.EMCellFound.datasets.classification_folder import ClassificationFolderDataset
-from emcfsys.EMCellFound.models.classifier import EMCellFoundLinearClassifier
+from emcfsys.EMCellFound.models.classifier import (
+    EMCellFoundKNNClassifier,
+    EMCellFoundLinearClassifier,
+)
 from emcfsys.utils import classification_tasks as ct
 from emcfsys.utils.classification_tasks import (
     ClassificationInferenceRequest,
@@ -46,6 +50,17 @@ class FakeLinearModel(nn.Module):
         logits = torch.zeros(tensor.shape[0], 2, device=tensor.device)
         logits[:, 1] = 1.0
         return logits
+
+
+class FakeMultiScaleBackbone(nn.Module):
+    def forward(self, x):
+        values = x.mean(dim=(1, 2, 3), keepdim=True)
+        return [
+            values.expand(-1, 2, 8, 8),
+            values.expand(-1, 3, 4, 4),
+            values.expand(-1, 4, 2, 2),
+            values.expand(-1, 5, 1, 1),
+        ]
 
 
 def _make_folder_dataset(root, images_per_class=1):
@@ -112,6 +127,32 @@ def test_linear_classifier_builds_from_feature_extractor():
     extractor = FakeFeatureExtractor()
     model = EMCellFoundLinearClassifier(extractor, num_classes=3)
     assert model.classifier[-1].out_features == 3
+
+
+def test_knn_classifier_pools_raw_multiscale_backbone_outputs():
+    images = torch.stack(
+        [
+            torch.zeros(3, 8, 8),
+            torch.ones(3, 8, 8),
+            torch.full((3, 8, 8), 2.0),
+            torch.full((3, 8, 8), 3.0),
+        ]
+    )
+    labels = torch.tensor([0, 0, 1, 1])
+    loader = DataLoader(TensorDataset(images, labels), batch_size=2)
+    model = EMCellFoundKNNClassifier(
+        FakeMultiScaleBackbone(),
+        k=1,
+        metric="cosine",
+        num_classes=2,
+    )
+
+    model.fit(loader, device="cpu")
+    probabilities = model(images[:2])
+
+    assert model.train_features.shape == (4, 14)
+    assert probabilities.shape == (2, 2)
+    assert torch.allclose(probabilities.sum(dim=1), torch.ones(2))
 
 
 def test_classification_training_knn_saves_checkpoint(monkeypatch, tmp_path):

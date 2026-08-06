@@ -11,8 +11,22 @@ def _pool_backbone_outputs(outputs):
     if not isinstance(outputs, (list, tuple)):
         outputs = [outputs]
 
+    if not outputs:
+        raise ValueError("Backbone returned no feature maps")
+
     pooled_outputs = []
+    batch_size = None
     for output in outputs:
+        if not torch.is_tensor(output):
+            raise TypeError(
+                "Backbone outputs must be tensors, "
+                f"but received {type(output).__name__}"
+            )
+        if batch_size is None:
+            batch_size = output.shape[0]
+        elif output.shape[0] != batch_size:
+            raise ValueError("All backbone feature maps must have the same batch size")
+
         if output.ndim == 4:
             pooled_outputs.append(F.adaptive_avg_pool2d(output, (1, 1)).flatten(1))
         elif output.ndim == 3:
@@ -81,6 +95,9 @@ class EMCellFoundKNNClassifier(nn.Module):
         self.register_buffer("train_features", torch.empty(0))
         self.register_buffer("train_labels", torch.empty(0, dtype=torch.long))
 
+    def _extract_features(self, images):
+        return _pool_backbone_outputs(self.feature_extractor(images))
+
     @torch.no_grad()
     def fit(self, train_loader, device="cuda"):
         self.feature_extractor.eval()
@@ -91,7 +108,7 @@ class EMCellFoundKNNClassifier(nn.Module):
         for images, labels in train_loader:
             images = images.to(device)
             labels = labels.to(device)
-            features = self.feature_extractor(images)
+            features = self._extract_features(images)
             if self.metric == "cosine":
                 features = F.normalize(features, p=2, dim=1)
             all_features.append(features.detach().cpu())
@@ -110,9 +127,16 @@ class EMCellFoundKNNClassifier(nn.Module):
         if self.train_features.numel() == 0:
             raise RuntimeError("Please call fit() or load a fitted checkpoint first")
 
-        test_features = self.feature_extractor(x)
+        test_features = self._extract_features(x)
         train_features = self.train_features.to(x.device)
         train_labels = self.train_labels.to(x.device)
+        if test_features.shape[1] != train_features.shape[1]:
+            raise RuntimeError(
+                "KNN feature dimension mismatch: "
+                f"query features have {test_features.shape[1]} dimensions, but the "
+                f"fitted memory bank has {train_features.shape[1]}. Refit the KNN "
+                "classifier with the same backbone and feature settings."
+            )
         k = min(self.k, train_features.shape[0])
 
         if self.metric == "cosine":
@@ -137,7 +161,7 @@ class EMCellFoundKNNClassifier(nn.Module):
 
         neighbor_labels = train_labels[neighbor_indices]
         num_classes = self.num_classes or int(train_labels.max().item() + 1)
-        votes = torch.zeros(x.shape[0], num_classes, device=x.device)
+        votes = torch.zeros(test_features.shape[0], num_classes, device=x.device)
         for i in range(k):
             votes.scatter_add_(1, neighbor_labels[:, i : i + 1], weights[:, i : i + 1])
         return votes / votes.sum(dim=1, keepdim=True).clamp_min(1e-6)
@@ -169,8 +193,3 @@ class EMCellFoundLinearClassifier(nn.Module):
 
     def predict(self, x):
         return torch.argmax(self.forward(x), dim=1)
-
-
-# Backward-compatible aliases for earlier notebook experiments.
-EMCellFinerKNNClassifier = EMCellFoundKNNClassifier
-EMCellFinerLinearClassifier = EMCellFoundLinearClassifier
