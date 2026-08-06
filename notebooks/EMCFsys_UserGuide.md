@@ -86,7 +86,7 @@ EMCellFound(DinoV3):：[DinoV3_EMCellFound_ViT_base.pth](https://github.com/yzy0
 
 EMCellFiner：[EMCellFiner.pth](https://github.com/yzy0102/emcfsys/releases/download/EMCFsys/EMCellFiner.pth)
 
-8类细胞器分类数据集：
+8类细胞器分类数据集：[huggingface.co/datasets/Zeyu0102/EightOrganelleClassification](https://huggingface.co/datasets/Zeyu0102/EightOrganelleClassification)
 
 植物细胞器语义分割数据集：[huggingface.co/datasets/Zeyu0102/EMCF_PlantSegDataset](https://huggingface.co/datasets/Zeyu0102/EMCF_PlantSegDataset)
 
