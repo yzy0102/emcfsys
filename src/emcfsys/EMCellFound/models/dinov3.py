@@ -858,6 +858,3 @@ class DINOv3Backbone(nn.Module):
     def forward(self, x: torch.Tensor) -> List[torch.Tensor]:
         feats = self.get_intermediate_layers(x, n=self.out_indices, reshape=True, norm=True)
         return list(feats)
-
-
-MMSegDINOv3Backbone = DINOv3Backbone
