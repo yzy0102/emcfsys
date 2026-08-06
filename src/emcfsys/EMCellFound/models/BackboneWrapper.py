@@ -4,6 +4,11 @@ import torch.nn.functional as F
 import timm
 from emcfsys.EMCellFound.models.EMCellFoundViT import emcellfound_vit_base
 from emcfsys.EMCellFound.models.backbone_registry import try_create_backbone
+from emcfsys.EMCellFound.models.dinov3 import (
+    DINOv3Backbone,
+    LOCAL_DINOV3_VIT_BASE_NAME,
+    resolve_local_dinov3_vit_base_weights,
+)
 
 vit_names = ["emcellfound_vit_base", 
             
@@ -13,12 +18,14 @@ vit_names = ["emcellfound_vit_base",
             "swin_large_patch4_window12_384", "swin_large_patch4_window12_384_in22k", ]
 
 dinov3_vit_dict = ["vit_small_patch16_dinov3.lvd1689m", "vit_base_patch16_dinov3.lvd1689m",
-                    "vit_large_patch16_dinov3.lvd1689m", "vit_huge_patch16_dinov3.lvd1689m"]
+                    "vit_large_patch16_dinov3.lvd1689m", "vit_huge_patch16_dinov3.lvd1689m",
+                    LOCAL_DINOV3_VIT_BASE_NAME]
 
 vit_embeds_dict = { "vit_small_patch16_dinov3.lvd1689m": 384,
                         "vit_base_patch16_dinov3.lvd1689m": 768,
                         "vit_large_patch16_dinov3.lvd1689m": 1024,
                         "vit_huge_patch16_dinov3.lvd1689m": 1280,
+                        LOCAL_DINOV3_VIT_BASE_NAME: 768,
                         "emcellfound_vit_base" : 768,
                         }
 
@@ -27,6 +34,7 @@ vit_out_indices = { "emcellfound_vit_base": (2, 5, 8 ,11),
                     "vit_small_patch16_dinov3.lvd1689m": (2, 5, 8 ,11),
                     "vit_base_patch16_dinov3.lvd1689m": (2, 5, 8 ,11),
                     "vit_large_patch16_dinov3.lvd1689m": (5, 11, 17, 23),
+                    LOCAL_DINOV3_VIT_BASE_NAME: (2, 5, 8, 11),
                     
                     }
 
@@ -229,7 +237,28 @@ class CasualBackbones(nn.Module):
             
         # ---- timm backbone ----
         try:
-            if backbone_name == "emcellfound_vit_base":
+            if backbone_name == LOCAL_DINOV3_VIT_BASE_NAME:
+                weights_path = (
+                    resolve_local_dinov3_vit_base_weights()
+                    if pretrained
+                    else None
+                )
+                if pretrained and weights_path is None:
+                    raise FileNotFoundError(
+                        "Local DINOv3 ViT-Base weights were not found. "
+                        "Set EMCFSYS_DINOV3_BACKBONE_WEIGHTS or place "
+                        f"{LOCAL_DINOV3_VIT_BASE_NAME} weights in "
+                        f"save_logs/{'EMCFsys_dinov3_ViT_backbone.pth'}."
+                    )
+                self.backbone = DINOv3Backbone(
+                    img_size=img_size,
+                    out_indices=out_indices,
+                    pretrained_path=(
+                        None if weights_path is None else str(weights_path)
+                    ),
+                )
+                self.is_vit = True
+            elif backbone_name == "emcellfound_vit_base":
                 self.backbone = emcellfound_vit_base(pretrained=pretrained, 
                                                     img_size=img_size,
                                                     features_only = features_only,
@@ -252,9 +281,18 @@ class CasualBackbones(nn.Module):
                     )
                 self.is_vit = backbone_name in vit_names or backbone_name in dinov3_vit_dict
                 
-        except:
+        except Exception:
+            if backbone_name == LOCAL_DINOV3_VIT_BASE_NAME and pretrained:
+                raise
             print("No pretrained weights available, using random initialization...")
-            if backbone_name == "emcellfound_vit_base":
+            if backbone_name == LOCAL_DINOV3_VIT_BASE_NAME:
+                self.backbone = DINOv3Backbone(
+                    img_size=img_size,
+                    out_indices=out_indices,
+                    pretrained_path=None,
+                )
+                self.is_vit = True
+            elif backbone_name == "emcellfound_vit_base":
                 self.backbone = emcellfound_vit_base(pretrained=False, 
                                                     img_size=img_size,
                                                     features_only = features_only,

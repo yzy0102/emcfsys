@@ -19,9 +19,17 @@ This tutorial demonstrates:
 
 - Introduction to the functions and interface of the emcfsys plugin
 - Functions for image data processing
-- EMCellFound module integration features, including model deep learning training and inference
-- EMCellFiner module integration features, including single image super-resolution inference with EMCellFiner and batch super-resolution inference for multiple images in a folder
-- Dataset conversion for segmentation
+- Model manager for trained models
+- Image Classification based EMCellFound
+- Image Semantic Segmentation based EMCellFound
+- Image Instance Segmentation based based EMCellFound
+- Image super-resolution based EMCellFiner
+- Dataset conversion workflows for semantic segmentation and instance segmentation
+- Phenotype analysis based on segmentation outputs
+
+
+
+
 
 ---
 
@@ -33,11 +41,33 @@ This tutorial demonstrates:
    And you can find emcfsys plugin.
    ![alt text](../source/image.png)
 
+
+
+
+
 ---
 
-## 3. Functions for image data processing（Widget） 🛠️
+## 3. EMCFsys Functions for EM image data processing（Widget） 🛠️
+Functions in emcfsys are listed belows:
+   - Utility | Image Resize
+   - Model Manager | Registry
+   - Semantic Segmentation | Training
+   - Semantic Segmentation | Inference
+   - Classification | Training
+   - Classification | Inference
+   - Instance Segmentation | Training
+   - Instance Segmentation | Inference
+   - Dataset Tools | Dataset Validator
+   - Super Resolution | Single Image Inference
+   - Super Resolution | Batch Inference
+   - Dataset Converter | LabelMe to Semantic Masks
+   - Dataset Converter | LabelMe to COCO Instance
+   - Analysis | Phenotype Analysis
 
-Provides several image processing components, including:
+
+      ![alt text](../source/Napari_emcfsys_GUI.png)
+
+
 
 1. `ImageResize`: interactively resize images
    ![alt text](../source/image-2.png)

@@ -472,6 +472,32 @@ def test_semantic_segmentation_training_widget_builds_advanced_loss_request(tmp_
     assert request.ohem_ce_loss_weight == 1.0
 
 
+def test_semantic_segmentation_pretrained_model_control_is_conditional(tmp_path):
+    training_widget = DLTrainingContainer(None)
+    pretrained_path = tmp_path / "pretrained.pth"
+    config_path = tmp_path / "semantic_config.json"
+
+    assert training_widget.use_pretrained_model.value is False
+    assert training_widget.pretrained_model.native.isHidden()
+
+    training_widget.pretrained_model.value = pretrained_path
+    assert training_widget._build_training_request().pretrained_model is None
+
+    training_widget.use_pretrained_model.value = True
+    assert not training_widget.pretrained_model.native.isHidden()
+    assert training_widget._build_training_request().pretrained_model == str(pretrained_path)
+
+    training_widget.config_path.value = config_path
+    training_widget._save_config()
+    training_widget.use_pretrained_model.value = False
+    training_widget.pretrained_model.value = None
+    training_widget._load_config()
+
+    assert training_widget.use_pretrained_model.value is True
+    assert not training_widget.pretrained_model.native.isHidden()
+    assert Path(training_widget.pretrained_model.value) == pretrained_path
+
+
 def test_semantic_segmentation_split_controls_are_conditional(tmp_path):
     training_widget = DLTrainingContainer(None)
 

@@ -149,6 +149,7 @@ from .utils.viewer_ops import upsert_image_layer, upsert_labels_layer
 # and use auto_call=True so the function is called whenever
 # the value of a parameter changes
 backbone_zoom = [   "emcellfound_vit_base",
+                    "emcfsys_dinov3_vit_base",
                  
                     "resnet34", "resnet50", "resnet101", 
                 
@@ -1469,14 +1470,18 @@ class DLTrainingContainer(Container):
         self.val_split_path = FileEdit(label="Val split (val.txt)", mode="r", nullable=True)
         self.test_split_path = FileEdit(label="Test split (test.txt)", mode="r", nullable=True)
         self.save_path = FileEdit(label="Save model as (.pth)", mode="d")
+        self.use_pretrained_model = CheckBox(
+            label="Use pretrained model",
+            value=False,
+        )
         self.pretrained_model = FileEdit(label="Pretrained model (.pth)", nullable=True, mode="r")
 
-        self.backbone_name = ComboBox(label="Backbone", choices=backbone_zoom, value="resnet34")
+        self.backbone_name = ComboBox(label="Backbone", choices=backbone_zoom, value="emcellfound_vit_base")
         self.model_name = ComboBox(label="Model", choices=model_zoom, value="deeplabv3plus")
         self.matching_sampling = ComboBox(
             label="Mask2Former matching points",
             choices=["random", "uncertain"],
-            value="random",
+            value="uncertain",
         )
         self.matching_uncertainty_per_query = CheckBox(
             label="Uncertain points per query",
@@ -1518,6 +1523,7 @@ class DLTrainingContainer(Container):
             self.val_split_path,
             self.test_split_path,
             self.save_path,
+            self.use_pretrained_model,
             self.pretrained_model,
             self.backbone_name,
             self.model_name,
@@ -1553,9 +1559,11 @@ class DLTrainingContainer(Container):
         self.model_name.changed.connect(self._update_matching_state)
         self.use_advanced_losses.changed.connect(self._update_advanced_loss_state)
         self.use_split_files.changed.connect(self._update_split_state)
+        self.use_pretrained_model.changed.connect(self._update_pretrained_model_state)
         self._update_matching_state()
         self._update_advanced_loss_state()
         self._update_split_state()
+        self._update_pretrained_model_state()
 
         self._fig, self._ax = plt.subplots()
         self._canvas = FigureCanvas(self._fig)
@@ -1623,6 +1631,9 @@ class DLTrainingContainer(Container):
         self.val_split_path.visible = enabled
         self.test_split_path.visible = enabled
 
+    def _update_pretrained_model_state(self):
+        self.pretrained_model.visible = bool(self.use_pretrained_model.value)
+
     def _resolve_split_dir(self):
         if not self.use_split_files.value:
             return None
@@ -1655,6 +1666,7 @@ class DLTrainingContainer(Container):
             "val_split_path": self.val_split_path,
             "test_split_path": self.test_split_path,
             "save_path": self.save_path,
+            "use_pretrained_model": self.use_pretrained_model,
             "pretrained_model": self.pretrained_model,
             "backbone_name": self.backbone_name,
             "model_name": self.model_name,
@@ -1696,10 +1708,16 @@ class DLTrainingContainer(Container):
             return
         try:
             config = load_training_config(config_path, expected_task="semantic_segmentation")
-            _apply_widget_values(self._config_widget_map(), config.get("parameters", {}))
+            parameters = dict(config.get("parameters", {}))
+            if "use_pretrained_model" not in parameters:
+                parameters["use_pretrained_model"] = bool(
+                    parameters.get("pretrained_model")
+                )
+            _apply_widget_values(self._config_widget_map(), parameters)
             self._update_matching_state()
             self._update_advanced_loss_state()
             self._update_split_state()
+            self._update_pretrained_model_state()
             self._log(f"Semantic segmentation config loaded from: {config_path}")
         except Exception as error:
             self._log(f"Failed to load semantic segmentation config: {error}")
@@ -1729,7 +1747,11 @@ class DLTrainingContainer(Container):
             classes_num=self.classes_num.value,
             target_size=self.target_size.value,
             ignore_index=self.ignore_index.value,
-            pretrained_model=normalize_optional_path(self.pretrained_model.value),
+            pretrained_model=(
+                normalize_optional_path(self.pretrained_model.value)
+                if self.use_pretrained_model.value
+                else None
+            ),
             use_advanced_losses=self.use_advanced_losses.value,
             dice_loss_weight=self.dice_loss_weight.value,
             focal_loss_weight=self.focal_loss_weight.value,

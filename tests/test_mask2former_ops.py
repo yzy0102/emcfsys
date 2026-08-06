@@ -175,6 +175,39 @@ def test_mask2former_semantic_query_loss_supports_uncertain_matching():
     assert mask_logits.grad is not None
 
 
+def test_mask2former_semantic_query_loss_supports_shared_random_matching():
+    """Shared random points must expand GT masks over every query."""
+
+    head = Mask2FormerDecoderHead(
+        in_channels=(8, 8),
+        num_classes=4,
+        hidden_dim=8,
+        num_queries=100,
+        num_heads=2,
+        num_decoder_layers=1,
+        feedforward_dim=16,
+        num_transformer_feat_level=2,
+        matching_sampling="random",
+    )
+    class_logits = torch.randn(1, 100, 5, requires_grad=True)
+    mask_logits = torch.randn(1, 100, 8, 8, requires_grad=True)
+    query_outputs = {
+        "class_logits": [class_logits],
+        "mask_logits": [mask_logits],
+    }
+    target = torch.zeros(1, 8, 8, dtype=torch.long)
+    target[:, :2, :2] = 1
+    target[:, 2:4, 2:4] = 2
+    target[:, 4:6, 4:6] = 3
+
+    loss = head.query_loss(query_outputs, target)
+    loss.backward()
+
+    assert torch.isfinite(loss)
+    assert class_logits.grad is not None
+    assert mask_logits.grad is not None
+
+
 def test_deformable_attention_supports_sequence_first_layout():
     attention = LocalMultiScaleDeformableAttention(
         embed_dim=8,

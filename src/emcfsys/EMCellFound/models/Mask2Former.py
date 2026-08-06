@@ -676,11 +676,14 @@ class Mask2FormerDecoderHead(nn.Module):
             gt_masks,
             matching_points,
         )
-        pair_targets = (
-            target_points
-            if target_points.ndim == 3
-            else target_points.unsqueeze(0)
-        )
+        if target_points.ndim == 3:
+            pair_targets = target_points
+        else:
+            # Random matching shares one point set across queries.  Expand
+            # the sampled GT masks so pairwise BCE has shape (Q, G, P).
+            pair_targets = target_points.unsqueeze(0).expand(
+                query_points.shape[0], -1, -1
+            )
 
         classification_cost = -query_probabilities[:, gt_labels]
         mask_probabilities = query_points.sigmoid()
