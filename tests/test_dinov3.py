@@ -1,11 +1,9 @@
 import torch
-import pytest
 
-import emcfsys.EMCellFound.models.BackboneWrapper as backbone_wrapper
 from emcfsys.EMCellFound.models.dinov3 import (
     DINOv3Backbone,
     LOCAL_DINOV3_VIT_BASE_NAME,
-    resolve_local_dinov3_vit_base_weights,
+    LOCAL_DINOV3_VIT_BASE_URL,
 )
 
 
@@ -53,25 +51,24 @@ def test_dinov3_backbone_strictly_loads_a_compatible_checkpoint(tmp_path):
     assert all(torch.isfinite(feature).all() for feature in features)
 
 
-def test_local_dinov3_weight_resolver_prefers_environment_path(tmp_path, monkeypatch):
-    checkpoint_path = tmp_path / "custom_dinov3.pth"
-    checkpoint_path.touch()
-    monkeypatch.setenv("EMCFSYS_DINOV3_BACKBONE_WEIGHTS", str(checkpoint_path))
+def test_dinov3_backbone_downloads_weights_from_release_url(monkeypatch):
+    source = _make_tiny_dinov3()
+    calls = {}
 
-    assert LOCAL_DINOV3_VIT_BASE_NAME == "emcfsys_dinov3_vit_base"
-    assert resolve_local_dinov3_vit_base_weights() == checkpoint_path
+    def fake_load_state_dict_from_url(url, **kwargs):
+        calls["url"] = url
+        calls["kwargs"] = kwargs
+        return source.state_dict()
 
+    monkeypatch.setattr(torch.hub, "load_state_dict_from_url", fake_load_state_dict_from_url)
+    loaded = _make_tiny_dinov3(pretrained_url=LOCAL_DINOV3_VIT_BASE_URL).eval()
 
-def test_local_dinov3_requires_weights_when_pretrained(monkeypatch):
-    monkeypatch.setattr(
-        backbone_wrapper,
-        "resolve_local_dinov3_vit_base_weights",
-        lambda: None,
-    )
-
-    with pytest.raises(FileNotFoundError, match="EMCFSYS_DINOV3_BACKBONE_WEIGHTS"):
-        backbone_wrapper.CasualBackbones(
-            LOCAL_DINOV3_VIT_BASE_NAME,
-            pretrained=True,
-            img_size=32,
-        )
+    assert LOCAL_DINOV3_VIT_BASE_NAME == "EmcellFound_dinov3_vit_base"
+    assert calls["url"] == LOCAL_DINOV3_VIT_BASE_URL
+    assert calls["kwargs"] == {
+        "map_location": "cpu",
+        "progress": True,
+        "check_hash": False,
+    }
+    with torch.inference_mode():
+        assert len(loaded(torch.randn(1, 3, 32, 32))) == 2

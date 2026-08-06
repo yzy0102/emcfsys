@@ -149,7 +149,7 @@ from .utils.viewer_ops import upsert_image_layer, upsert_labels_layer
 # and use auto_call=True so the function is called whenever
 # the value of a parameter changes
 backbone_zoom = [   "emcellfound_vit_base",
-                    "emcfsys_dinov3_vit_base",
+                    "EmcellFound_dinov3_vit_base",
                  
                     "resnet34", "resnet50", "resnet101", 
                 

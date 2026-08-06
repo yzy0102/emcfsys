@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import logging
 import math
-import os
 from functools import partial
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple, Union
@@ -14,23 +13,12 @@ from torch.nn.init import trunc_normal_
 logger = logging.getLogger(__name__)
 
 
-LOCAL_DINOV3_VIT_BASE_NAME = "emcfsys_dinov3_vit_base"
-LOCAL_DINOV3_VIT_BASE_WEIGHTS = "EMCFsys_dinov3_ViT_backbone.pth"
-
-
-def resolve_local_dinov3_vit_base_weights() -> Path | None:
-    """Return the configured local DINOv3 ViT-Base checkpoint, when present."""
-
-    configured_path = os.environ.get("EMCFSYS_DINOV3_BACKBONE_WEIGHTS")
-    candidates = []
-    if configured_path:
-        candidates.append(Path(configured_path).expanduser())
-    candidates.append(
-        Path(__file__).resolve().parents[4]
-        / "save_logs"
-        / LOCAL_DINOV3_VIT_BASE_WEIGHTS
-    )
-    return next((path for path in candidates if path.is_file()), None)
+LOCAL_DINOV3_VIT_BASE_NAME = "EmcellFound_dinov3_vit_base"
+LOCAL_DINOV3_VIT_BASE_WEIGHTS = "DinoV3_EMCellFound_ViT_base.pth"
+LOCAL_DINOV3_VIT_BASE_URL = (
+    "https://github.com/yzy0102/emcfsys/releases/download/EMCFsys/"
+    "DinoV3_EMCellFound_ViT_base.pth"
+)
 
 
 def make_2tuple(x):
@@ -556,7 +544,7 @@ class DINOv3Backbone(nn.Module):
 
     def __init__(
         self,
-        img_size: Union[int, Tuple[int, int]] = 224,
+        img_size: Union[int, Tuple[int, int]] = 512,
         patch_size: Union[int, Tuple[int, int]] = 16,
         in_chans: int = 3,
         embed_dim: Optional[int] = None,
@@ -588,14 +576,21 @@ class DINOv3Backbone(nn.Module):
         pos_embed_rope_dtype: Union[str, torch.dtype, None] = 'fp32',
         out_indices: Sequence[int] = (2, 5, 8, 11),
         pretrained_path: Optional[str] = None,
+        pretrained_url: Optional[str] = None,
         dinov3_weights: Optional[str] = None,
         frozen: bool = False,
         init_cfg=None,
         device: Any | None = None,
         **ignored_kwargs,
     ):
-        if pretrained_path is not None and dinov3_weights is not None:
-            raise ValueError('Use only one of `pretrained_path` or `dinov3_weights`.')
+        if sum(
+            source is not None
+            for source in (pretrained_path, pretrained_url, dinov3_weights)
+        ) > 1:
+            raise ValueError(
+                'Use only one of `pretrained_path`, `pretrained_url`, or '
+                '`dinov3_weights`.'
+            )
 
         super().__init__()
         self.init_cfg = init_cfg
@@ -625,6 +620,7 @@ class DINOv3Backbone(nn.Module):
         self.n_storage_tokens = n_storage_tokens
         self.out_indices = (out_indices,) if isinstance(out_indices, int) else tuple(out_indices)
         self.pretrained_path = pretrained_path or dinov3_weights
+        self.pretrained_url = pretrained_url
         self.untie_cls_and_patch_norms = untie_cls_and_patch_norms
         self.untie_global_and_local_cls_norm = untie_global_and_local_cls_norm
         self._is_initialized = False
@@ -722,6 +718,10 @@ class DINOv3Backbone(nn.Module):
             self._load_pretrained_path(self.pretrained_path, extra_strip_prefixes=())
             self._is_initialized = True
             return
+        if self.pretrained_url:
+            self._load_pretrained_url(self.pretrained_url, extra_strip_prefixes=())
+            self._is_initialized = True
+            return
 
         self.rope_embed._init_weights()
         nn.init.normal_(self.cls_token, std=0.02)
@@ -735,19 +735,53 @@ class DINOv3Backbone(nn.Module):
         if not Path(path).is_file():
             raise FileNotFoundError(f'pretrained_path not found: {path}')
         ckpt = _safe_torch_load(path)
+        self._load_pretrained_checkpoint(
+            ckpt,
+            source=path,
+            extra_strip_prefixes=extra_strip_prefixes,
+        )
+
+    def _load_pretrained_url(self, url: str, extra_strip_prefixes: Tuple[str, ...]) -> None:
+        print(f'DINOv3Backbone loading pretrained weights from: {url}')
+        try:
+            ckpt = torch.hub.load_state_dict_from_url(
+                url,
+                map_location='cpu',
+                progress=True,
+                check_hash=False,
+            )
+        except Exception as error:
+            raise RuntimeError(
+                'Failed to download or load the cached DINOv3 ViT-Base weights '
+                f'from {url}.'
+            ) from error
+        self._load_pretrained_checkpoint(
+            ckpt,
+            source=url,
+            extra_strip_prefixes=extra_strip_prefixes,
+        )
+
+    def _load_pretrained_checkpoint(
+        self,
+        ckpt: object,
+        *,
+        source: str,
+        extra_strip_prefixes: Tuple[str, ...],
+    ) -> None:
         try:
             sd = _extract_state_dict(ckpt)
         except ValueError:
             sd = ckpt if isinstance(ckpt, dict) else {}
         if not sd:
-            raise ValueError(f'Empty state dict after reading {path}')
+            raise ValueError(f'Empty state dict after reading {source}')
 
         sd = _normalize_keys(sd, extra_strip_prefixes)
         ret = self.load_state_dict(sd, strict=True)
         missing = getattr(ret, 'missing_keys', [])
         unexpected = getattr(ret, 'unexpected_keys', [])
         print(
-            f'DINOv3Backbone loaded {path}: missing_keys={len(missing)}, unexpected_keys={len(unexpected)}'
+            f'DINOv3Backbone loaded {source}: '
+            f'missing_keys={len(missing)}, unexpected_keys={len(unexpected)}'
         )
 
     def prepare_tokens_with_masks(self, x: Tensor, masks=None) -> Tuple[Tensor, Tuple[int, int]]:

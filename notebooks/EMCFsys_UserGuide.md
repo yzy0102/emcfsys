@@ -39,6 +39,7 @@ And you can find emcfsys plugin.
 
 模型默认加载，比如EMCellFound、EMCellFiner的路径留空时，插件会自动在后台从github链接中下载模型权重并加载。如果加载失败，请确认网络情况。或手动加载模型路径。[EMCellFincer download Link](https://github.com/yzy0102/emcfsys/releases/latest/download/EMCellFiner.pth)。
 
+
 测试和使用Demo请查看[demo_notebook.ipynb](../demo_notebook.ipynb)
 
 ### 2.2 图像和标签的形状
@@ -76,11 +77,11 @@ training_result/
 
 ### 2.5 开放模型与测试数据集路径
 
-EMCellFound(MAE) and EMCellFiner：[github.com/yzy0102/emcfsys/releases/tag/EMCFsys](https://github.com/yzy0102/emcfsys/releases/tag/EMCFsys)
+EMCellFound(MAE) :[MAE_EMCellFoundVit_base_224_inEMCF.pth](https://github.com/yzy0102/emcfsys/releases/download/EMCFsys/MAE_EMCellFoundVit_base_224_inEMCF.pth)
 
-EMCellFound(DinoV3):：
+EMCellFound(DinoV3):：[DinoV3_EMCellFound_ViT_base.pth](https://github.com/yzy0102/emcfsys/releases/download/EMCFsys/DinoV3_EMCellFound_ViT_base.pth)
 
-EMCellFiner超分辨率模型：
+EMCellFiner：[EMCellFiner.pth](https://github.com/yzy0102/emcfsys/releases/download/EMCFsys/EMCellFiner.pth)
 
 8类细胞器分类数据集：
 

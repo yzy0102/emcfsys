@@ -7,7 +7,7 @@ from emcfsys.EMCellFound.models.backbone_registry import try_create_backbone
 from emcfsys.EMCellFound.models.dinov3 import (
     DINOv3Backbone,
     LOCAL_DINOV3_VIT_BASE_NAME,
-    resolve_local_dinov3_vit_base_weights,
+    LOCAL_DINOV3_VIT_BASE_URL,
 )
 
 vit_names = ["emcellfound_vit_base", 
@@ -238,23 +238,11 @@ class CasualBackbones(nn.Module):
         # ---- timm backbone ----
         try:
             if backbone_name == LOCAL_DINOV3_VIT_BASE_NAME:
-                weights_path = (
-                    resolve_local_dinov3_vit_base_weights()
-                    if pretrained
-                    else None
-                )
-                if pretrained and weights_path is None:
-                    raise FileNotFoundError(
-                        "Local DINOv3 ViT-Base weights were not found. "
-                        "Set EMCFSYS_DINOV3_BACKBONE_WEIGHTS or place "
-                        f"{LOCAL_DINOV3_VIT_BASE_NAME} weights in "
-                        f"save_logs/{'EMCFsys_dinov3_ViT_backbone.pth'}."
-                    )
                 self.backbone = DINOv3Backbone(
                     img_size=img_size,
                     out_indices=out_indices,
-                    pretrained_path=(
-                        None if weights_path is None else str(weights_path)
+                    pretrained_url=(
+                        LOCAL_DINOV3_VIT_BASE_URL if pretrained else None
                     ),
                 )
                 self.is_vit = True
