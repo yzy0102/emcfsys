@@ -1,10 +1,12 @@
 import torch
 
+import emcfsys.EMCellFound.models.dinov3 as dinov3_module
 from emcfsys.EMCellFound.models.dinov3 import (
     DINOv3Backbone,
     LOCAL_DINOV3_VIT_BASE_NAME,
     LOCAL_DINOV3_VIT_BASE_URL,
 )
+from emcfsys.model_cache import project_model_cache_dir
 
 
 def _make_tiny_dinov3(**kwargs):
@@ -55,12 +57,16 @@ def test_dinov3_backbone_downloads_weights_from_release_url(monkeypatch):
     source = _make_tiny_dinov3()
     calls = {}
 
-    def fake_load_state_dict_from_url(url, **kwargs):
+    def fake_load_state_dict_from_project_url(url, **kwargs):
         calls["url"] = url
         calls["kwargs"] = kwargs
         return source.state_dict()
 
-    monkeypatch.setattr(torch.hub, "load_state_dict_from_url", fake_load_state_dict_from_url)
+    monkeypatch.setattr(
+        dinov3_module,
+        "load_state_dict_from_project_url",
+        fake_load_state_dict_from_project_url,
+    )
     loaded = _make_tiny_dinov3(pretrained_url=LOCAL_DINOV3_VIT_BASE_URL).eval()
 
     assert LOCAL_DINOV3_VIT_BASE_NAME == "EmcellFound_dinov3_vit_base"

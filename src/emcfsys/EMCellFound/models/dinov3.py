@@ -10,6 +10,7 @@ import torch
 import torch.nn.functional as F
 from torch import Tensor, nn
 from torch.nn.init import trunc_normal_
+from emcfsys.model_cache import load_state_dict_from_project_url
 logger = logging.getLogger(__name__)
 
 
@@ -744,7 +745,7 @@ class DINOv3Backbone(nn.Module):
     def _load_pretrained_url(self, url: str, extra_strip_prefixes: Tuple[str, ...]) -> None:
         print(f'DINOv3Backbone loading pretrained weights from: {url}')
         try:
-            ckpt = torch.hub.load_state_dict_from_url(
+            ckpt = load_state_dict_from_project_url(
                 url,
                 map_location='cpu',
                 progress=True,

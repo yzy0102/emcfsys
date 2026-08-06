@@ -143,6 +143,7 @@ from .utils.model_registry import (
 from .utils.training_tasks import SegmentationTrainingRequest, run_training_task
 from .utils.training_artifacts import load_training_config, save_training_config
 from .utils.viewer_ops import upsert_image_layer, upsert_labels_layer
+from .model_cache import model_download_progress
 
 # the magic_factory decorator lets us customize aspects of our widget
 # we specify a widget type for the threshold parameter
@@ -1411,7 +1412,8 @@ class DLInferenceContainer(Container):
 
         @_get_thread_worker()
         def _worker():
-            return task_runner(request)
+            with model_download_progress(self._threadsafe_log):
+                return task_runner(request)
 
         self._worker = _worker()
 
@@ -1771,12 +1773,13 @@ class DLTrainingContainer(Container):
     def _create_training_worker(self, request):
         @_get_thread_worker()
         def _worker():
-            return run_training_task(
-                request,
-                update_loss_curve=self._update_loss_curve,
-                log=self._threadsafe_log,
-                stop_flag_fn=lambda: self._stop_flag,
-            )
+            with model_download_progress(self._threadsafe_log):
+                return run_training_task(
+                    request,
+                    update_loss_curve=self._update_loss_curve,
+                    log=self._threadsafe_log,
+                    stop_flag_fn=lambda: self._stop_flag,
+                )
 
         return _worker()
 
@@ -1930,12 +1933,13 @@ class ClassificationTrainingContainer(Container):
     def _create_training_worker(self, request):
         @_get_thread_worker()
         def _worker():
-            return run_classification_training_task(
-                request,
-                update_loss_curve=self._update_loss_curve,
-                log=self._threadsafe_log,
-                stop_flag_fn=lambda: self._stop_flag,
-            )
+            with model_download_progress(self._threadsafe_log):
+                return run_classification_training_task(
+                    request,
+                    update_loss_curve=self._update_loss_curve,
+                    log=self._threadsafe_log,
+                    stop_flag_fn=lambda: self._stop_flag,
+                )
 
         return _worker()
 
@@ -2285,6 +2289,9 @@ class InstanceSegmentationTrainingContainer(Container):
     def _log(self, message):
         _append_log_message(self._log_text, message)
 
+    def _threadsafe_log(self, message):
+        _emit_log_message(self._log_emitter, self._log_text, message)
+
     def _render_training_plot(self):
         self._ax.clear()
         self._ax.set_xlabel("Epoch")
@@ -2502,11 +2509,12 @@ class InstanceSegmentationTrainingContainer(Container):
 
         @_get_thread_worker()
         def _worker():
-            logs = yield from iter_instance_segmentation_training_task(
-                request,
-                update_loss_curve=self._update_loss_curve,
-                stop_flag_fn=lambda: self._stop_flag,
-            )
+            with model_download_progress(self._threadsafe_log):
+                logs = yield from iter_instance_segmentation_training_task(
+                    request,
+                    update_loss_curve=self._update_loss_curve,
+                    stop_flag_fn=lambda: self._stop_flag,
+                )
             return logs
 
         worker = _worker()
@@ -2891,6 +2899,9 @@ class EMCellFinerSingleInferWidget(Container):
     def _log(self, message):
         _append_log_message(self._log_text, message)
 
+    def _threadsafe_log(self, message):
+        _emit_log_message(self._log_emitter, self._log_text, message)
+
     def _run_inference(self):
         img_layer = self._image_layer_combo.value
         if img_layer is None:
@@ -2902,7 +2913,8 @@ class EMCellFinerSingleInferWidget(Container):
 
         @_get_thread_worker()
         def _worker():
-            return run_emcellfiner_single_inference(request)
+            with model_download_progress(self._threadsafe_log):
+                return run_emcellfiner_single_inference(request)
 
         worker = _worker()
 
@@ -2969,6 +2981,9 @@ class EMCellFinerBatchInferWidget(Container):
     def _log(self, message):
         _append_log_message(self._log_text, message)
 
+    def _threadsafe_log(self, message):
+        _emit_log_message(self._log_emitter, self._log_text, message)
+
     def _update_resize_controls_state(self):
         enabled = self.resize_before_inference.value
         self.resize_factor.visible = enabled
@@ -3015,10 +3030,11 @@ class EMCellFinerBatchInferWidget(Container):
 
         @_get_thread_worker()
         def _worker():
-            yield from iter_emcellfiner_batch_inference(
-                request,
-                stop_checker=lambda: self._stop_flag,
-            )
+            with model_download_progress(self._threadsafe_log):
+                yield from iter_emcellfiner_batch_inference(
+                    request,
+                    stop_checker=lambda: self._stop_flag,
+                )
 
         self._worker = _worker()
         worker = self._worker

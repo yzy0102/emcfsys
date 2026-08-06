@@ -1,13 +1,31 @@
 import torch
 import torch.nn as nn
 from torch.nn import functional as F
+from pathlib import Path
 
 from .img_utils import imwrite, tensor2img
 from .hat_arch import HAT
 import math
 from tqdm import tqdm
-from os import path as osp
-from torch.hub import load_state_dict_from_url 
+
+from emcfsys.model_cache import (
+    load_state_dict_from_project_url,
+    project_model_cache_dir,
+    resolve_pretrained_weight_path,
+)
+
+
+def load_emcellfiner_weights(url):
+    """Download EMCellFiner weights into, or load them from, the project cache."""
+
+    return load_state_dict_from_project_url(
+        url,
+        map_location='cpu',
+        progress=True,
+        check_hash=False,
+        file_name=None,
+    )
+
 
 class HATModel(nn.Module):
     def __init__(self,
@@ -21,7 +39,10 @@ class HATModel(nn.Module):
         
         super(HATModel, self).__init__()
 
-        self.online_url = "https://github.com/yzy0102/emcfsys/releases/latest/download/EMCellFiner.pth"
+        self.online_url = model_url or (
+            "https://github.com/yzy0102/emcfsys/releases/latest/download/"
+            "EMCellFiner.pth"
+        )
 
         self.model_path = local_path
         self.net_g = HAT()
@@ -35,9 +56,14 @@ class HATModel(nn.Module):
     
         checkpoint = None 
         
-        if local_path and osp.exists(local_path):
-            print(f"Loading local model: {local_path}")
-            checkpoint = torch.load(local_path, map_location='cpu') 
+        weight_path = resolve_pretrained_weight_path(
+            Path(self.online_url).name,
+            local_path,
+        )
+        if weight_path is not None:
+            source = "project model cache" if weight_path.parent == project_model_cache_dir() else "local path"
+            print(f"Loading model from {source}: {weight_path}")
+            checkpoint = torch.load(weight_path, map_location='cpu')
             print("Local model loaded successfully.")
             
 
@@ -45,14 +71,8 @@ class HATModel(nn.Module):
             # 优先级 B: 如果提供了 URL，则使用 torch.hub 自动下载或读取缓存
             print(f"Using the model from torch hub : {self.online_url}")
             try:
-                # torch.hub 会自动处理下载和缓存 (默认存放在 ~/.cache/torch/hub/checkpoints)
-                checkpoint = load_state_dict_from_url(
-                    self.online_url, 
-                    map_location='cpu', 
-                    progress=True, 
-                    check_hash=False, # 如果你的链接文件名不包含hash，请设为False
-                    file_name=None    # 设为 None 则使用 URL 中的文件名
-                )
+                # torch.hub downloads to the project-local models directory and reuses it.
+                checkpoint = load_emcellfiner_weights(self.online_url)
             except Exception as e:
                 raise RuntimeError(f"Failed to download model: {e}")
 
