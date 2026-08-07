@@ -19,7 +19,7 @@ MMSEG_STD = (53.0, 53.0, 53.0)
 
 def get_train_transform(
     target_size=(512, 512),
-    scale=(768, 512),
+    scale=(512, 512),
     ratio_range=(0.5, 2.0),
     cat_max_ratio=0.75,
     ignore_index=None,
