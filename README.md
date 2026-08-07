@@ -83,10 +83,10 @@ pip install emcfsys
 
 You can also install emcfsys in the napari-plugin-store
 
-At last, install necessary components:
+At last, install necessary components: (**Very important, don't forget to install these packages**)
 
 ```
-pip install labelme timm opencv-python einops shapely albumentations
+pip install labelme numpy timm opencv-python einops shapely albumentations ninja Pillow seaborn safetensors huggingface-hub transformers
 ```
 
 ---
@@ -114,6 +114,10 @@ If you encounter any problems, please [file an issue] along with a detailed desc
 [![License GNU GPL v3.0](https://img.shields.io/pypi/l/emcfsys.svg?color=green)]
 
 Towards foundation models for EM images analysis. EMCellFiner and EMCellFound are two foundation models trained based on a 4 million EM images dataset.
+
+If you use this project, please cite:
+
+Yu Z, Guo J, Liu F, et al. EMCF ecosystem: Towards pretrained foundation model for electron microscopy image analysis[J]. bioRxiv, 2025: 2025.12. 09.693109.
 
 ---
 
