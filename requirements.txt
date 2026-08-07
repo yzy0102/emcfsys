@@ -18,8 +18,6 @@ matplotlib
 shapely==2.1.2
 
 # Deep-learning training and inference
-torch
-torchvision
 timm==1.0.22
 albumentations
 einops
