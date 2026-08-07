@@ -60,18 +60,15 @@ class HATModel(nn.Module):
             Path(self.online_url).name,
             local_path,
         )
-        if weight_path is not None:
-            source = "project model cache" if weight_path.parent == project_model_cache_dir() else "local path"
-            print(f"Loading model from {source}: {weight_path}")
+        if weight_path is not None and weight_path.parent != project_model_cache_dir():
+            print(f"Loading model from local path: {weight_path}")
             checkpoint = torch.load(weight_path, map_location='cpu')
             print("Local model loaded successfully.")
             
 
         else:
-            # 优先级 B: 如果提供了 URL，则使用 torch.hub 自动下载或读取缓存
-            print(f"Using the model from torch hub : {self.online_url}")
+            print(f"Loading model from project cache or URL: {self.online_url}")
             try:
-                # torch.hub downloads to the project-local models directory and reuses it.
                 checkpoint = load_emcellfiner_weights(self.online_url)
             except Exception as e:
                 raise RuntimeError(f"Failed to download model: {e}")

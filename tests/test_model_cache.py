@@ -95,6 +95,79 @@ def test_cached_download_does_not_emit_progress_or_open_network(tmp_path, monkey
     assert messages == []
 
 
+def test_corrupt_cached_download_is_discarded_and_downloaded_again(tmp_path, monkeypatch):
+    cache_dir = tmp_path / "models"
+    cache_dir.mkdir()
+    (cache_dir / "model.pth").write_bytes(b"PK\x03\x04incomplete")
+    payload = {"weight": torch.tensor(2)}
+    serialized = io.BytesIO()
+    torch.save(payload, serialized)
+    messages = []
+
+    class FakeResponse(io.BytesIO):
+        headers = {"Content-Length": str(len(serialized.getvalue()))}
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc_value, traceback):
+            self.close()
+
+    monkeypatch.setattr(model_cache, "project_model_cache_dir", lambda: cache_dir)
+    monkeypatch.setattr(
+        model_cache,
+        "urlopen",
+        lambda request: FakeResponse(serialized.getvalue()),
+    )
+
+    with model_download_progress(messages.append):
+        result = load_state_dict_from_project_url("https://example.invalid/model.pth")
+
+    assert result["weight"].item() == 2
+    assert any("Discarded cached model model.pth" in message for message in messages)
+
+
+def test_pretrained_weight_resolution_discards_incomplete_cached_archive(
+    tmp_path, monkeypatch
+):
+    cache_dir = tmp_path / "models"
+    explicit_path = tmp_path / "manual.pth"
+    cache_dir.mkdir()
+    explicit_path.write_bytes(b"manual")
+    (cache_dir / "model.pth").write_bytes(b"PK\x03\x04incomplete")
+    monkeypatch.setattr(model_cache, "project_model_cache_dir", lambda: cache_dir)
+
+    assert resolve_pretrained_weight_path("model.pth", explicit_path) == explicit_path
+    assert not (cache_dir / "model.pth").exists()
+
+
+def test_invalid_download_is_not_left_in_the_model_cache(tmp_path, monkeypatch):
+    cache_dir = tmp_path / "models"
+    cache_dir.mkdir()
+
+    class FakeResponse(io.BytesIO):
+        headers = {"Content-Length": "11"}
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc_value, traceback):
+            self.close()
+
+    monkeypatch.setattr(model_cache, "project_model_cache_dir", lambda: cache_dir)
+    monkeypatch.setattr(
+        model_cache,
+        "urlopen",
+        lambda request: FakeResponse(b"not a model"),
+    )
+
+    with pytest.raises(Exception):
+        load_state_dict_from_project_url("https://example.invalid/model.pth")
+
+    assert not (cache_dir / "model.pth").exists()
+    assert not (cache_dir / "model.pth.part").exists()
+
+
 def test_mae_weight_loader_uses_the_project_model_cache(monkeypatch):
     calls = {}
 

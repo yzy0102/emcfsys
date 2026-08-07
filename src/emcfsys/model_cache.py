@@ -4,6 +4,7 @@ from pathlib import Path
 from typing import Callable, Iterator
 from urllib.parse import urlparse
 from urllib.request import Request, urlopen
+from zipfile import BadZipFile, ZipFile
 
 import torch
 
@@ -30,7 +31,9 @@ def resolve_pretrained_weight_path(
 
     cached_path = project_model_cache_dir() / filename
     if cached_path.is_file():
-        return cached_path
+        if _has_complete_zip_directory(cached_path):
+            return cached_path
+        _discard_cached_model(cached_path, "the archive is incomplete")
 
     if explicit_path:
         path = Path(explicit_path).expanduser()
@@ -61,6 +64,31 @@ def _emit_download_progress(message: str) -> None:
     callback = _download_progress_callback.get()
     if callback is not None:
         callback(message)
+
+
+def _has_complete_zip_directory(path: Path) -> bool:
+    """Reject truncated ZIP-based PyTorch checkpoints without loading tensors."""
+
+    try:
+        if path.stat().st_size == 0:
+            return False
+        with path.open("rb") as checkpoint_file:
+            is_zip_archive = checkpoint_file.read(4) == b"PK\x03\x04"
+        if not is_zip_archive:
+            # Legacy pickle checkpoints cannot be cheaply validated here.
+            return True
+        with ZipFile(path) as archive:
+            archive.infolist()
+    except (OSError, BadZipFile):
+        return False
+    return True
+
+
+def _discard_cached_model(path: Path, reason: str) -> None:
+    path.unlink(missing_ok=True)
+    _emit_download_progress(
+        f"Discarded cached model {path.name} because {reason}; downloading it again."
+    )
 
 
 def _download_to_project_cache(url: str, destination: Path) -> None:
@@ -133,6 +161,23 @@ def load_state_dict_from_project_url(
         raise ValueError(f"Could not determine a checkpoint filename from URL: {url}")
 
     cached_path = project_model_cache_dir() / filename
-    if not cached_path.is_file():
-        _download_to_project_cache(url, cached_path)
-    return _load_cached_state_dict(cached_path, map_location)
+    if cached_path.is_file() and not _has_complete_zip_directory(cached_path):
+        _discard_cached_model(cached_path, "the archive is incomplete")
+
+    if cached_path.is_file():
+        try:
+            return _load_cached_state_dict(cached_path, map_location)
+        except Exception as error:
+            _discard_cached_model(
+                cached_path,
+                f"it could not be loaded ({error})",
+            )
+
+    _download_to_project_cache(url, cached_path)
+    try:
+        return _load_cached_state_dict(cached_path, map_location)
+    except Exception:
+        # A completed HTTP request can still contain an error page or a
+        # truncated response. Do not retain it as a usable cache entry.
+        cached_path.unlink(missing_ok=True)
+        raise

@@ -3,6 +3,7 @@ import json
 import numpy as np
 from PIL import Image
 
+import emcfsys.utils.labelme_semantic_tasks as labelme_tasks
 from emcfsys.utils.labelme_semantic_tasks import (
     LabelMeSemanticConversionRequest,
     check_labelme_semantic_folder,
@@ -106,6 +107,19 @@ def test_labelme_semantic_check_infer_save_load_preview_and_convert(tmp_path):
     assert len(list((output_dir / "label_viz").rglob("*.png"))) == 2
     assert len(list((output_dir / "overlay").rglob("*.png"))) == 2
     assert report["failed_files"][0]["json_path"].endswith("broken.json")
+
+
+def test_default_label_color_uses_keyword_only_imgviz_api(monkeypatch):
+    calls = {}
+
+    def fake_label_colormap(*, n_label=256, value=None):
+        calls["n_label"] = n_label
+        return np.tile(np.array([[1, 2, 3]], dtype=np.uint8), (n_label, 1))
+
+    monkeypatch.setattr(labelme_tasks.imgviz, "label_colormap", fake_label_colormap)
+
+    assert labelme_tasks._default_color(3) == (1, 2, 3)
+    assert calls["n_label"] == 256
 
 
 def test_labelme_semantic_check_detects_missing_image_unknown_label_and_short_polygon(tmp_path):

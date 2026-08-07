@@ -12,3 +12,6 @@ transformers
 huggingface-hub
 safetensors
 seaborn
+
+# ------------------
+imgviz

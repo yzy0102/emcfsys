@@ -192,7 +192,10 @@ def load_pretrained(model,
         local_url,
     ) if (pretrained or local_url) else None
     if weight_path is not None:
-        state_dict = torch.load(weight_path, map_location="cpu")
+        if weight_path.parent == project_model_cache_dir():
+            state_dict = load_pretrained_from_hub(pretrained_url)
+        else:
+            state_dict = torch.load(weight_path, map_location="cpu")
         # 自动位置编码插值
         if using_log:
             state_dict = interpolate_pos_encoding_log_state_dict(state_dict, new_img_size=img_size, patch_size=16)
@@ -223,7 +226,10 @@ def load_pretrained(model,
             print("Load pretrained weights from: {pretrained_url}")
         except Exception as e:
             print(f"[EMCellFound] Failed to load pretrained weights: {e}")
-            print("Try to download the weights from {pretrained_url} and put it in the local path.")
+            raise RuntimeError(
+                "Failed to download or load EMCellFound pretrained weights. "
+                "Check the network connection or provide a valid local checkpoint."
+            ) from e
     return model
 
 

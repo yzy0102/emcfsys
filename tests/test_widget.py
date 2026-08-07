@@ -401,6 +401,29 @@ def test_labelme_semantic_converter_widget_checks_previews_and_converts(make_nap
     assert len(list((tmp_path / "converted" / "overlay").rglob("*.png"))) == 1
 
 
+def test_labelme_semantic_converter_shows_split_options_only_when_enabled(
+    make_napari_viewer,
+):
+    widget = LabelMe2Seg(make_napari_viewer())
+
+    assert widget.train_ratio.native.isHidden()
+    assert widget.val_ratio.native.isHidden()
+    assert widget.test_ratio.native.isHidden()
+    assert widget.split_seed.native.isHidden()
+
+    widget.split_dataset.value = True
+    assert not widget.train_ratio.native.isHidden()
+    assert not widget.val_ratio.native.isHidden()
+    assert not widget.test_ratio.native.isHidden()
+    assert not widget.split_seed.native.isHidden()
+
+    widget.split_dataset.value = False
+    assert widget.train_ratio.native.isHidden()
+    assert widget.val_ratio.native.isHidden()
+    assert widget.test_ratio.native.isHidden()
+    assert widget.split_seed.native.isHidden()
+
+
 def test_labelme_semantic_converter_cancel_button_sets_stop_flag(make_napari_viewer, tmp_path):
     labelme_dir = tmp_path / "labelme"
     labelme_dir.mkdir()

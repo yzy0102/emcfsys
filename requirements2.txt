@@ -1,0 +1,33 @@
+# EMCFsys runtime dependencies.
+# Install PyTorch (torch and torchvision) with the CUDA or CPU build that
+# matches the target machine before installing this file.
+
+# napari desktop application and widget framework
+# napari[all]
+# magicgui
+# qtpy
+
+# Core image, numerical, visualization, and analysis functionality
+numpy
+Pillow
+scipy
+scikit-image
+opencv-python
+pandas
+matplotlib
+shapely
+
+# Deep-learning training and inference
+torch
+torchvision
+timm
+albumentations
+einops
+tqdm
+
+# LabelMe dataset conversion and visualization
+labelme
+imgviz
+
+# Required only when an instance-segmentation COCO JSON uses compressed RLE masks.
+pycocotools

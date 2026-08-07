@@ -123,7 +123,7 @@ def _default_color(class_id: int) -> tuple[int, int, int]:
         return (0, 0, 0)
     if class_id == 255:
         return (255, 255, 255)
-    colormap = imgviz.label_colormap(256)
+    colormap = imgviz.label_colormap(n_label=256)
     color = colormap[int(class_id) % len(colormap)]
     return tuple(int(value) for value in color[:3])
 

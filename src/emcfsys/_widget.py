@@ -3506,8 +3506,10 @@ class LabelMe2Seg(Container):
         self._save_label_map_button.clicked.connect(self._save_label_map)
         self._check_button.clicked.connect(self._check_labelme_folder)
         self._preview_button.clicked.connect(self._preview_labelme_folder)
+        self.split_dataset.changed.connect(self._update_split_state)
         self._run_button.clicked.connect(self._convert_labelme_json_to_mask)
         self._cancel_button.clicked.connect(self._cancel_conversion)
+        self._update_split_state()
 
     def _log(self, message):
         _append_log_message(self._log_text, message)
@@ -3523,6 +3525,13 @@ class LabelMe2Seg(Container):
         self._infer_label_map_button.enabled = not running
         self._load_label_map_button.enabled = not running
         self._save_label_map_button.enabled = not running
+
+    def _update_split_state(self):
+        split_enabled = bool(self.split_dataset.value)
+        self.train_ratio.visible = split_enabled
+        self.val_ratio.visible = split_enabled
+        self.test_ratio.visible = split_enabled
+        self.split_seed.visible = split_enabled
 
     def _cancel_conversion(self):
         if self._worker is None:

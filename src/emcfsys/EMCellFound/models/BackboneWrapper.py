@@ -10,7 +10,7 @@ from emcfsys.EMCellFound.models.dinov3 import (
     LOCAL_DINOV3_VIT_BASE_WEIGHTS,
     LOCAL_DINOV3_VIT_BASE_URL,
 )
-from emcfsys.model_cache import resolve_pretrained_weight_path
+from emcfsys.model_cache import project_model_cache_dir, resolve_pretrained_weight_path
 
 vit_names = ["emcellfound_vit_base", 
             
@@ -251,11 +251,17 @@ class CasualBackbones(nn.Module):
                     img_size=img_size,
                     out_indices=out_indices,
                     pretrained_path=(
-                        str(weights_path) if weights_path is not None else None
+                        str(weights_path)
+                        if weights_path is not None
+                        and weights_path.parent != project_model_cache_dir()
+                        else None
                     ),
                     pretrained_url=(
                         LOCAL_DINOV3_VIT_BASE_URL
-                        if pretrained and weights_path is None
+                        if pretrained and (
+                            weights_path is None
+                            or weights_path.parent == project_model_cache_dir()
+                        )
                         else None
                     ),
                 )
