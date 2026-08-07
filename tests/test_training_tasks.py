@@ -1,6 +1,8 @@
 import csv
 import json
+import numpy as np
 from PIL import Image
+import pytest
 
 from emcfsys.utils.training_tasks import SegmentationTrainingRequest, run_training_task
 from emcfsys.utils.training_artifacts import export_training_artifacts, load_training_config
@@ -15,9 +17,32 @@ from emcfsys.EMCellFound.metrics.metrics import (
 import torch
 
 
+def _mock_valid_semantic_preflight(monkeypatch):
+    def mock_validator(*args, **kwargs):
+        progress_callback = kwargs.get("progress_callback")
+        if progress_callback is not None:
+            progress_callback(0, 5)
+            progress_callback(2, 5)
+            progress_callback(5, 5)
+        return {
+            "ok": True,
+            "errors": [],
+            "statistics": {
+                "max_label_id_excluding_255": 1,
+                "required_num_classes": 2,
+            },
+        }
+
+    monkeypatch.setattr(
+        "emcfsys.utils.training_tasks.validate_semantic_segmentation_dataset",
+        mock_validator,
+    )
+
+
 def test_run_training_task(monkeypatch, tmp_path):
     calls = {"update": [], "log": []}
     monkeypatch.setenv("EMCFSYS_MODEL_REGISTRY", str(tmp_path / "registry.json"))
+    _mock_valid_semantic_preflight(monkeypatch)
 
     def fake_train_loop(images_dir, masks_dir, save_path, **kwargs):
         callback = kwargs["callback"]
@@ -61,6 +86,7 @@ def test_run_training_task(monkeypatch, tmp_path):
 
     assert len(logs) == 2
     assert calls["update"] == [(1, 0.3)]
+    assert any("Dataset check [" in message for message in calls["log"])
     assert any("Estimated total training time" in message for message in calls["log"])
     assert any("Training artifacts exported" in message for message in calls["log"])
     assert any("Model registry updated" in message for message in calls["log"])
@@ -69,6 +95,7 @@ def test_run_training_task(monkeypatch, tmp_path):
 
 def test_run_training_task_passes_advanced_loss_config(monkeypatch, tmp_path):
     captured = {}
+    _mock_valid_semantic_preflight(monkeypatch)
 
     def fake_train_loop(images_dir, masks_dir, save_path, **kwargs):
         captured.update(kwargs)
@@ -112,6 +139,7 @@ def test_run_training_task_passes_advanced_loss_config(monkeypatch, tmp_path):
 
 def test_run_training_task_passes_split_directory(monkeypatch, tmp_path):
     captured = {}
+    _mock_valid_semantic_preflight(monkeypatch)
 
     def fake_train_loop(images_dir, masks_dir, save_path, **kwargs):
         captured.update(kwargs)
@@ -137,6 +165,45 @@ def test_run_training_task_passes_split_directory(monkeypatch, tmp_path):
     run_training_task(request)
 
     assert captured["split_dir"] == "splits"
+
+
+def test_run_training_task_rejects_invalid_class_count_before_train_loop(
+    monkeypatch,
+    tmp_path,
+):
+    images = tmp_path / "images"
+    masks = tmp_path / "masks"
+    images.mkdir()
+    masks.mkdir()
+    Image.fromarray(np.zeros((8, 8), dtype=np.uint8)).save(images / "a.tif")
+    mask = np.zeros((8, 8), dtype=np.uint8)
+    mask[2:6, 2:6] = 2
+    Image.fromarray(mask).save(masks / "a.png")
+
+    def fail_if_training_starts(*args, **kwargs):
+        raise AssertionError("train_loop must not run after failed preflight")
+
+    monkeypatch.setattr(
+        "emcfsys.utils.training_tasks.train_loop",
+        fail_if_training_starts,
+    )
+    request = SegmentationTrainingRequest(
+        images_dir=str(images),
+        masks_dir=str(masks),
+        save_path=str(tmp_path / "save_dir"),
+        backbone_name="resnet34",
+        model_name="unet",
+        lr=1e-4,
+        batch_size=1,
+        epochs=1,
+        device="cuda",
+        classes_num=2,
+        target_size=64,
+        ignore_index=255,
+    )
+
+    with pytest.raises(ValueError, match="before CUDA initialization"):
+        run_training_task(request)
 
 
 def test_load_split_indices_uses_train_and_val_files(tmp_path):

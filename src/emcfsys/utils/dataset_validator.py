@@ -52,21 +52,22 @@ def _image_size(path: Path):
 
 
 def _mask_array(path: Path):
-    return np.asarray(PILImage.open(path))
+    with PILImage.open(path) as image:
+        return np.asarray(image)
 
 
 def _ratio(value: float, total: float) -> float:
     return 0.0 if total <= 0 else float(value) / float(total)
 
 
-def _distribution_to_strings(counter: Counter) -> dict[str, int]:
-    return {str(key): int(value) for key, value in counter.items()}
-
-
 def validate_semantic_segmentation_dataset(
     images_dir: str | Path,
     masks_dir: str | Path,
     *,
+    num_classes: int | None = None,
+    ignore_index: int | None = None,
+    stop_flag_fn=None,
+    progress_callback=None,
     max_issues: int = 50,
 ) -> dict[str, Any]:
     report = _new_report("semantic_segmentation")
@@ -79,6 +80,14 @@ def validate_semantic_segmentation_dataset(
         _add_issue(report, "error", f"Masks folder not found: {masks_dir}", max_issues)
     if not report["ok"]:
         return report
+
+    if num_classes is not None and num_classes <= 0:
+        _add_issue(
+            report,
+            "error",
+            f"Classes num must be greater than zero, got {num_classes}.",
+            max_issues,
+        )
 
     images = _collect_images(images_dir)
     masks = _collect_images(masks_dir)
@@ -112,9 +121,22 @@ def validate_semantic_segmentation_dataset(
 
     size_counter = Counter()
     mask_area_ratios = []
+    max_label_id = -1
+    max_label_example = None
+    min_label_id = None
+    min_label_example = None
+    contains_ignore_255 = False
+    ignore_255_example = None
     empty_masks = 0
     checked_pairs = 0
-    for stem in sorted(set(image_stems) & set(mask_stems)):
+    paired_stems = sorted(set(image_stems) & set(mask_stems))
+    total_pairs = len(paired_stems)
+    if progress_callback is not None:
+        progress_callback(0, total_pairs)
+
+    for pair_index, stem in enumerate(paired_stems, start=1):
+        if stop_flag_fn is not None and stop_flag_fn():
+            raise StopIteration
         image_path = image_stems[stem]
         mask_path = mask_stems[stem]
         try:
@@ -122,6 +144,8 @@ def validate_semantic_segmentation_dataset(
             mask_size = _image_size(mask_path)
         except Exception as error:
             _add_issue(report, "error", f"Failed to open pair '{stem}': {error}", max_issues)
+            if progress_callback is not None:
+                progress_callback(pair_index, total_pairs)
             continue
         checked_pairs += 1
         size_counter[image_size] += 1
@@ -134,13 +158,70 @@ def validate_semantic_segmentation_dataset(
             )
         try:
             mask = _mask_array(mask_path)
+            if mask.ndim != 2:
+                _add_issue(
+                    report,
+                    "error",
+                    f"Mask '{stem}' must be a single-channel class-ID image, "
+                    f"but its shape is {mask.shape}.",
+                    max_issues,
+                )
+                if progress_callback is not None:
+                    progress_callback(pair_index, total_pairs)
+                continue
+            valid_labels = mask[mask != 255]
+            if np.any(mask == 255):
+                contains_ignore_255 = True
+                ignore_255_example = ignore_255_example or mask_path.name
+            if valid_labels.size:
+                current_min = int(valid_labels.min())
+                current_max = int(valid_labels.max())
+                if min_label_id is None or current_min < min_label_id:
+                    min_label_id = current_min
+                    min_label_example = mask_path.name
+                if current_max > max_label_id:
+                    max_label_id = current_max
+                    max_label_example = mask_path.name
             foreground = int(np.count_nonzero(mask))
             total = int(mask.size)
             if foreground == 0:
                 empty_masks += 1
             mask_area_ratios.append(_ratio(foreground, total))
         except Exception as error:
-            _add_issue(report, "warning", f"Failed to inspect mask '{stem}': {error}", max_issues)
+            _add_issue(report, "error", f"Failed to inspect mask '{stem}': {error}", max_issues)
+        if progress_callback is not None:
+            progress_callback(pair_index, total_pairs)
+
+    required_num_classes = max_label_id + 1
+    if min_label_id is not None and min_label_id < 0:
+        _add_issue(
+            report,
+            "error",
+            f"Mask labels must be non-negative except for the configured ignore "
+            f"index; found label {min_label_id} in {min_label_example}.",
+            max_issues,
+        )
+    if contains_ignore_255 and ignore_index is not None and ignore_index != 255:
+        _add_issue(
+            report,
+            "error",
+            f"Mask labels contain the reserved ignore value 255 (for example, "
+            f"{ignore_255_example}), but Ignore index={ignore_index}. Set Ignore "
+            "index to 255 before training.",
+            max_issues,
+        )
+    if num_classes is not None and num_classes > 0:
+        if num_classes != required_num_classes:
+            _add_issue(
+                report,
+                "error",
+                "Configured Classes num does not match the labels: "
+                f"maximum label ID excluding 255 is {max_label_id} "
+                f"({max_label_example}), so the required Classes num is "
+                f"{required_num_classes} including background. Configured "
+                f"Classes num={num_classes}.",
+                max_issues,
+            )
 
     report["summary"]["checked_pairs"] = checked_pairs
     report["summary"]["image_size_distribution"] = {
@@ -152,6 +233,11 @@ def validate_semantic_segmentation_dataset(
         "mean_mask_area_ratio": float(np.mean(mask_area_ratios)) if mask_area_ratios else 0.0,
         "min_mask_area_ratio": float(np.min(mask_area_ratios)) if mask_area_ratios else 0.0,
         "max_mask_area_ratio": float(np.max(mask_area_ratios)) if mask_area_ratios else 0.0,
+        "max_label_id_excluding_255": max_label_id,
+        "required_num_classes": required_num_classes,
+        "configured_num_classes": num_classes,
+        "ignore_index": ignore_index,
+        "contains_ignore_255": contains_ignore_255,
     }
     report["recommendation"] = recommend_training_preset(report)
     return report

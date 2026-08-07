@@ -1787,6 +1787,15 @@ class DLTrainingContainer(Container):
         if not self._stop_flag:
             self._log(f"Training finished. Model saved to: {request.save_path}")
 
+    def _on_training_error(self, error):
+        message = str(error)
+        self._log(f"Semantic segmentation training error: {message}")
+        if "device-side assert triggered" in message.lower():
+            self._log(
+                "CUDA entered an invalid state after a device-side assertion. "
+                "Restart napari before starting another GPU training task."
+            )
+
     def _start_training(self):
         if self._viewer is None:
             return
@@ -1796,7 +1805,7 @@ class DLTrainingContainer(Container):
         request = self._build_training_request()
         worker = self._create_training_worker(request)
         worker.returned.connect(lambda logs: self._on_training_returned(logs, request))
-        worker.errored.connect(lambda err: self._log(f"Semantic segmentation training error: {err}"))
+        worker.errored.connect(self._on_training_error)
         worker.start()
 
     def _stop_training(self):

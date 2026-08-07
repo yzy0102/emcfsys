@@ -5,6 +5,7 @@ import torch
 
 from ..EMCellFound.metrics.metrics import format_metric_summary, format_per_class_metrics_table
 from ..EMCellFound.train import train_loop
+from .dataset_validator import validate_semantic_segmentation_dataset
 from .model_registry import register_training_result
 from .training_artifacts import export_training_artifacts
 
@@ -54,6 +55,22 @@ def run_training_task(
         if log is not None:
             log(message)
 
+    last_progress_units = -1
+
+    def emit_dataset_check_progress(completed, total):
+        nonlocal last_progress_units
+        if total <= 0:
+            return
+        progress_units = min(20, int(completed * 20 / total))
+        if progress_units == last_progress_units:
+            return
+        last_progress_units = progress_units
+        percentage = int(completed * 100 / total)
+        bar = "#" * progress_units + "-" * (20 - progress_units)
+        emit_log(
+            f"Dataset check [{bar}] {percentage:3d}% ({completed}/{total} labels)"
+        )
+
     def cb(epoch, batch, n_batches, loss, finished_epoch=False, epoch_time=None, model_dict=None, metrics=None):
         if finished_epoch and update_loss_curve is not None:
             update_loss_curve(loss, epoch=epoch)
@@ -88,6 +105,31 @@ def run_training_task(
             raise StopIteration()
 
     try:
+        emit_log("Checking semantic segmentation dataset and mask class IDs...")
+        validation_report = validate_semantic_segmentation_dataset(
+            request.images_dir,
+            request.masks_dir,
+            num_classes=request.classes_num,
+            ignore_index=request.ignore_index,
+            stop_flag_fn=stop_flag_fn,
+            progress_callback=emit_dataset_check_progress,
+        )
+        if not validation_report["ok"]:
+            errors = validation_report.get("errors", [])
+            details = "\n- ".join(errors) if errors else "Unknown dataset validation error."
+            raise ValueError(
+                "Semantic segmentation preflight failed before CUDA initialization:\n"
+                f"- {details}"
+            )
+        statistics = validation_report.get("statistics", {})
+        emit_log(
+            "Dataset preflight passed: "
+            "maximum label ID excluding 255="
+            f"{statistics.get('max_label_id_excluding_255')}, "
+            "required Classes num="
+            f"{statistics.get('required_num_classes')}, "
+            f"ignore index={request.ignore_index}."
+        )
         train_loop(
             request.images_dir,
             request.masks_dir,

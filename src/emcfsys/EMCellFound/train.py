@@ -194,7 +194,7 @@ def train_loop(images_dir, masks_dir,
                     raise StopIteration
                 
                 img = img.to(device).float()                     # shape (B,C,H,W)
-                msk = msk.to(device).long().squeeze(1)                     # shape (B,H,W), 类别索引
+                msk = msk.to(device).long().squeeze(1)           # shape (B,H,W)
 
                 opt.zero_grad()
                 if use_mask2former_query_loss:

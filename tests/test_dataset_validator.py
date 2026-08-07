@@ -47,6 +47,90 @@ def test_validate_semantic_segmentation_dataset_ok(tmp_path):
     }
 
 
+def test_validate_semantic_segmentation_dataset_rejects_out_of_range_class(tmp_path):
+    images = tmp_path / "images"
+    masks = tmp_path / "masks"
+    images.mkdir()
+    masks.mkdir()
+    Image.fromarray(np.zeros((8, 8), dtype=np.uint8)).save(images / "a.tif")
+    mask = np.zeros((8, 8), dtype=np.uint8)
+    mask[2:6, 2:6] = 2
+    Image.fromarray(mask).save(masks / "a.png")
+
+    report = validate_semantic_segmentation_dataset(
+        images,
+        masks,
+        num_classes=2,
+        ignore_index=255,
+    )
+
+    assert report["ok"] is False
+    assert report["statistics"]["max_label_id_excluding_255"] == 2
+    assert report["statistics"]["required_num_classes"] == 3
+    assert any("Configured Classes num=2" in message for message in report["errors"])
+
+    too_many_classes = validate_semantic_segmentation_dataset(
+        images,
+        masks,
+        num_classes=4,
+        ignore_index=255,
+    )
+    assert too_many_classes["ok"] is False
+    assert any("Configured Classes num=4" in message for message in too_many_classes["errors"])
+
+
+def test_validate_semantic_segmentation_dataset_allows_ignore_index(tmp_path):
+    images = tmp_path / "images"
+    masks = tmp_path / "masks"
+    images.mkdir()
+    masks.mkdir()
+    Image.fromarray(np.zeros((8, 8), dtype=np.uint8)).save(images / "a.tif")
+    mask = np.zeros((8, 8), dtype=np.uint8)
+    mask[0, 0] = 1
+    mask[1, 1] = 255
+    Image.fromarray(mask).save(masks / "a.png")
+
+    report = validate_semantic_segmentation_dataset(
+        images,
+        masks,
+        num_classes=2,
+        ignore_index=255,
+    )
+
+    assert report["ok"] is True
+    assert report["statistics"]["max_label_id_excluding_255"] == 1
+    assert report["statistics"]["required_num_classes"] == 2
+    assert report["statistics"]["contains_ignore_255"] is True
+
+    wrong_ignore_index = validate_semantic_segmentation_dataset(
+        images,
+        masks,
+        num_classes=2,
+        ignore_index=-1,
+    )
+    assert wrong_ignore_index["ok"] is False
+    assert any("Set Ignore index to 255" in message for message in wrong_ignore_index["errors"])
+
+
+def test_validate_semantic_segmentation_dataset_reports_label_check_progress(tmp_path):
+    images = tmp_path / "images"
+    masks = tmp_path / "masks"
+    images.mkdir()
+    masks.mkdir()
+    for name in ("a", "b"):
+        Image.fromarray(np.zeros((8, 8), dtype=np.uint8)).save(images / f"{name}.tif")
+        Image.fromarray(np.zeros((8, 8), dtype=np.uint8)).save(masks / f"{name}.png")
+
+    progress = []
+    validate_semantic_segmentation_dataset(
+        images,
+        masks,
+        progress_callback=lambda completed, total: progress.append((completed, total)),
+    )
+
+    assert progress == [(0, 2), (1, 2), (2, 2)]
+
+
 def test_validate_classification_dataset_detects_empty_class(tmp_path):
     (tmp_path / "class_a").mkdir()
     (tmp_path / "class_b").mkdir()
