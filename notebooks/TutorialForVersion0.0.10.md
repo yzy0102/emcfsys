@@ -1,9 +1,20 @@
-# emcfsys Tutorial
-
-# For emcfsys=0.0.10 Version!📚
+# emcfsys Tutorial📚
 
 Welcome to **emcfsys** — a foundation model integration framework for Cell EM image analysis designed for the Napari platform.
 ---------------------------------------------------------------------------------------------------------------------------
+
+# EMCFSys is still under active development and is being updated to version 0.3.5. Please refer to the latest user guide below:
+
+Guide (English) :  [User_Guide_English](EMCFsys_UserGuide_English.md)
+
+Guide (Chinese): [User_Guide_Chinese](EMCFsys_UserGuide_Chinese.md)
+
+
+
+
+# If you are using an older version of EMCFSys, please refer to the user documentation below.
+
+# For the first emcfsys=0.0.10 version. Guide!📚
 
 ## Contents
 
@@ -27,10 +38,6 @@ This tutorial demonstrates:
 - Dataset conversion workflows for semantic segmentation and instance segmentation
 - Phenotype analysis based on segmentation outputs
 
-
-
-
-
 ---
 
 ## 2. Prerequisites: Correctly install the napari platform and the emcfsys plugin 🔍
@@ -41,33 +48,28 @@ This tutorial demonstrates:
    And you can find emcfsys plugin.
    ![alt text](../source/image.png)
 
-
-
-
-
 ---
 
 ## 3. EMCFsys Functions for EM image data processing（Widget） 🛠️
+
 Functions in emcfsys are listed belows:
-   - Utility | Image Resize
-   - Model Manager | Registry
-   - Semantic Segmentation | Training
-   - Semantic Segmentation | Inference
-   - Classification | Training
-   - Classification | Inference
-   - Instance Segmentation | Training
-   - Instance Segmentation | Inference
-   - Dataset Tools | Dataset Validator
-   - Super Resolution | Single Image Inference
-   - Super Resolution | Batch Inference
-   - Dataset Converter | LabelMe to Semantic Masks
-   - Dataset Converter | LabelMe to COCO Instance
-   - Analysis | Phenotype Analysis
 
+- Utility | Image Resize
+- Model Manager | Registry
+- Semantic Segmentation | Training
+- Semantic Segmentation | Inference
+- Classification | Training
+- Classification | Inference
+- Instance Segmentation | Training
+- Instance Segmentation | Inference
+- Dataset Tools | Dataset Validator
+- Super Resolution | Single Image Inference
+- Super Resolution | Batch Inference
+- Dataset Converter | LabelMe to Semantic Masks
+- Dataset Converter | LabelMe to COCO Instance
+- Analysis | Phenotype Analysis
 
-      ![alt text](../source/Napari_emcfsys_GUI.png)
-
-
+  ![alt text](../source/Napari_emcfsys_GUI.png)
 
 1. `ImageResize`: interactively resize images
    ![alt text](../source/image-2.png)

@@ -92,7 +92,7 @@ EMCellFiner：[EMCellFiner.pth](https://github.com/yzy0102/emcfsys/releases/down
 
 Liver-6 3D reconstruct数据集：[huggingface.co/datasets/Zeyu0102/liverdataset](https://huggingface.co/datasets/Zeyu0102/liverdataset)
 
-线粒体实例分割数据集：
+线粒体实例分割数据集：[huggingface.co/datasets/Zeyu0102/EMCFsys_MitoInstanceSegDataset](https://huggingface.co/datasets/Zeyu0102/EMCFsys_MitoInstanceSegDataset)
 
 ## 3. Utility | Image Resize
 
