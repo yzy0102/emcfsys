@@ -61,7 +61,7 @@ emcfsys requires PyTorch > 1.3. For optimal performance, we recommend PyTorch 2.
 
 ```
 # For Linux and Window:
-pip install torch==2.4.1 torchvision==0.19.1 torchaudio==2.4.1 --index-url https://download.pytorch.org/whl/cu118
+pip install torch==2.5.1 torchvision==0.20.1 torchaudio==2.5.1 --index-url https://download.pytorch.org/whl/cu118
 ```
 
 Or follow link to select the torch version [https://pytorch.org/get-started/previous-versions/](https://pytorch.org/get-started/previous-versions/)

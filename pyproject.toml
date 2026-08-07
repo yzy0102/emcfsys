@@ -30,11 +30,29 @@ requires-python = ">=3.9"
 # or any other Qt bindings directly (e.g. PyQt5, PySide2).
 # See best practices: https://napari.org/stable/plugins/building_a_plugin/best_practices.html
 dependencies = [
+    "albumentations",
+    "einops",
+    "huggingface-hub",
+    "imgviz==1.7.6",
+    "labelme==5.9.1",
     "numpy",
     "magicgui",
+    "matplotlib",
+    "napari",
+    "ninja",
+    "opencv-python",
+    "pandas",
+    "Pillow",
+    "pycocotools",
     "qtpy",
+    "safetensors",
     "scikit-image",
+    "seaborn",
+    "shapely==2.1.2",
     "scipy",
+    "timm==1.0.22",
+    "tqdm",
+    "transformers",
 ]
 
 [project.optional-dependencies]
