@@ -86,7 +86,7 @@ You can also install emcfsys in the napari-plugin-store
 At last, install necessary components: (**Very important, don't forget to install these packages**)
 
 ```
-pip install labelme numpy timm opencv-python einops shapely albumentations ninja Pillow seaborn safetensors huggingface-hub transformers
+pip install labelme==5.9.1 numpy timm==1.0.22 opencv-python einops shapely==2.1.2 albumentations ninja Pillow seaborn safetensors huggingface-hub transformers imgviz==1.7.6
 ```
 
 ---

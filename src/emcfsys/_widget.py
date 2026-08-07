@@ -1471,12 +1471,12 @@ class DLTrainingContainer(Container):
         self.train_split_path = FileEdit(label="Train split (train.txt)", mode="r", nullable=True)
         self.val_split_path = FileEdit(label="Val split (val.txt)", mode="r", nullable=True)
         self.test_split_path = FileEdit(label="Test split (test.txt)", mode="r", nullable=True)
-        self.save_path = FileEdit(label="Save model as (.pth)", mode="d")
+        self.save_path = FileEdit(label="Save model path", mode="d")
         self.use_pretrained_model = CheckBox(
-            label="Use pretrained model",
+            label="Load latest model",
             value=False,
         )
-        self.pretrained_model = FileEdit(label="Pretrained model (.pth)", nullable=True, mode="r")
+        self.pretrained_model = FileEdit(label="Latest model (.pth)", nullable=True, mode="r")
 
         self.backbone_name = ComboBox(label="Backbone", choices=backbone_zoom, value="emcellfound_vit_base")
         self.model_name = ComboBox(label="Model", choices=model_zoom, value="deeplabv3plus")

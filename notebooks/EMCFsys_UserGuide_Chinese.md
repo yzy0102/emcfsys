@@ -168,7 +168,7 @@ Model Manager 是持久化模型 registry，不要求所有模型位于同一个
 
 ## 5. Semantic Segmentation | Training
 
-![语义分割训练](image/UserGuide/04_semantic_training.png)
+![1786113597122](https://file+.vscode-resource.vscode-cdn.net/d%3A/napari_EMCF/EMCFsys/emcfsys/notebooks/image/EMCFsys_UserGuide_English/1786113597122.png)
 
 语义分割为每个像素预测类别 ID，适合背景、细胞器或组织区域等类别互不重叠的任务。
 
@@ -203,17 +203,17 @@ splits/
 
 ### 5.3 模型和训练参数
 
-| 控件             | 建议                                                                                  |
-| ---------------- | ------------------------------------------------------------------------------------- |
-| Pretrained model | 可选已有的微调模型或训练完整的模型（注意不是EMCellFound权重，而是整体分割模型的权重） |
-| Backbone         | 根据显存和数据规模选择；预训练权重必须与 backbone 对应                                |
-| Model            | `deeplabv3plus`、`unet`、`pspnet`、`upernet`、`mask2former` 等              |
-| Classes num      | 类别总数，必须包含背景（1+分割类别数）其中1为背景                                     |
-| Target size      | 送入模型的目标尺寸（推荐512×512）                                                    |
-| Batch size       | 显存不足时先减小该值                                                                  |
-| Learning rate    | 小数据集可从较小值开始（EMCellFound默认使用较小值进行微调）                           |
-| Ignore index     | 不参与 loss 和指标计算的像素 ID                                                       |
-| Device           | `auto`、`cpu` 或 `cuda`                                                         |
+| 控件             | 建议                                                                                                        |
+| ---------------- | ----------------------------------------------------------------------------------------------------------- |
+| Pretrained model | 可选：已有训练完整的模型（注意不是EMCellFound权重，而是整体分割模型的权重），用于在已有模型基础上继续训练。 |
+| Backbone         | 根据显存和数据规模选择；预训练权重必须与 backbone 对应                                                      |
+| Model            | `deeplabv3plus`、`unet`、`pspnet`、`upernet`、`mask2former` 等                                    |
+| Classes num      | 类别总数，必须包含背景（1+分割类别数）其中1为背景                                                           |
+| Target size      | 送入模型的目标尺寸（推荐512×512）                                                                          |
+| Batch size       | 显存不足时先减小该值                                                                                        |
+| Learning rate    | 小数据集可从较小值开始（EMCellFound默认使用较小值进行微调）                                                 |
+| Ignore index     | 不参与 loss 和指标计算的像素 ID                                                                             |
+| Device           | `auto`、`cpu` 或 `cuda`                                                                               |
 
 `Training preset` 可快速设置一组参数：`Custom`、`Balanced Default`、`Fast Debug`、`Small Organelle`、`Boundary Sensitive` 和 `Class Imbalance`。选择 preset 会自动更新学习率、batch size、epoch、图像尺寸和损失权重；若要逐项调整，切换到 `Custom`。
 

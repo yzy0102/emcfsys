@@ -177,7 +177,7 @@ When napari is reopened, model records can be restored as long as the registry J
 
 ## 5. Semantic Segmentation | Training
 
-![Semantic segmentation training](image/UserGuide/04_semantic_training.png)
+![1786113597122](image/EMCFsys_UserGuide_English/1786113597122.png)
 
 Semantic segmentation predicts a class ID for every pixel. It is suitable for non-overlapping categories such as background, organelles, or tissue regions.
 
@@ -212,17 +212,17 @@ Each line contains an image stem or relative file name without the image extensi
 
 ### 5.3 Model and Training Parameters
 
-| Control          | Recommendation                                                                                     |
-| ---------------- | -------------------------------------------------------------------------------------------------- |
-| Pretrained model | Optional fine-tuned or complete segmentation model; this is not an EMCellFound backbone weight     |
-| Backbone         | Choose according to available memory and dataset size; pretrained weights must match the backbone  |
-| Model            | `deeplabv3plus`, `unet`, `pspnet`, `upernet`, `mask2former`, and others                  |
-| Classes num      | Total number of classes including background (1 + the number of foreground classes)                |
-| Target size      | Model input size;`512 x 512` is recommended                                                      |
-| Batch size       | Reduce this value first when GPU memory is insufficient                                            |
-| Learning rate    | Start with a smaller value for small datasets; EMCFsys uses a conservative default for fine-tuning |
-| Ignore index     | Pixel ID excluded from loss and metric calculations                                                |
-| Device           | `auto`, `cpu`, or `cuda`                                                                     |
+| Control           | Recommendation                                                                                                                                                  |
+| ----------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Load latest model | Optional complete segmentation model for resuming model training. Note that this is not the EMCellFound backbone weights, but a full complete model checkpoint. |
+| Backbone          | Choose according to available memory and dataset size; pretrained weights must match the backbone. (All backbone are pretrianed from EMCFsys or ImageNet22K\1K) |
+| Model             | Segment heads:`deeplabv3plus`, `unet`, `pspnet`, `upernet`, `mask2former`, and others                                                                 |
+| Classes num       | Total number of classes including background (1 + the number of foreground classes)                                                                             |
+| Target size       | Model input size;`512 x 512` is recommended                                                                                                                   |
+| Batch size        | Reduce this value first when GPU memory is insufficient                                                                                                         |
+| Learning rate     | Start with a smaller value for small datasets; EMCFsys uses a conservative default for fine-tuning                                                              |
+| Ignore index      | Pixel ID excluded from loss and metric calculations                                                                                                             |
+| Device            | `auto`, `cpu`, or `cuda`                                                                                                                                  |
 
 `Training preset` provides quick parameter templates: `Custom`, `Balanced Default`, `Fast Debug`, `Small Organelle`, `Boundary Sensitive`, and `Class Imbalance`. A preset updates the learning rate, batch size, epochs, image size, and loss weights. Switch to `Custom` for individual adjustments.
 
