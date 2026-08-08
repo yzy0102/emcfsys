@@ -186,6 +186,7 @@ TRAINING_PRESET_CHOICES = [
 SEMANTIC_TRAINING_PRESETS = {
     "Balanced Default": {
         "lr": 1e-4,
+        "use_differential_learning_rates": False,
         "batch_size": 8,
         "epochs": 100,
         "target_size": 512,
@@ -199,6 +200,7 @@ SEMANTIC_TRAINING_PRESETS = {
     },
     "Fast Debug": {
         "lr": 3e-4,
+        "use_differential_learning_rates": False,
         "batch_size": 2,
         "epochs": 3,
         "target_size": 256,
@@ -212,6 +214,7 @@ SEMANTIC_TRAINING_PRESETS = {
     },
     "Small Organelle": {
         "lr": 1e-4,
+        "use_differential_learning_rates": False,
         "batch_size": 4,
         "epochs": 150,
         "target_size": 768,
@@ -225,6 +228,7 @@ SEMANTIC_TRAINING_PRESETS = {
     },
     "Boundary Sensitive": {
         "lr": 8e-5,
+        "use_differential_learning_rates": False,
         "batch_size": 4,
         "epochs": 150,
         "target_size": 768,
@@ -238,6 +242,7 @@ SEMANTIC_TRAINING_PRESETS = {
     },
     "Class Imbalance": {
         "lr": 1e-4,
+        "use_differential_learning_rates": False,
         "batch_size": 4,
         "epochs": 180,
         "target_size": 640,
@@ -977,7 +982,18 @@ class ModelManagerContainer(Container):
         self._safe_set_widget_value(widget.num_classes, params.get("num_classes"))
 
     def _fill_semantic_training_widget(self, widget, params, checkpoint_path):
+        self._safe_set_widget_value(
+            widget.images_dir,
+            params.get("images_dir", params.get("image_dir")),
+        )
+        self._safe_set_widget_value(
+            widget.masks_dir,
+            params.get("masks_dir", params.get("mask_dir", params.get("label_dir"))),
+        )
+        self._safe_set_widget_value(widget.save_path, params.get("save_path"))
         self._safe_set_widget_value(widget.pretrained_model, checkpoint_path)
+        if checkpoint_path:
+            widget.use_pretrained_model.value = True
         self._safe_set_widget_value(widget.backbone_name, params.get("backbone_name"))
         self._safe_set_widget_value(widget.model_name, params.get("model_name"))
         self._safe_set_widget_value(
@@ -988,8 +1004,17 @@ class ModelManagerContainer(Container):
             widget.target_size,
             params.get("target_size", params.get("img_size")),
         )
+        use_split_files = bool(params.get("use_split_files"))
+        widget.use_split_files.value = use_split_files
+        if use_split_files:
+            self._safe_set_widget_value(widget.train_split_path, params.get("train_split_path"))
+            self._safe_set_widget_value(widget.val_split_path, params.get("val_split_path"))
+            self._safe_set_widget_value(widget.test_split_path, params.get("test_split_path"))
+        widget._update_split_state()
 
     def _fill_classification_training_widget(self, widget, params, checkpoint_path):
+        self._safe_set_widget_value(widget.dataset_dir, params.get("dataset_dir"))
+        self._safe_set_widget_value(widget.save_path, params.get("save_path"))
         self._safe_set_widget_value(widget.checkpoint_path, checkpoint_path)
         self._safe_set_widget_value(widget.backbone_name, params.get("backbone_name"))
         self._safe_set_widget_value(widget.head_name, params.get("head_name", params.get("model_name")))
@@ -999,11 +1024,36 @@ class ModelManagerContainer(Container):
         widget._update_head_controls()
 
     def _fill_instance_training_widget(self, widget, params, checkpoint_path):
+        self._safe_set_widget_value(widget.image_dir, params.get("image_dir"))
+        self._safe_set_widget_value(widget.annotation_path, params.get("annotation_path"))
+        self._safe_set_widget_value(widget.save_path, params.get("save_path"))
         self._safe_set_widget_value(widget.checkpoint_path, checkpoint_path)
         self._safe_set_widget_value(widget.backbone_name, params.get("backbone_name"))
         self._safe_set_widget_value(widget.model_name, params.get("model_name"))
         self._safe_set_widget_value(widget.img_size, params.get("img_size"))
         self._safe_set_widget_value(widget.num_classes, params.get("num_classes"))
+        use_separate_eval_sets = bool(params.get("use_separate_eval_sets")) or any(
+            params.get(key)
+            for key in (
+                "val_image_dir",
+                "val_annotation_path",
+                "test_image_dir",
+                "test_annotation_path",
+            )
+        )
+        widget.use_separate_eval_sets.value = use_separate_eval_sets
+        if use_separate_eval_sets:
+            self._safe_set_widget_value(widget.val_image_dir, params.get("val_image_dir"))
+            self._safe_set_widget_value(
+                widget.val_annotation_path,
+                params.get("val_annotation_path"),
+            )
+            self._safe_set_widget_value(widget.test_image_dir, params.get("test_image_dir"))
+            self._safe_set_widget_value(
+                widget.test_annotation_path,
+                params.get("test_annotation_path"),
+            )
+        widget._update_eval_dataset_state()
 
 
 class ImageResize(Container):
@@ -1496,6 +1546,24 @@ class DLTrainingContainer(Container):
             value="Custom",
         )
         self.lr = FloatSpinBox(label="Learning rate", min=1e-8, max=1.0, step=1e-4, value=1e-4)
+        self.use_differential_learning_rates = CheckBox(
+            label="Configure backbone/neck/head learning rates",
+            value=False,
+        )
+        self.backbone_lr = FloatSpinBox(
+            label="Backbone learning rate",
+            min=1e-8,
+            max=1.0,
+            step=1e-5,
+            value=1e-5,
+        )
+        self.neck_head_lr = FloatSpinBox(
+            label="Neck/head learning rate",
+            min=1e-8,
+            max=1.0,
+            step=1e-4,
+            value=1e-3,
+        )
         self.batch_size = SpinBox(label="Batch size", min=1, max=512, step=1, value=8)
         self.epochs = SpinBox(label="Epochs", min=1, max=1000, step=10, value=100)
         self.device = ComboBox(label="Device", choices=["auto", "cpu", "cuda"], value="auto")
@@ -1533,6 +1601,9 @@ class DLTrainingContainer(Container):
             self.matching_uncertainty_per_query,
             self.training_preset,
             self.lr,
+            self.use_differential_learning_rates,
+            self.backbone_lr,
+            self.neck_head_lr,
             self.batch_size,
             self.epochs,
             self.device,
@@ -1559,10 +1630,14 @@ class DLTrainingContainer(Container):
         self._load_config_button.clicked.connect(self._load_config)
         self.training_preset.changed.connect(self._apply_training_preset)
         self.model_name.changed.connect(self._update_matching_state)
+        self.use_differential_learning_rates.changed.connect(
+            self._update_learning_rate_state
+        )
         self.use_advanced_losses.changed.connect(self._update_advanced_loss_state)
         self.use_split_files.changed.connect(self._update_split_state)
         self.use_pretrained_model.changed.connect(self._update_pretrained_model_state)
         self._update_matching_state()
+        self._update_learning_rate_state()
         self._update_advanced_loss_state()
         self._update_split_state()
         self._update_pretrained_model_state()
@@ -1622,6 +1697,12 @@ class DLTrainingContainer(Container):
         self.lovasz_loss_weight.visible = enabled
         self.ohem_ce_loss_weight.visible = enabled
 
+    def _update_learning_rate_state(self):
+        use_differential_rates = bool(self.use_differential_learning_rates.value)
+        self.lr.visible = not use_differential_rates
+        self.backbone_lr.visible = use_differential_rates
+        self.neck_head_lr.visible = use_differential_rates
+
     def _update_matching_state(self):
         enabled = self.model_name.value == "mask2former"
         self.matching_sampling.visible = enabled
@@ -1676,6 +1757,9 @@ class DLTrainingContainer(Container):
             "matching_uncertainty_per_query": self.matching_uncertainty_per_query,
             "training_preset": self.training_preset,
             "lr": self.lr,
+            "use_differential_learning_rates": self.use_differential_learning_rates,
+            "backbone_lr": self.backbone_lr,
+            "neck_head_lr": self.neck_head_lr,
             "batch_size": self.batch_size,
             "epochs": self.epochs,
             "device": self.device,
@@ -1717,6 +1801,7 @@ class DLTrainingContainer(Container):
                 )
             _apply_widget_values(self._config_widget_map(), parameters)
             self._update_matching_state()
+            self._update_learning_rate_state()
             self._update_advanced_loss_state()
             self._update_split_state()
             self._update_pretrained_model_state()
@@ -1731,11 +1816,23 @@ class DLTrainingContainer(Container):
             return
         _apply_widget_values(self._config_widget_map(), preset)
         self._update_matching_state()
+        self._update_learning_rate_state()
         self._update_advanced_loss_state()
         self._update_split_state()
         self._log(f"Applied semantic segmentation preset: {preset_name}")
 
     def _build_training_request(self):
+        use_differential_rates = bool(self.use_differential_learning_rates.value)
+        backbone_lr = (
+            self.backbone_lr.value
+            if use_differential_rates
+            else self.lr.value * 0.1
+        )
+        neck_head_lr = (
+            self.neck_head_lr.value
+            if use_differential_rates
+            else self.lr.value * 10.0
+        )
         return SegmentationTrainingRequest(
             images_dir=self.images_dir.value,
             masks_dir=self.masks_dir.value,
@@ -1743,6 +1840,9 @@ class DLTrainingContainer(Container):
             backbone_name=self.backbone_name.value,
             model_name=self.model_name.value,
             lr=self.lr.value,
+            use_differential_learning_rates=use_differential_rates,
+            backbone_lr=backbone_lr,
+            neck_head_lr=neck_head_lr,
             batch_size=self.batch_size.value,
             epochs=self.epochs.value,
             device=self._resolve_training_device(),

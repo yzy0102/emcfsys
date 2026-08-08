@@ -495,6 +495,33 @@ def test_semantic_segmentation_training_widget_builds_advanced_loss_request(tmp_
     assert request.ohem_ce_loss_weight == 1.0
 
 
+def test_semantic_segmentation_differential_learning_rate_controls(tmp_path):
+    training_widget = DLTrainingContainer(None)
+
+    assert training_widget.use_differential_learning_rates.value is False
+    assert not training_widget.lr.native.isHidden()
+    assert training_widget.backbone_lr.native.isHidden()
+    assert training_widget.neck_head_lr.native.isHidden()
+
+    training_widget.lr.value = 2e-4
+    default_request = training_widget._build_training_request()
+    assert default_request.use_differential_learning_rates is False
+    assert default_request.backbone_lr == 2e-5
+    assert default_request.neck_head_lr == 2e-3
+
+    training_widget.use_differential_learning_rates.value = True
+    training_widget.backbone_lr.value = 3e-5
+    training_widget.neck_head_lr.value = 3e-3
+    request = training_widget._build_training_request()
+
+    assert training_widget.lr.native.isHidden()
+    assert not training_widget.backbone_lr.native.isHidden()
+    assert not training_widget.neck_head_lr.native.isHidden()
+    assert request.use_differential_learning_rates is True
+    assert request.backbone_lr == 3e-5
+    assert request.neck_head_lr == 3e-3
+
+
 def test_semantic_segmentation_pretrained_model_control_is_conditional(tmp_path):
     training_widget = DLTrainingContainer(None)
     pretrained_path = tmp_path / "pretrained.pth"
@@ -581,11 +608,17 @@ def test_semantic_segmentation_training_widget_saves_and_loads_config(tmp_path):
     training_widget.model_name.value = "unet"
     training_widget.use_advanced_losses.value = True
     training_widget.focal_loss_weight.value = 0.6
+    training_widget.use_differential_learning_rates.value = True
+    training_widget.backbone_lr.value = 2e-5
+    training_widget.neck_head_lr.value = 2e-3
     training_widget._save_config()
 
     training_widget.model_name.value = "deeplabv3plus"
     training_widget.use_advanced_losses.value = False
     training_widget.focal_loss_weight.value = 0.0
+    training_widget.use_differential_learning_rates.value = False
+    training_widget.backbone_lr.value = 1e-5
+    training_widget.neck_head_lr.value = 1e-3
     training_widget._load_config()
 
     assert config_path.exists()
@@ -593,6 +626,11 @@ def test_semantic_segmentation_training_widget_saves_and_loads_config(tmp_path):
     assert training_widget.use_advanced_losses.value is True
     assert training_widget.focal_loss_weight.value == 0.6
     assert not training_widget.focal_loss_weight.native.isHidden()
+    assert training_widget.use_differential_learning_rates.value is True
+    assert training_widget.backbone_lr.value == 2e-5
+    assert training_widget.neck_head_lr.value == 2e-3
+    assert not training_widget.backbone_lr.native.isHidden()
+    assert not training_widget.neck_head_lr.native.isHidden()
 
 
 def test_semantic_segmentation_inference_widget_loads_training_config(tmp_path):
@@ -1113,20 +1151,29 @@ def test_model_manager_edits_deletes_imports_exports_and_checks_model(tmp_path):
 def test_model_manager_fills_training_widgets(tmp_path):
     checkpoint = tmp_path / "final_instance_segmentation.pth"
     checkpoint.write_bytes(b"checkpoint")
+    image_dir = tmp_path / "instance_images"
+    annotation_path = tmp_path / "instances.json"
+    save_path = tmp_path / "instance_run"
+    image_dir.mkdir()
+    annotation_path.write_text("{}", encoding="utf-8")
+    save_path.mkdir()
     config = tmp_path / "config.json"
     config.write_text(
-        """
-        {
-          "task": "instance_segmentation",
-          "version": 1,
-          "parameters": {
-            "model_name": "mask_rcnn_instance",
-            "backbone_name": "resnet50",
-            "img_size": 640,
-            "num_classes": 3
-          }
-        }
-        """,
+        json.dumps(
+            {
+                "task": "instance_segmentation",
+                "version": 1,
+                "parameters": {
+                    "image_dir": str(image_dir),
+                    "annotation_path": str(annotation_path),
+                    "save_path": str(save_path),
+                    "model_name": "mask_rcnn_instance",
+                    "backbone_name": "resnet50",
+                    "img_size": 640,
+                    "num_classes": 3,
+                },
+            }
+        ),
         encoding="utf-8",
     )
     manager = ModelManagerContainer(None)
@@ -1153,6 +1200,104 @@ def test_model_manager_fills_training_widgets(tmp_path):
     assert training.backbone_name.value == "resnet50"
     assert training.img_size.value == 640
     assert training.num_classes.value == 3
+    assert training.image_dir.value == image_dir
+    assert training.annotation_path.value == annotation_path
+    assert training.save_path.value == save_path
+
+
+def test_model_manager_fills_semantic_and_classification_training_paths(tmp_path):
+    semantic_checkpoint = tmp_path / "semantic_final.pth"
+    semantic_checkpoint.write_bytes(b"checkpoint")
+    semantic_images = tmp_path / "semantic_images"
+    semantic_masks = tmp_path / "semantic_masks"
+    semantic_save = tmp_path / "semantic_run"
+    semantic_images.mkdir()
+    semantic_masks.mkdir()
+    semantic_save.mkdir()
+    semantic_config = tmp_path / "semantic_config.json"
+    semantic_config.write_text(
+        json.dumps(
+            {
+                "task": "semantic_segmentation",
+                "parameters": {
+                    "images_dir": str(semantic_images),
+                    "masks_dir": str(semantic_masks),
+                    "save_path": str(semantic_save),
+                    "backbone_name": "resnet34",
+                    "model_name": "unet",
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    semantic_manager = ModelManagerContainer(None)
+    semantic_manager._registry = {
+        "version": 1,
+        "models": [
+            {
+                "name": "semantic",
+                "task": "semantic_segmentation",
+                "checkpoint_path": str(semantic_checkpoint),
+                "config_path": str(semantic_config),
+                "summary": {},
+                "status": "available",
+            }
+        ],
+    }
+    semantic_manager._refresh_model_list()
+
+    semantic_training = semantic_manager._fill_selected_training_widget()
+
+    assert isinstance(semantic_training, DLTrainingContainer)
+    assert semantic_training.images_dir.value == semantic_images
+    assert semantic_training.masks_dir.value == semantic_masks
+    assert semantic_training.save_path.value == semantic_save
+    assert semantic_training.pretrained_model.value == semantic_checkpoint
+    assert semantic_training.use_pretrained_model.value is True
+
+    classification_checkpoint = tmp_path / "classification_final.pth"
+    classification_checkpoint.write_bytes(b"checkpoint")
+    classification_dataset = tmp_path / "classification_dataset"
+    classification_save = tmp_path / "classification_run"
+    classification_dataset.mkdir()
+    classification_save.mkdir()
+    classification_config = tmp_path / "classification_config.json"
+    classification_config.write_text(
+        json.dumps(
+            {
+                "task": "classification",
+                "parameters": {
+                    "dataset_dir": str(classification_dataset),
+                    "save_path": str(classification_save),
+                    "backbone_name": "resnet34",
+                    "head_name": "knn",
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    classification_manager = ModelManagerContainer(None)
+    classification_manager._registry = {
+        "version": 1,
+        "models": [
+            {
+                "name": "classification",
+                "task": "classification",
+                "checkpoint_path": str(classification_checkpoint),
+                "config_path": str(classification_config),
+                "summary": {},
+                "status": "available",
+            }
+        ],
+    }
+    classification_manager._refresh_model_list()
+
+    classification_training = classification_manager._fill_selected_training_widget()
+
+    assert isinstance(classification_training, ClassificationTrainingContainer)
+    assert classification_training.dataset_dir.value == classification_dataset
+    assert classification_training.save_path.value == classification_save
+    assert classification_training.checkpoint_path.value == classification_checkpoint
 
 
 def test_model_manager_is_in_manifest():

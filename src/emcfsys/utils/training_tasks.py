@@ -24,6 +24,9 @@ class SegmentationTrainingRequest:
     classes_num: int
     target_size: int
     ignore_index: int
+    use_differential_learning_rates: bool = False
+    backbone_lr: float = 1e-5
+    neck_head_lr: float = 1e-3
     pretrained_model: str | None = None
     use_advanced_losses: bool = False
     dice_loss_weight: float = 1.0
