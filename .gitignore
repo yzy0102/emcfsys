@@ -209,6 +209,7 @@ __marimo__/
 
 # ignore the test notebook
 /test2.ipynb
+/test3.ipynb
 
 # ignore local datasets
 /datasets/
@@ -220,8 +221,8 @@ pypi_token.txt
 
 /demo/KNN_ImageNet_hugg.py
 
-/mmseg_configs
 
-/models/DinoV3_EMCellFound_ViT_base.pth
-/models/EMCellFiner.pth
-/models/MAE_EMCellFoundVit_base_224_inEMCF.pth
+/models
+/datasets_temp
+
+/result_sr.png

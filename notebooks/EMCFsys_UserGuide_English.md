@@ -48,9 +48,9 @@ Like:
 
 ![Default model loading](image/EMCFsys_UserGuide/1786027624248.png)
 
-For testing and usage examples, see [demo_notebook.ipynb](../demo_notebook.ipynb).
+For testing and usage‑example code, see [mmLab_backend_demo.ipynb](../mmLab_backend_demo.ipynb).
 
-Datasets for demo_notebook can download into in the project's `datasets/` directory (create it first).
+Datasets for the demo can download into in the project's `datasets_temp/` directory.
 
 ### 2.2 Image and Label Shapes
 

@@ -11,6 +11,7 @@
 * **Pre-trained Backbones**: Optimized on **4M+** EM images for superior feature extraction: EMCellFound and EMCellFiner.
 * **Code-Free Train and Inference**: Train the segmentation model using Pre-trained Backbones and inference in the GUI without Any Code.
 * **Code-Free and Training-Free Image restoration/super-resolution pipline**: Training-Free pipline for EM image restoration/super-resolution.
+* Code-Free GUI for Napari, and Code-based example tutorial in [mmLab_backend_demo.ipynb](mmLab_backend_demo.ipynb). This notebook is built upon mmengine, mmseg, and mmdet to facilitate code‑driven training workflows.
 
 ### 2. Segmentation pipline using Foundation model
 
@@ -89,7 +90,14 @@ At last, install necessary components: (**Very important, don't forget to instal
 pip install labelme==5.9.1 numpy timm==1.0.22 opencv-python einops shapely==2.1.2 albumentations ninja Pillow seaborn safetensors huggingface-hub transformers imgviz==1.7.6
 ```
 
+
+
+### 4. Code‑Based Fine‑Tuning with MMLab Backend
+
+We provide model fine‑tuning implementations in both source‑code and Jupyter Notebook formats. This part can run independently of the GUI, but it requires additional installation of the MMLab‑series packages. Please refer to [mmLab_backend_demo.ipynb](mmLab_backend_demo.ipynb).
+
 ---
+
 
 ## 📖 Quick Start
 

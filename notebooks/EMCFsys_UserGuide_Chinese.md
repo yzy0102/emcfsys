@@ -43,7 +43,7 @@ And you can find emcfsys plugin.
 
 ![1786027624248](image/EMCFsys_UserGuide/1786027624248.png)
 
-测试和使用Demo请查看[demo_notebook.ipynb](../demo_notebook.ipynb)
+基于mmlab-backend的测试和使用Demo请查看[mmLab_backend_demo.ipynb](../mmLab_backend_demo.ipynb).
 
 ### 2.2 图像和标签的形状
 
