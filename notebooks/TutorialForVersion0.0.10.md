@@ -3,13 +3,13 @@
 Welcome to **emcfsys** — a foundation model integration framework for Cell EM image analysis designed for the Napari platform.
 ---------------------------------------------------------------------------------------------------------------------------
 
-# EMCFSys is still under active development and is being updated to version 0.3.5. Please refer to the latest user guide below:
+# EMCFSys is still under active development and is being updated to version 0.4.1. Please refer to the latest user guide below:
 
 Guide (English) :  [User_Guide_English](EMCFsys_UserGuide_English.md)
 
 Guide (Chinese): [User_Guide_Chinese](EMCFsys_UserGuide_Chinese.md)
 
-
+We currently support both the Napari GUI and code‑based Jupyter Notebook workflows (see usage examples in [mmLab_backend_demo.ipynb](../mmLab_backend_demo.ipynb)).
 
 
 # If you are using an older version of EMCFSys, please refer to the user documentation below.
