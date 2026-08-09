@@ -19,7 +19,7 @@
   * **EMCellFound Core**: Our foundational backbones are built upon state-of-the-art **ViT (Vision Transformer)** and **ConvNext** architectures. These models are pre-trained using advanced self-supervised learning frameworks, specifically **MAE (Masked Autoencoders)** and **DINOv3**, ensuring robust feature representation for complex electron microscopy data.
   * **Continuous Evolution**: We are committed to the iterative refinement of our models. We periodically retrain **EMCellFound** using superior architectures, optimized algorithms, and larger-scale datasets to ensure the system consistently delivers peak performance.
   * **Timm Library Integration**: To provide maximum flexibility, the system fully supports a wide range of popular pre-trained models from the **timm** library, allowing users to select the most suitable backbone for their specific research needs.
-* **Segmentation Heads**: Includes **U-Net**, **PSPNet**, **DeepLabv3+**, and **UperNet**.
+* **Segmentation Heads**: Includes **U-Net**, **PSPNet**, **DeepLabv3+**, **UperNet** , **Mask2former**.
 * **Finetune Models**: We support to finetune the EMCellFound/Timm-model to make specialize segmentation pipline.
 * **Inference 2D/3D images**: We support to load the Checkpoint and inference image in 2D and 3D.
 * **Tailored Training Strategies**: Detailed specifications of our training configurations can be found in the [English user guide](docs/EMCFsys_UserGuide_English.md). Key components include:
@@ -30,13 +30,14 @@
 
 ### 3. Image restoration/super-resolution pipline using Foundation model
 
-* **Retraining-free**: We train the image  restoration/super-resolution model EMCellFiner on 4M+ EM images, thus EMCellFiner has robust performance，can restore/super-resolution for most of EM images and make them finer.
+* **Retraining-free**: We train the image restoration/super-resolution model EMCellFiner on 4M+ EM images, thus EMCellFiner has robust performance，can restore/super-resolution for most of EM images and make them finer.
 * **Single-image**: We support restore/super-resolution in the GUI using GPU/CPU, and show in the GUI.
 * **Multi-image**: We also support to restore/super-resolution the images in the folder, and output to another folder.
 
 ### 4. Tools
 
-* **Annotation Support**: Built-in utility to convert **Labelme** JSON annotations to Semantic Segmentation masks.
+* **Model Manager & JSON‑based Configuration**: Quickly load all parameters within the Napari GUI for model fine‑tuning.
+* **Dataset‑Converter Support**: Built‑in utility to convert Labelme JSON annotations into semantic‑segmentation masks and instance‑segmentation JSON files.
 
 ---
 
@@ -90,14 +91,11 @@ At last, install necessary components: (**Very important, don't forget to instal
 pip install labelme==5.9.1 numpy timm==1.0.22 opencv-python einops shapely==2.1.2 albumentations ninja Pillow seaborn safetensors huggingface-hub transformers imgviz==1.7.6
 ```
 
-
-
 ### 4. Code‑Based Fine‑Tuning with MMLab Backend
 
 We provide model fine‑tuning implementations in both source‑code and Jupyter Notebook formats. This part can run independently of the GUI, but it requires additional installation of the MMLab‑series packages. Please refer to [mmLab_backend_demo.ipynb](mmLab_backend_demo.ipynb).
 
 ---
-
 
 ## 📖 Quick Start
 
