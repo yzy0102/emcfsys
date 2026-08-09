@@ -848,6 +848,7 @@ def test_instance_segmentation_inference_task_single_image(monkeypatch):
             num_classes=2,
             image=np.zeros((16, 16, 3), dtype=np.uint8),
             device="cpu",
+            backend="emcfsys",
         )
     )
 
@@ -902,6 +903,7 @@ def test_instance_segmentation_inference_task_folder_writes_csv(monkeypatch, tmp
             mask_output_folder=str(tmp_path / "instance_masks"),
             binary_mask_output_folder=str(tmp_path / "binary_masks"),
             device="cpu",
+            backend="emcfsys",
         )
     )
 
@@ -961,6 +963,7 @@ def test_instance_segmentation_training_task_saves_checkpoint(monkeypatch, tmp_p
             device="cpu",
             pretrained=False,
             num_workers=0,
+            backend="emcfsys",
         )
     )
 
@@ -1002,6 +1005,7 @@ def test_instance_segmentation_training_uses_separate_val_and_test_sets(
             val_annotation_path=str(val_annotation_path),
             test_image_dir=str(test_image_dir),
             test_annotation_path=str(test_annotation_path),
+            backend="emcfsys",
         ),
         log=messages.append,
     )
@@ -1043,6 +1047,7 @@ def test_instance_segmentation_training_skips_empty_val_and_test_sets(
             pretrained=False,
             num_workers=0,
             val_split=0.0,
+            backend="emcfsys",
         )
     )
 
@@ -1074,6 +1079,7 @@ def test_instance_segmentation_training_uses_val_split_from_single_coco_json(
             pretrained=False,
             num_workers=0,
             val_split=0.25,
+            backend="emcfsys",
         ),
         log=messages.append,
     )
@@ -1155,6 +1161,7 @@ def test_instance_segmentation_training_can_use_only_val_json(
             pretrained=False,
             num_workers=0,
             val_annotation_path=str(val_annotation_path),
+            backend="emcfsys",
         )
     )
 
@@ -1190,6 +1197,7 @@ def test_instance_segmentation_training_can_use_only_test_json(
             pretrained=False,
             num_workers=0,
             test_annotation_path=str(test_annotation_path),
+            backend="emcfsys",
         )
     )
 
@@ -1221,6 +1229,7 @@ def test_instance_segmentation_training_requires_json_when_eval_image_dir_is_set
                 pretrained=False,
                 num_workers=0,
                 val_image_dir=str(image_dir),
+                backend="emcfsys",
             )
         )
     except ValueError as error:
@@ -1250,6 +1259,7 @@ def test_instance_segmentation_training_iterator_yields_realtime_logs(
             device="cpu",
             pretrained=False,
             num_workers=0,
+            backend="emcfsys",
         )
     )
 
@@ -1343,6 +1353,7 @@ def test_instance_segmentation_inference_uses_checkpoint_metadata(tmp_path):
             image=np.zeros((64, 64, 3), dtype=np.uint8),
             device="cpu",
             score_threshold=1.0,
+            backend="emcfsys",
         )
     )
 

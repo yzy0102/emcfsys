@@ -32,6 +32,7 @@ requires-python = ">=3.9"
 dependencies = [
     "albumentations",
     "einops",
+    "ftfy",
     "huggingface-hub",
     "imgviz==1.7.6",
     "labelme==5.9.1",

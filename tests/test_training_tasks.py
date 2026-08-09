@@ -75,6 +75,7 @@ def test_run_training_task(monkeypatch, tmp_path):
         target_size=512,
         ignore_index=-1,
         pretrained_model=None,
+        backend="emcfsys",
     )
 
     logs = run_training_task(
@@ -117,6 +118,7 @@ def test_run_training_task_passes_advanced_loss_config(monkeypatch, tmp_path):
         target_size=512,
         ignore_index=-1,
         pretrained_model=None,
+        backend="emcfsys",
         use_advanced_losses=True,
         dice_loss_weight=0.5,
         focal_loss_weight=0.6,
@@ -160,6 +162,7 @@ def test_run_training_task_passes_split_directory(monkeypatch, tmp_path):
         target_size=64,
         ignore_index=-1,
         split_dir="splits",
+        backend="emcfsys",
     )
 
     run_training_task(request)

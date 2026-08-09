@@ -29,9 +29,8 @@ from emcfsys.utils.classification_tasks import (
     _classification_transform,
 )
 
-
-DEFAULT_DATASET_DIR = REPO_ROOT / "datasets" / "OrganelleClassifyDataset"
-DEFAULT_SAVE_DIR = REPO_ROOT / "save_logs" / "EMCellFound_KNN"
+DEFAULT_DATASET_DIR = REPO_ROOT / "datasets_temp" / "EightOrganelleClassification" / "OrganelleClassifyDataset"
+DEFAULT_SAVE_DIR = REPO_ROOT / "save_logs" / "EMCellFound_MAE_KNN"
 
 
 def set_seed(seed: int) -> None:
@@ -254,27 +253,42 @@ def write_predictions(
             )
 
 
-def main() -> None:
-    parser = argparse.ArgumentParser(
-        description=(
-            "KNN classification demo with train/val folders. "
-            "The train folder is used for 5-fold stratified CV, "
-            "and the val folder is treated as the held-out 20% test set."
-        )
+def run_knn_classification(
+    dataset_dir: str | Path = DEFAULT_DATASET_DIR,
+    save_dir: str | Path = DEFAULT_SAVE_DIR,
+    backbone_name: str = "emcellfound_vit_base",
+    img_size: int = 224,
+    batch_size: int = 8,
+    num_workers: int = 0,
+    folds: int = 5,
+    k: int = 5,
+    metric: str = "cosine",
+    seed: int = 42,
+    device: str = "auto",
+    pretrained: bool = True,
+) -> dict[str, object]:
+    """Run deterministic KNN cross-validation and held-out evaluation.
+
+    This entry point is intended for direct use from notebooks and returns the
+    generated artifact paths together with cross-validation and test metrics.
+    """
+    if metric not in {"cosine", "l2"}:
+        raise ValueError("metric must be 'cosine' or 'l2'.")
+
+    args = argparse.Namespace(
+        dataset_dir=Path(dataset_dir),
+        save_dir=Path(save_dir),
+        backbone_name=backbone_name,
+        img_size=img_size,
+        batch_size=batch_size,
+        num_workers=num_workers,
+        folds=folds,
+        k=k,
+        metric=metric,
+        seed=seed,
+        device=device,
+        no_pretrained=not pretrained,
     )
-    parser.add_argument("--dataset-dir", type=Path, default=DEFAULT_DATASET_DIR)
-    parser.add_argument("--save-dir", type=Path, default=DEFAULT_SAVE_DIR)
-    parser.add_argument("--backbone-name", default="emcellfound_vit_base")
-    parser.add_argument("--img-size", type=int, default=224)
-    parser.add_argument("--batch-size", type=int, default=8)
-    parser.add_argument("--num-workers", type=int, default=0)
-    parser.add_argument("--folds", type=int, default=5)
-    parser.add_argument("--k", type=int, default=5)
-    parser.add_argument("--metric", choices=("cosine", "l2"), default="cosine")
-    parser.add_argument("--seed", type=int, default=42)
-    parser.add_argument("--device", default="auto")
-    parser.add_argument("--no-pretrained", action="store_true")
-    args = parser.parse_args()
 
     set_seed(args.seed)
     device = torch.device(
@@ -487,6 +501,49 @@ def main() -> None:
     print(f"Saved test metrics: {test_metrics_json}")
     print(f"Saved test predictions: {test_predictions_csv}")
     print(f"Saved final KNN checkpoint: {checkpoint_path}")
+
+    return {
+        "cv_summary": cv_summary,
+        "test_metrics": test_metrics,
+        "checkpoint_path": checkpoint_path,
+        "save_dir": args.save_dir,
+    }
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(
+        description=(
+            "KNN classification demo with train/test folders. The train folder "
+            "is used for stratified cross-validation and test is held out."
+        )
+    )
+    parser.add_argument("--dataset-dir", type=Path, default=DEFAULT_DATASET_DIR)
+    parser.add_argument("--save-dir", type=Path, default=DEFAULT_SAVE_DIR)
+    parser.add_argument("--backbone-name", default="emcellfound_vit_base")
+    parser.add_argument("--img-size", type=int, default=224)
+    parser.add_argument("--batch-size", type=int, default=8)
+    parser.add_argument("--num-workers", type=int, default=0)
+    parser.add_argument("--folds", type=int, default=5)
+    parser.add_argument("--k", type=int, default=5)
+    parser.add_argument("--metric", choices=("cosine", "l2"), default="cosine")
+    parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument("--device", default="auto")
+    parser.add_argument("--no-pretrained", action="store_true")
+    args = parser.parse_args()
+    run_knn_classification(
+        dataset_dir=args.dataset_dir,
+        save_dir=args.save_dir,
+        backbone_name=args.backbone_name,
+        img_size=args.img_size,
+        batch_size=args.batch_size,
+        num_workers=args.num_workers,
+        folds=args.folds,
+        k=args.k,
+        metric=args.metric,
+        seed=args.seed,
+        device=args.device,
+        pretrained=not args.no_pretrained,
+    )
 
 
 if __name__ == "__main__":

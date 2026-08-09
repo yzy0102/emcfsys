@@ -225,3 +225,12 @@ pypi_token.txt
 /models/DinoV3_EMCellFound_ViT_base.pth
 /models/EMCellFiner.pth
 /models/MAE_EMCellFoundVit_base_224_inEMCF.pth
+/models/Dinov3_backbone_mmbackend.pth
+/models/MAE_backbone_mmbackend.pth
+
+/models
+/models_mmbackend
+
+/mmbackend
+
+/datasets_temp

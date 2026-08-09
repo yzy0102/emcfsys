@@ -42,6 +42,7 @@ def test_run_full_inference_task_single_image(monkeypatch):
         model_path="weights.pth",
         device="cpu",
         image=image,
+        backend="emcfsys",
     )
     result = run_full_inference_task(request)
 
@@ -97,6 +98,7 @@ def test_run_sliding_inference_task_folder(monkeypatch, tmp_path):
         save_visualization=True,
         stacked_visualization_output_folder=str(output_dir / "stack"),
         save_stacked_visualization=True,
+        backend="emcfsys",
     )
     result = run_sliding_inference_task(request)
 

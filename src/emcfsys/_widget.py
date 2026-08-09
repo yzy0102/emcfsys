@@ -144,6 +144,11 @@ from .utils.training_tasks import SegmentationTrainingRequest, run_training_task
 from .utils.training_artifacts import load_training_config, save_training_config
 from .utils.viewer_ops import upsert_image_layer, upsert_labels_layer
 from .model_cache import model_download_progress
+from .mmlab_backend import (
+    INSTANCE_MMLAB_BACKEND,
+    LEGACY_EMCFSYS_BACKEND,
+    SEMANTIC_MMLAB_BACKEND,
+)
 
 # the magic_factory decorator lets us customize aspects of our widget
 # we specify a widget type for the threshold parameter
@@ -960,6 +965,16 @@ class ModelManagerContainer(Container):
     def _fill_semantic_inference_widget(self, widget, entry, params, checkpoint_path):
         self._safe_set_widget_value(widget.model_path, checkpoint_path)
         self._safe_set_widget_value(widget.config_path, entry.get("config_path"))
+        # Historical registry records predate the MMLab migration, so they
+        # intentionally fall back to the compatible EMCFsys implementation.
+        self._safe_set_widget_value(
+            widget.backend,
+            params.get("backend") or LEGACY_EMCFSYS_BACKEND,
+        )
+        self._safe_set_widget_value(
+            widget.mmlab_config_path,
+            params.get("mmlab_config_path"),
+        )
         self._safe_set_widget_value(widget.backbone_name, params.get("backbone_name"))
         self._safe_set_widget_value(widget.model_name, params.get("model_name"))
         self._safe_set_widget_value(
@@ -970,12 +985,21 @@ class ModelManagerContainer(Container):
             widget.img_size,
             params.get("img_size", params.get("target_size")),
         )
+        widget._update_backend_state()
 
     def _fill_classification_inference_widget(self, widget, checkpoint_path):
         self._safe_set_widget_value(widget.checkpoint_path, checkpoint_path)
 
     def _fill_instance_inference_widget(self, widget, params, checkpoint_path):
         self._safe_set_widget_value(widget.checkpoint_path, checkpoint_path)
+        self._safe_set_widget_value(
+            widget.backend,
+            params.get("backend") or LEGACY_EMCFSYS_BACKEND,
+        )
+        self._safe_set_widget_value(
+            widget.mmlab_config_path,
+            params.get("mmlab_config_path"),
+        )
         self._safe_set_widget_value(widget.backbone_name, params.get("backbone_name"))
         self._safe_set_widget_value(widget.model_name, params.get("model_name"))
         self._safe_set_widget_value(widget.img_size, params.get("img_size"))
@@ -994,6 +1018,14 @@ class ModelManagerContainer(Container):
         self._safe_set_widget_value(widget.pretrained_model, checkpoint_path)
         if checkpoint_path:
             widget.use_pretrained_model.value = True
+        self._safe_set_widget_value(
+            widget.backend,
+            params.get("backend") or LEGACY_EMCFSYS_BACKEND,
+        )
+        self._safe_set_widget_value(
+            widget.mmlab_config_path,
+            params.get("mmlab_config_path"),
+        )
         self._safe_set_widget_value(widget.backbone_name, params.get("backbone_name"))
         self._safe_set_widget_value(widget.model_name, params.get("model_name"))
         self._safe_set_widget_value(
@@ -1011,6 +1043,7 @@ class ModelManagerContainer(Container):
             self._safe_set_widget_value(widget.val_split_path, params.get("val_split_path"))
             self._safe_set_widget_value(widget.test_split_path, params.get("test_split_path"))
         widget._update_split_state()
+        widget._update_backend_state()
 
     def _fill_classification_training_widget(self, widget, params, checkpoint_path):
         self._safe_set_widget_value(widget.dataset_dir, params.get("dataset_dir"))
@@ -1028,10 +1061,19 @@ class ModelManagerContainer(Container):
         self._safe_set_widget_value(widget.annotation_path, params.get("annotation_path"))
         self._safe_set_widget_value(widget.save_path, params.get("save_path"))
         self._safe_set_widget_value(widget.checkpoint_path, checkpoint_path)
+        self._safe_set_widget_value(
+            widget.backend,
+            params.get("backend") or LEGACY_EMCFSYS_BACKEND,
+        )
+        self._safe_set_widget_value(
+            widget.mmlab_config_path,
+            params.get("mmlab_config_path"),
+        )
         self._safe_set_widget_value(widget.backbone_name, params.get("backbone_name"))
         self._safe_set_widget_value(widget.model_name, params.get("model_name"))
         self._safe_set_widget_value(widget.img_size, params.get("img_size"))
         self._safe_set_widget_value(widget.num_classes, params.get("num_classes"))
+        widget._update_backend_state()
         use_separate_eval_sets = bool(params.get("use_separate_eval_sets")) or any(
             params.get(key)
             for key in (
@@ -1054,6 +1096,7 @@ class ModelManagerContainer(Container):
                 params.get("test_annotation_path"),
             )
         widget._update_eval_dataset_state()
+        widget._update_backend_state()
 
 
 class ImageResize(Container):
@@ -1252,6 +1295,17 @@ class DLInferenceContainer(Container):
         self.model_path = FileEdit(label="Model (.pt/.pth/.ptscript)")
         self.config_path = FileEdit(label="Inference config JSON", mode="r", nullable=True)
         self._load_config_button = PushButton(text="Load Config")
+        self.backend = ComboBox(
+            label="Backend",
+            choices=[SEMANTIC_MMLAB_BACKEND, LEGACY_EMCFSYS_BACKEND],
+            value=SEMANTIC_MMLAB_BACKEND,
+        )
+        self.mmlab_config_path = FileEdit(
+            label="MMSeg config (.py)",
+            mode="r",
+            nullable=True,
+        )
+        self.backend.visible = False
         self._image_layer_combo = create_widget(label="Image", annotation="napari.layers.Image")
         self.num_classes = SpinBox(label="num classes", min=2, max=1000, step=1, value=2)
         self.device = ComboBox(label="Device", choices=["auto", "cpu", "cuda"], value="auto")
@@ -1279,6 +1333,8 @@ class DLInferenceContainer(Container):
             self.model_path,
             self.config_path,
             self._load_config_button,
+            self.backend,
+            self.mmlab_config_path,
             self._image_layer_combo,
             self.backbone_name,
             self.model_name,
@@ -1304,6 +1360,7 @@ class DLInferenceContainer(Container):
         self._run_button_full.clicked.connect(self._run_inference_full)
         self._run_button_slide.clicked.connect(self._run_inference_slide)
         self._stop_button.clicked.connect(self._stop_worker)
+        self.backend.changed.connect(self._update_backend_state)
         self.inference_from_folder_mode.changed.connect(self._update_folder_inference_state)
         self.save_visualization.changed.connect(self._update_visualization_output_state)
         self.save_stacked_visualization.changed.connect(self._update_stacked_visualization_output_state)
@@ -1313,6 +1370,7 @@ class DLInferenceContainer(Container):
         self._update_folder_inference_state()
         self._update_visualization_output_state()
         self._update_stacked_visualization_output_state()
+        self._update_backend_state()
 
     def _resolve_device(self):
         device = self.device.value
@@ -1323,6 +1381,11 @@ class DLInferenceContainer(Container):
 
     def _threadsafe_log(self, message):
         _emit_log_message(self._log_emitter, self._log_text, message)
+
+    def _update_backend_state(self):
+        using_mmlab = self.backend.value == SEMANTIC_MMLAB_BACKEND
+        self.mmlab_config_path.visible = False
+        self.backbone_name.visible = not using_mmlab
 
     def _load_config(self):
         config_path = normalize_optional_path(self.config_path.value)
@@ -1342,6 +1405,8 @@ class DLInferenceContainer(Container):
                 "img_size": params.get("img_size", params.get("target_size")),
                 "device": params.get("device"),
                 "model_path": params.get("model_path"),
+                "backend": params.get("backend") or LEGACY_EMCFSYS_BACKEND,
+                "mmlab_config_path": params.get("mmlab_config_path"),
                 "image_folder": params.get("image_folder"),
                 "label_output_folder": params.get("label_output_folder"),
                 "visualization_output_folder": params.get("visualization_output_folder"),
@@ -1358,6 +1423,8 @@ class DLInferenceContainer(Container):
                     "img_size": self.img_size,
                     "device": self.device,
                     "model_path": self.model_path,
+                    "backend": self.backend,
+                    "mmlab_config_path": self.mmlab_config_path,
                     "image_folder": self.image_folder,
                     "label_output_folder": self.output_folder,
                     "visualization_output_folder": self.visualization_output_folder,
@@ -1371,6 +1438,7 @@ class DLInferenceContainer(Container):
             if mapped.get("image_folder"):
                 self.inference_from_folder_mode.value = True
             self._update_folder_inference_state()
+            self._update_backend_state()
             self._log(f"Semantic segmentation inference config loaded from: {config_path}")
         except Exception as error:
             self._log(f"Failed to load semantic segmentation inference config: {error}")
@@ -1424,6 +1492,8 @@ class DLInferenceContainer(Container):
             stacked_visualization_output_folder=stacked_visualization_output_folder if self.save_stacked_visualization.value else None,
             save_stacked_visualization=self.save_stacked_visualization.value,
             stop_checker=stop_checker,
+            backend=self.backend.value,
+            mmlab_config_path=normalize_optional_path(self.mmlab_config_path.value),
         )
 
     def _build_sliding_inference_request(self, image_data, device, model_path, stop_checker):
@@ -1447,6 +1517,8 @@ class DLInferenceContainer(Container):
             save_stacked_visualization=self.save_stacked_visualization.value,
             stop_checker=stop_checker,
             window_size=self.slide_window_size.value,
+            backend=self.backend.value,
+            mmlab_config_path=normalize_optional_path(self.mmlab_config_path.value),
         )
 
     def _start_inference_worker(self, request_builder, task_runner, suffix):
@@ -1527,6 +1599,17 @@ class DLTrainingContainer(Container):
             value=False,
         )
         self.pretrained_model = FileEdit(label="Latest model (.pth)", nullable=True, mode="r")
+        self.backend = ComboBox(
+            label="Backend",
+            choices=[SEMANTIC_MMLAB_BACKEND, LEGACY_EMCFSYS_BACKEND],
+            value=SEMANTIC_MMLAB_BACKEND,
+        )
+        self.mmlab_config_path = FileEdit(
+            label="MMSeg config (.py)",
+            mode="r",
+            nullable=True,
+        )
+        self.backend.visible = False
 
         self.backbone_name = ComboBox(label="Backbone", choices=backbone_zoom, value="emcellfound_vit_base")
         self.model_name = ComboBox(label="Model", choices=model_zoom, value="deeplabv3plus")
@@ -1595,6 +1678,8 @@ class DLTrainingContainer(Container):
             self.save_path,
             self.use_pretrained_model,
             self.pretrained_model,
+            self.backend,
+            self.mmlab_config_path,
             self.backbone_name,
             self.model_name,
             self.matching_sampling,
@@ -1630,17 +1715,20 @@ class DLTrainingContainer(Container):
         self._load_config_button.clicked.connect(self._load_config)
         self.training_preset.changed.connect(self._apply_training_preset)
         self.model_name.changed.connect(self._update_matching_state)
+        self.model_name.changed.connect(self._update_advanced_loss_state)
         self.use_differential_learning_rates.changed.connect(
             self._update_learning_rate_state
         )
         self.use_advanced_losses.changed.connect(self._update_advanced_loss_state)
         self.use_split_files.changed.connect(self._update_split_state)
         self.use_pretrained_model.changed.connect(self._update_pretrained_model_state)
+        self.backend.changed.connect(self._update_backend_state)
         self._update_matching_state()
         self._update_learning_rate_state()
         self._update_advanced_loss_state()
         self._update_split_state()
         self._update_pretrained_model_state()
+        self._update_backend_state()
 
         self._fig, self._ax = plt.subplots()
         self._canvas = FigureCanvas(self._fig)
@@ -1689,7 +1777,12 @@ class DLTrainingContainer(Container):
         return torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     def _update_advanced_loss_state(self):
-        enabled = self.use_advanced_losses.value
+        mask2former_mmlab = (
+            self.backend.value == SEMANTIC_MMLAB_BACKEND
+            and self.model_name.value == "mask2former"
+        )
+        self.use_advanced_losses.visible = not mask2former_mmlab
+        enabled = bool(self.use_advanced_losses.value) and not mask2former_mmlab
         self.dice_loss_weight.visible = enabled
         self.focal_loss_weight.visible = enabled
         self.tversky_loss_weight.visible = enabled
@@ -1716,6 +1809,12 @@ class DLTrainingContainer(Container):
 
     def _update_pretrained_model_state(self):
         self.pretrained_model.visible = bool(self.use_pretrained_model.value)
+
+    def _update_backend_state(self):
+        using_mmlab = self.backend.value == SEMANTIC_MMLAB_BACKEND
+        self.mmlab_config_path.visible = False
+        self.backbone_name.visible = not using_mmlab
+        self._update_advanced_loss_state()
 
     def _resolve_split_dir(self):
         if not self.use_split_files.value:
@@ -1751,6 +1850,8 @@ class DLTrainingContainer(Container):
             "save_path": self.save_path,
             "use_pretrained_model": self.use_pretrained_model,
             "pretrained_model": self.pretrained_model,
+            "backend": self.backend,
+            "mmlab_config_path": self.mmlab_config_path,
             "backbone_name": self.backbone_name,
             "model_name": self.model_name,
             "matching_sampling": self.matching_sampling,
@@ -1799,12 +1900,15 @@ class DLTrainingContainer(Container):
                 parameters["use_pretrained_model"] = bool(
                     parameters.get("pretrained_model")
                 )
+            if not parameters.get("backend"):
+                parameters["backend"] = LEGACY_EMCFSYS_BACKEND
             _apply_widget_values(self._config_widget_map(), parameters)
             self._update_matching_state()
             self._update_learning_rate_state()
             self._update_advanced_loss_state()
             self._update_split_state()
             self._update_pretrained_model_state()
+            self._update_backend_state()
             self._log(f"Semantic segmentation config loaded from: {config_path}")
         except Exception as error:
             self._log(f"Failed to load semantic segmentation config: {error}")
@@ -1819,6 +1923,7 @@ class DLTrainingContainer(Container):
         self._update_learning_rate_state()
         self._update_advanced_loss_state()
         self._update_split_state()
+        self._update_backend_state()
         self._log(f"Applied semantic segmentation preset: {preset_name}")
 
     def _build_training_request(self):
@@ -1868,6 +1973,8 @@ class DLTrainingContainer(Container):
             train_split_path=normalize_optional_path(self.train_split_path.value),
             val_split_path=normalize_optional_path(self.val_split_path.value),
             test_split_path=normalize_optional_path(self.test_split_path.value),
+            backend=self.backend.value,
+            mmlab_config_path=normalize_optional_path(self.mmlab_config_path.value),
         )
 
     def _create_training_worker(self, request):
@@ -2171,6 +2278,17 @@ class InstanceSegmentationTrainingContainer(Container):
         self.image_dir = FileEdit(label="COCO images folder", mode="d")
         self.annotation_path = FileEdit(label="COCO instances JSON", mode="r")
         self.save_path = FileEdit(label="Save model folder", mode="d")
+        self.backend = ComboBox(
+            label="Backend",
+            choices=[INSTANCE_MMLAB_BACKEND, LEGACY_EMCFSYS_BACKEND],
+            value=INSTANCE_MMLAB_BACKEND,
+        )
+        self.mmlab_config_path = FileEdit(
+            label="MMDet config (.py)",
+            mode="r",
+            nullable=True,
+        )
+        self.backend.visible = False
         self.backbone_name = ComboBox(label="Backbone", choices=backbone_zoom, value="emcellfound_vit_base")
         self.model_name = ComboBox(label="Model", choices=INSTANCE_MODEL_CHOICES, value="rtm_instance")
         self.matching_sampling = ComboBox(
@@ -2319,6 +2437,8 @@ class InstanceSegmentationTrainingContainer(Container):
             self.image_dir,
             self.annotation_path,
             self.save_path,
+            self.backend,
+            self.mmlab_config_path,
             self.backbone_name,
             self.model_name,
             self.matching_sampling,
@@ -2374,10 +2494,12 @@ class InstanceSegmentationTrainingContainer(Container):
         self.use_separate_eval_sets.changed.connect(self._update_eval_dataset_state)
         self.use_advanced_mask_losses.changed.connect(self._update_advanced_loss_state)
         self.use_data_augmentation.changed.connect(self._update_data_augmentation_state)
+        self.backend.changed.connect(self._update_backend_state)
         self._update_matching_state()
         self._update_eval_dataset_state()
         self._update_advanced_loss_state()
         self._update_data_augmentation_state()
+        self._update_backend_state()
 
         self._fig, self._ax = plt.subplots()
         self._canvas = FigureCanvas(self._fig)
@@ -2436,19 +2558,38 @@ class InstanceSegmentationTrainingContainer(Container):
         self.test_image_dir.visible = use_separate
         self.test_annotation_path.visible = use_separate
 
+    def _update_backend_state(self):
+        using_mmlab = self.backend.value == INSTANCE_MMLAB_BACKEND
+        self.mmlab_config_path.visible = False
+        self.backbone_name.visible = not using_mmlab
+        self.use_advanced_mask_losses.visible = not using_mmlab
+        self.use_data_augmentation.visible = not using_mmlab
+        self._update_advanced_loss_state()
+        self._update_data_augmentation_state()
+        self._update_matching_state()
+
     def _update_matching_state(self):
-        enabled = self.model_name.value == "mask2former_instance"
+        enabled = (
+            self.backend.value != INSTANCE_MMLAB_BACKEND
+            and self.model_name.value == "mask2former_instance"
+        )
         self.matching_sampling.visible = enabled
         self.matching_uncertainty_per_query.visible = enabled
 
     def _update_advanced_loss_state(self):
-        enabled = self.use_advanced_mask_losses.value
+        enabled = (
+            self.backend.value != INSTANCE_MMLAB_BACKEND
+            and self.use_advanced_mask_losses.value
+        )
         self.boundary_loss_weight.visible = enabled
         self.focal_mask_loss_weight.visible = enabled
         self.tversky_loss_weight.visible = enabled
 
     def _update_data_augmentation_state(self):
-        enabled = self.use_data_augmentation.value
+        enabled = (
+            self.backend.value != INSTANCE_MMLAB_BACKEND
+            and self.use_data_augmentation.value
+        )
         self.aug_horizontal_flip_prob.visible = enabled
         self.aug_vertical_flip_prob.visible = enabled
         self.aug_rotate90_prob.visible = enabled
@@ -2469,6 +2610,8 @@ class InstanceSegmentationTrainingContainer(Container):
             "image_dir": self.image_dir,
             "annotation_path": self.annotation_path,
             "save_path": self.save_path,
+            "backend": self.backend,
+            "mmlab_config_path": self.mmlab_config_path,
             "backbone_name": self.backbone_name,
             "model_name": self.model_name,
             "matching_sampling": self.matching_sampling,
@@ -2532,6 +2675,8 @@ class InstanceSegmentationTrainingContainer(Container):
             params = dict(config.get("parameters", {}))
             if params.get("num_classes") is None:
                 params["num_classes"] = 0
+            if not params.get("backend"):
+                params["backend"] = LEGACY_EMCFSYS_BACKEND
             use_separate = params.get("use_separate_eval_sets")
             if use_separate is None:
                 use_separate = any(
@@ -2548,6 +2693,7 @@ class InstanceSegmentationTrainingContainer(Container):
             self._update_eval_dataset_state()
             self._update_advanced_loss_state()
             self._update_data_augmentation_state()
+            self._update_backend_state()
             self._log(f"Instance segmentation config loaded from: {config_path}")
         except Exception as error:
             self._log(f"Failed to load instance segmentation config: {error}")
@@ -2560,6 +2706,7 @@ class InstanceSegmentationTrainingContainer(Container):
         _apply_widget_values(self._config_widget_map(), preset)
         self._update_advanced_loss_state()
         self._update_data_augmentation_state()
+        self._update_backend_state()
         self._log(f"Applied instance segmentation preset: {preset_name}")
 
     def _build_training_request(self):
@@ -2606,6 +2753,8 @@ class InstanceSegmentationTrainingContainer(Container):
             aug_hsv_sgain=self.aug_hsv_sgain.value,
             aug_hsv_vgain=self.aug_hsv_vgain.value,
             aug_pad_value=self.aug_pad_value.value,
+            backend=self.backend.value,
+            mmlab_config_path=normalize_optional_path(self.mmlab_config_path.value),
         )
 
     def _start_training(self):
@@ -2649,6 +2798,17 @@ class InstanceSegmentationInferenceContainer(Container):
         self._viewer = viewer
 
         self.checkpoint_path = FileEdit(label="Checkpoint (.pth)", mode="r")
+        self.backend = ComboBox(
+            label="Backend",
+            choices=[INSTANCE_MMLAB_BACKEND, LEGACY_EMCFSYS_BACKEND],
+            value=INSTANCE_MMLAB_BACKEND,
+        )
+        self.mmlab_config_path = FileEdit(
+            label="MMDet config (.py)",
+            mode="r",
+            nullable=True,
+        )
+        self.backend.visible = False
         self._image_layer_combo = create_widget(label="Image", annotation="napari.layers.Image")
         self.backbone_name = ComboBox(label="Backbone", choices=backbone_zoom, value="emcellfound_vit_base")
         self.model_name = ComboBox(label="Model", choices=INSTANCE_MODEL_CHOICES, value="rtm_instance")
@@ -2671,6 +2831,8 @@ class InstanceSegmentationInferenceContainer(Container):
 
         self.extend([
             self.checkpoint_path,
+            self.backend,
+            self.mmlab_config_path,
             self._image_layer_combo,
             self.backbone_name,
             self.model_name,
@@ -2691,8 +2853,10 @@ class InstanceSegmentationInferenceContainer(Container):
         ])
 
         self._run_button.clicked.connect(self._run_instance_segmentation)
+        self.backend.changed.connect(self._update_backend_state)
         self.inference_from_folder_mode.changed.connect(self._update_folder_mode_state)
         self._update_folder_mode_state()
+        self._update_backend_state()
 
     def _log(self, message):
         try:
@@ -2706,6 +2870,11 @@ class InstanceSegmentationInferenceContainer(Container):
         self.image_folder.visible = folder_mode
         self.mask_output_folder.visible = folder_mode
         self.binary_mask_output_folder.visible = folder_mode
+
+    def _update_backend_state(self):
+        using_mmlab = self.backend.value == INSTANCE_MMLAB_BACKEND
+        self.mmlab_config_path.visible = False
+        self.backbone_name.visible = not using_mmlab
 
     def _resolve_device(self):
         device = self.device.value
@@ -2730,6 +2899,8 @@ class InstanceSegmentationInferenceContainer(Container):
             max_detections=self.max_detections.value,
             nms_iou_threshold=self.nms_iou_threshold.value,
             mask_threshold=self.mask_threshold.value,
+            backend=self.backend.value,
+            mmlab_config_path=normalize_optional_path(self.mmlab_config_path.value),
         )
 
     def _run_instance_segmentation(self):

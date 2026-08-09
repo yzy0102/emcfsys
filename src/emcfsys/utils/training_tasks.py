@@ -5,6 +5,12 @@ import torch
 
 from ..EMCellFound.metrics.metrics import format_metric_summary, format_per_class_metrics_table
 from ..EMCellFound.train import train_loop
+from ..mmlab_backend import (
+    LEGACY_EMCFSYS_BACKEND,
+    SEMANTIC_MMLAB_BACKEND,
+    is_mmlab_backend,
+    run_mmseg_training,
+)
 from .dataset_validator import validate_semantic_segmentation_dataset
 from .model_registry import register_training_result
 from .training_artifacts import export_training_artifacts
@@ -42,6 +48,8 @@ class SegmentationTrainingRequest:
     train_split_path: str | None = None
     val_split_path: str | None = None
     test_split_path: str | None = None
+    backend: str = SEMANTIC_MMLAB_BACKEND
+    mmlab_config_path: str | None = None
 
 
 def run_training_task(
@@ -133,34 +141,48 @@ def run_training_task(
             f"{statistics.get('required_num_classes')}, "
             f"ignore index={request.ignore_index}."
         )
-        train_loop(
-            request.images_dir,
-            request.masks_dir,
-            request.save_path,
-            model_name=request.model_name,
-            backbone_name=request.backbone_name,
-            pretrained=True,
-            pretrained_model=request.pretrained_model,
-            lr=request.lr,
-            batch_size=request.batch_size,
-            epochs=request.epochs,
-            device=request.device,
-            callback=cb,
-            target_size=(request.target_size, request.target_size),
-            classes_num=request.classes_num,
-            ignore_index=request.ignore_index,
-            stop_flag_fn=stop_flag_fn,
-            use_advanced_losses=request.use_advanced_losses,
-            dice_loss_weight=request.dice_loss_weight,
-            focal_loss_weight=request.focal_loss_weight,
-            tversky_loss_weight=request.tversky_loss_weight,
-            boundary_loss_weight=request.boundary_loss_weight,
-            lovasz_loss_weight=request.lovasz_loss_weight,
-            ohem_ce_loss_weight=request.ohem_ce_loss_weight,
-            matching_sampling=request.matching_sampling,
-            matching_uncertainty_per_query=request.matching_uncertainty_per_query,
-            split_dir=request.split_dir,
-        )
+        if is_mmlab_backend(request.backend):
+            if request.backend not in {SEMANTIC_MMLAB_BACKEND, "mmlab"}:
+                raise ValueError(
+                    "Semantic segmentation supports backend='mmseg' or "
+                    f"backend='{LEGACY_EMCFSYS_BACKEND}'."
+                )
+            emit_log("Starting MMSegmentation training backend...")
+            logs = run_mmseg_training(
+                request,
+                log=emit_log,
+                update_loss_curve=update_loss_curve,
+                stop_flag_fn=stop_flag_fn,
+            )
+        else:
+            train_loop(
+                request.images_dir,
+                request.masks_dir,
+                request.save_path,
+                model_name=request.model_name,
+                backbone_name=request.backbone_name,
+                pretrained=True,
+                pretrained_model=request.pretrained_model,
+                lr=request.lr,
+                batch_size=request.batch_size,
+                epochs=request.epochs,
+                device=request.device,
+                callback=cb,
+                target_size=(request.target_size, request.target_size),
+                classes_num=request.classes_num,
+                ignore_index=request.ignore_index,
+                stop_flag_fn=stop_flag_fn,
+                use_advanced_losses=request.use_advanced_losses,
+                dice_loss_weight=request.dice_loss_weight,
+                focal_loss_weight=request.focal_loss_weight,
+                tversky_loss_weight=request.tversky_loss_weight,
+                boundary_loss_weight=request.boundary_loss_weight,
+                lovasz_loss_weight=request.lovasz_loss_weight,
+                ohem_ce_loss_weight=request.ohem_ce_loss_weight,
+                matching_sampling=request.matching_sampling,
+                matching_uncertainty_per_query=request.matching_uncertainty_per_query,
+                split_dir=request.split_dir,
+            )
     except StopIteration:
         emit_log("Training stopped by user.")
 

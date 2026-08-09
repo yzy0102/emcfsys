@@ -21,6 +21,13 @@ from ..EMCellFound.models.RTMInstanceSeg import (
     build_emcellfound_instance_segmenter,
     is_supported_instance_model,
 )
+from ..mmlab_backend import (
+    INSTANCE_MMLAB_BACKEND,
+    LEGACY_EMCFSYS_BACKEND,
+    is_mmlab_backend,
+    iter_mmdet_training,
+    run_mmdet_inference,
+)
 from .io_utils import collect_image_files, ensure_directory
 from .model_registry import register_training_result
 from .training_artifacts import export_training_artifacts
@@ -92,6 +99,8 @@ class InstanceSegmentationTrainingRequest:
     aug_hsv_sgain: float = DEFAULT_INSTANCE_AUGMENTATION["aug_hsv_sgain"]
     aug_hsv_vgain: float = DEFAULT_INSTANCE_AUGMENTATION["aug_hsv_vgain"]
     aug_pad_value: int = DEFAULT_INSTANCE_AUGMENTATION["aug_pad_value"]
+    backend: str = INSTANCE_MMLAB_BACKEND
+    mmlab_config_path: str | None = None
 
 
 @dataclass(slots=True)
@@ -112,6 +121,8 @@ class InstanceSegmentationInferenceRequest:
     max_detections: int = 100
     nms_iou_threshold: float = 0.5
     mask_threshold: float = 0.5
+    backend: str = INSTANCE_MMLAB_BACKEND
+    mmlab_config_path: str | None = None
 
 
 def _resolve_device(device):
@@ -735,6 +746,40 @@ def iter_instance_segmentation_training_task(
     log=None,
     stop_flag_fn=None,
 ):
+    if is_mmlab_backend(request.backend):
+        if request.backend not in {INSTANCE_MMLAB_BACKEND, "mmlab"}:
+            raise ValueError(
+                "Instance segmentation supports backend='mmdet' or "
+                f"backend='{LEGACY_EMCFSYS_BACKEND}'."
+            )
+        yield "Starting MMDetection training backend..."
+        logs = yield from iter_mmdet_training(
+            request,
+            update_loss_curve=update_loss_curve,
+            stop_flag_fn=stop_flag_fn,
+        )
+        artifacts = export_training_artifacts(
+            request.save_path,
+            request,
+            "instance_segmentation",
+            logs,
+        )
+        yield (
+            "Training artifacts exported: "
+            f"{artifacts['config']}, {artifacts['training_log']}, "
+            f"{artifacts['metrics']}"
+        )
+        try:
+            registration = register_training_result(request.save_path)
+            yield (
+                "Model registry updated: "
+                f"{registration['registry_path']} "
+                f"(added {registration['added']}, updated {registration['updated']})"
+            )
+        except Exception as error:
+            yield f"Model registry update skipped: {error}"
+        return logs
+
     if not _is_supported_instance_model(request.model_name):
         raise ValueError(f"Unknown instance segmentation model: {request.model_name}")
 
@@ -1094,6 +1139,40 @@ def _save_prediction_outputs(
 def run_instance_segmentation_inference_task(
     request: InstanceSegmentationInferenceRequest,
 ):
+    if is_mmlab_backend(request.backend):
+        if request.backend not in {INSTANCE_MMLAB_BACKEND, "mmlab"}:
+            raise ValueError(
+                "Instance segmentation supports backend='mmdet' or "
+                f"backend='{LEGACY_EMCFSYS_BACKEND}'."
+            )
+        if request.image_folder is not None:
+            rows = []
+            for image_path in collect_image_files(request.image_folder):
+                image = np.asarray(PILImage.open(image_path).convert("RGB"))
+                prediction = run_mmdet_inference(request, image)
+                _save_prediction_outputs(
+                    prediction=prediction,
+                    source_path=image_path,
+                    request=request,
+                )
+                rows.extend(_summarize_prediction(image_path, prediction))
+            if request.output_csv:
+                _write_rows_csv(rows, request.output_csv)
+            return rows
+
+        if request.image is None:
+            return None
+        prediction = run_mmdet_inference(request, request.image)
+        if request.mask_output_folder or request.binary_mask_output_folder:
+            _save_prediction_outputs(
+                prediction=prediction,
+                source_path="napari_image",
+                request=request,
+            )
+        if request.output_csv:
+            _write_rows_csv(_summarize_prediction(None, prediction), request.output_csv)
+        return prediction
+
     device = _resolve_device(request.device)
     model, metadata = _load_instance_checkpoint(request, device)
     inference_img_size = int(metadata.get("img_size", request.img_size))

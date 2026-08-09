@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from knn_local_vit_common import REPO_ROOT, run_local_vit_knn
+from demo.KNN_code.knn_local_vit_common import REPO_ROOT, run_local_vit_knn
 
 
 if __name__ == "__main__":

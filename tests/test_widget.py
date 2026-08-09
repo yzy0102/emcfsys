@@ -262,8 +262,9 @@ def test_instance_segmentation_widgets_construct(make_napari_viewer):
     assert training_widget.aug_brightness.value == 0.15
     assert training_widget.aug_contrast.value == 0.15
     assert training_widget.aug_random_crop_prob.value == 0.3
-    assert not training_widget.aug_horizontal_flip_prob.native.isHidden()
-    assert not training_widget.aug_random_crop_prob.native.isHidden()
+    assert training_widget.backend.value == "mmdet"
+    assert training_widget.aug_horizontal_flip_prob.native.isHidden()
+    assert training_widget.aug_random_crop_prob.native.isHidden()
     assert not hasattr(training_widget, "_log_widget")
     assert training_widget._log_text is not None
     assert inference_widget.model_name.value == "rtm_instance"
@@ -297,6 +298,10 @@ def test_mask2former_matching_controls_only_show_for_mask2former_models():
     assert instance_widget.matching_uncertainty_per_query.native.isHidden()
 
     instance_widget.model_name.value = "mask2former_instance"
+    assert instance_widget.matching_sampling.native.isHidden()
+    assert instance_widget.matching_uncertainty_per_query.native.isHidden()
+
+    instance_widget.backend.value = "emcfsys"
     assert not instance_widget.matching_sampling.native.isHidden()
     assert not instance_widget.matching_uncertainty_per_query.native.isHidden()
 
@@ -665,6 +670,7 @@ def test_semantic_segmentation_inference_widget_loads_training_config(tmp_path):
 
 def test_instance_segmentation_training_widget_builds_advanced_loss_request(tmp_path):
     training_widget = InstanceSegmentationTrainingContainer(None)
+    training_widget.backend.value = "emcfsys"
 
     training_widget.image_dir.value = tmp_path / "train_images"
     training_widget.annotation_path.value = tmp_path / "train.json"
@@ -684,6 +690,7 @@ def test_instance_segmentation_training_widget_builds_advanced_loss_request(tmp_
 
 def test_instance_segmentation_training_widget_applies_preset():
     training_widget = InstanceSegmentationTrainingContainer(None)
+    training_widget.backend.value = "emcfsys"
 
     training_widget.training_preset.value = "Boundary Sensitive"
 
@@ -699,6 +706,7 @@ def test_instance_segmentation_training_widget_applies_preset():
 
 def test_instance_segmentation_training_widget_saves_and_loads_config(tmp_path):
     training_widget = InstanceSegmentationTrainingContainer(None)
+    training_widget.backend.value = "emcfsys"
     config_path = tmp_path / "instance_config.json"
 
     training_widget.image_dir.value = tmp_path / "train_images"
@@ -1015,6 +1023,7 @@ def test_model_manager_fills_semantic_inference_widget(tmp_path):
     assert inference.backbone_name.value == "resnet34"
     assert inference.img_size.value == 384
     assert inference.num_classes.value == 4
+    assert inference.backend.value == "emcfsys"
 
 
 def test_model_manager_fills_classification_inference_widget(tmp_path):
@@ -1089,6 +1098,36 @@ def test_model_manager_fills_instance_inference_widget(tmp_path):
     assert inference.backbone_name.value == "resnet50"
     assert inference.img_size.value == 640
     assert inference.num_classes.value == 3
+    assert inference.backend.value == "emcfsys"
+
+
+def test_model_manager_preserves_mmlab_backend_and_custom_config(tmp_path):
+    checkpoint = tmp_path / "model.pth"
+    checkpoint.write_bytes(b"checkpoint")
+    mmseg_config = tmp_path / "mmseg_config.py"
+    mmseg_config.write_text("default_scope = 'mmseg'\n", encoding="utf-8")
+    mmdet_config = tmp_path / "mmdet_config.py"
+    mmdet_config.write_text("default_scope = 'mmdet'\n", encoding="utf-8")
+    manager = ModelManagerContainer(None)
+
+    semantic = DLInferenceContainer(None)
+    manager._fill_semantic_inference_widget(
+        semantic,
+        {"config_path": None},
+        {"backend": "mmseg", "mmlab_config_path": str(mmseg_config)},
+        str(checkpoint),
+    )
+    assert semantic.backend.value == "mmseg"
+    assert semantic.mmlab_config_path.value == mmseg_config
+
+    instance = InstanceSegmentationInferenceContainer(None)
+    manager._fill_instance_inference_widget(
+        instance,
+        {"backend": "mmdet", "mmlab_config_path": str(mmdet_config)},
+        str(checkpoint),
+    )
+    assert instance.backend.value == "mmdet"
+    assert instance.mmlab_config_path.value == mmdet_config
 
 
 def test_model_manager_edits_deletes_imports_exports_and_checks_model(tmp_path):

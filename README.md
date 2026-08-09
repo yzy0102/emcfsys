@@ -11,6 +11,7 @@
 * **Pre-trained Backbones**: Optimized on **4M+** EM images for superior feature extraction: EMCellFound and EMCellFiner.
 * **Code-Free Train and Inference**: Train the segmentation model using Pre-trained Backbones and inference in the GUI without Any Code.
 * **Code-Free and Training-Free Image restoration/super-resolution pipline**: Training-Free pipline for EM image restoration/super-resolution.
+* **Pytorch** (for code-free napari GUI) or **MMLab** (for code-based jupyter notebook) backend for training and inference.
 
 ### 2. Segmentation pipline using Foundation model
 

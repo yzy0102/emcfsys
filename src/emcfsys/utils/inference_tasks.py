@@ -5,6 +5,12 @@ import numpy as np
 from PIL import Image as PILImage
 
 from ..EMCellFound.inference import infer_full_image, infer_sliding_window, load_model
+from ..mmlab_backend import (
+    LEGACY_EMCFSYS_BACKEND,
+    SEMANTIC_MMLAB_BACKEND,
+    is_mmlab_backend,
+    run_mmseg_inference,
+)
 from .io_utils import collect_image_files, ensure_directory
 
 
@@ -24,6 +30,8 @@ class SegmentationInferenceRequest:
     stacked_visualization_output_folder: str | None = None
     save_stacked_visualization: bool = False
     stop_checker: object = None
+    backend: str = SEMANTIC_MMLAB_BACKEND
+    mmlab_config_path: str | None = None
 
 
 @dataclass(slots=True)
@@ -160,6 +168,30 @@ def _run_folder_inference(
 
 
 def run_full_inference_task(request: SegmentationInferenceRequest):
+    if is_mmlab_backend(request.backend):
+        if request.backend not in {SEMANTIC_MMLAB_BACKEND, "mmlab"}:
+            raise ValueError(
+                "Semantic segmentation supports backend='mmseg' or "
+                f"backend='{LEGACY_EMCFSYS_BACKEND}'."
+            )
+
+        def infer_fn(img_np):
+            if request.stop_checker is not None and request.stop_checker():
+                raise StopIteration("Semantic segmentation inference stopped")
+            return run_mmseg_inference(request, img_np, sliding=False)
+
+        if request.image_folder is not None:
+            return _run_folder_inference(
+                image_folder=request.image_folder,
+                label_output_folder=request.label_output_folder,
+                visualization_output_folder=request.visualization_output_folder,
+                save_visualization=request.save_visualization,
+                stacked_visualization_output_folder=request.stacked_visualization_output_folder,
+                save_stacked_visualization_flag=request.save_stacked_visualization,
+                infer_fn=lambda image: (infer_fn(image),),
+            )
+        return None if request.image is None else normalize_label_mask(infer_fn(request.image))
+
     model = _load_segmentation_model(request)
 
     def infer_fn(img_np):
@@ -189,6 +221,30 @@ def run_full_inference_task(request: SegmentationInferenceRequest):
 
 
 def run_sliding_inference_task(request: SlidingWindowInferenceRequest):
+    if is_mmlab_backend(request.backend):
+        if request.backend not in {SEMANTIC_MMLAB_BACKEND, "mmlab"}:
+            raise ValueError(
+                "Semantic segmentation supports backend='mmseg' or "
+                f"backend='{LEGACY_EMCFSYS_BACKEND}'."
+            )
+
+        def infer_fn(img_np):
+            if request.stop_checker is not None and request.stop_checker():
+                raise StopIteration("Semantic segmentation inference stopped")
+            return run_mmseg_inference(request, img_np, sliding=True)
+
+        if request.image_folder is not None:
+            return _run_folder_inference(
+                image_folder=request.image_folder,
+                label_output_folder=request.label_output_folder,
+                visualization_output_folder=request.visualization_output_folder,
+                save_visualization=request.save_visualization,
+                stacked_visualization_output_folder=request.stacked_visualization_output_folder,
+                save_stacked_visualization_flag=request.save_stacked_visualization,
+                infer_fn=lambda image: (infer_fn(image),),
+            )
+        return None if request.image is None else normalize_label_mask(infer_fn(request.image))
+
     model = _load_segmentation_model(request)
 
     def infer_fn(img_np):
