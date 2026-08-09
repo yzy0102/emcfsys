@@ -12,11 +12,11 @@ You can also follow [ReadMe.md](../README.md) to configure the environment and i
 
 After installation, open napari's `Plugins` menu and install the emcfsys plugin. Users in mainland China may need a VPN to download the plugin.
 
-![alt text](../source/image-1.png)
+![alt text](image/source/image-1.png)
 
 The emcfsys plugin will then be available:
 
-![alt text](../source/image.png)
+![alt text](image/source/image.png)
 
 After installation, open the napari `Plugins` menu. The available tools are listed in the `EMCFsys` group. Functions are grouped by module so that they remain easy to locate as the plugin grows.
 
@@ -607,7 +607,7 @@ Confirm that the configuration belongs to the same task and model. Check that al
 
 ## 19. Version and Implementation References
 
-Plugin menu registration is defined in [`src/emcfsys/napari.yaml`](../src/emcfsys/napari.yaml). Training, inference, dataset validation, and conversion are implemented in [`src/emcfsys/_widget.py`](../src/emcfsys/_widget.py) and [`src/emcfsys/utils`](../src/emcfsys/utils). The Hugging Face dataset training example is in [`demo_notebook.ipynb`](../demo_notebook.ipynb).
+Plugin menu registration is defined in [`src/emcfsys/napari.yaml`](../src/emcfsys/napari.yaml). Training, inference, dataset validation, and conversion are implemented in [`src/emcfsys/_widget.py`](../src/emcfsys/_widget.py) and [`src/emcfsys/utils`](../src/emcfsys/utils). The Hugging Face dataset training example is in [`mmLab_backend_demo.ipynb`](../mmLab_backend_demo.ipynb).
 
 If a GUI label differs from this document, follow the current plugin interface and the saved `config.json`; the configuration file is the authoritative record for experiment parameters.
 

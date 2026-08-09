@@ -44,9 +44,9 @@ This tutorial demonstrates:
 
 1. Correctly install napari and emcfsys plugin, see [ReadMe Installation](../README.md)
 2. Then open napari, you can see the software GUI as follow, and you can check the emcfsys plugin in plugin-store:
-   ![alt text](../source/image-1.png)
+   ![alt text](image/source/image-1.png)
    And you can find emcfsys plugin.
-   ![alt text](../source/image.png)
+   ![alt text](image/source/image.png)
 
 ---
 
@@ -69,16 +69,16 @@ Functions in emcfsys are listed belows:
 - Dataset Converter | LabelMe to COCO Instance
 - Analysis | Phenotype Analysis
 
-  ![alt text](../source/Napari_emcfsys_GUI.png)
+  ![alt text](image/source/Napari_emcfsys_GUI.png)
 
 1. `ImageResize`: interactively resize images
-   ![alt text](../source/image-2.png)
+   ![alt text](image/source/image-2.png)
 
    - Image Resize function: Resize the selected image to any other size
 
-   1. The GUI of the Resize funciton![alt text](../source/image-3.png)
-   2. You can select the resize algorithm, use bilinear by default![alt text](../source/image-4.png)
-   3. Also, you can resize by scale ![alt text](../source/image-5.png)
+   1. The GUI of the Resize funciton![alt text](image/source/image-3.png)
+   2. You can select the resize algorithm, use bilinear by default![alt text](image/source/image-4.png)
+   3. Also, you can resize by scale ![alt text](image/source/image-5.png)
    4. Now, it only support single image. Later, **it will support reisze the 3D voxel and 2.5D image stack**.
 
 ---
@@ -89,11 +89,11 @@ Functions in emcfsys are listed belows:
 
 1. Deep learning training funcion
    This function support to finetune the pretrained ViT backbone "EMCellFound", or other pretrained backbone from timm library including convnext, resnet, efficientNet, ViT and so on.
-   ![alt text](../source/image-6.png)
-   ![alt text](../source/image-9.png)
+   ![alt text](image/source/image-6.png)
+   ![alt text](image/source/image-9.png)
 
-   1. Select backbone![alt text](../source/image-10.png)
-   2. Select the segment head, default Unet![alt text](../source/image-11.png)
+   1. Select backbone![alt text](image/source/image-10.png)
+   2. Select the segment head, default Unet![alt text](image/source/image-11.png)
    3. Fill the image folder, mask folder and save model path.
    4. Select the parameters, like learning rate, batch size, training epochs, device(cuda\cpu), classes num(including background), target size(the input image size for model training), ignore the index(if 0 will ignore background, -1 by default).
    5. Then click 'Start Training' and check the loss curve.
@@ -101,18 +101,18 @@ Functions in emcfsys are listed belows:
    7. Now, the model only support semantic segmentation task. In the future, it will support zero shot classification, few shot instance segmentation.
 2. Deep Learning model Inference funcion
    In this function, you can use the model to inference.
-   ![alt text](../source/image-12.png)
+   ![alt text](image/source/image-12.png)
 
    1. When the training step done, Check the save_model path, and find the best IOU model.
    2. First, select the model and load the model.
-      ![alt text](../source/inference_gui.png)
+      ![alt text](image/source/inference_gui.png)
    3. Check the "Backbone", "Model" and "Image size to model", Ensure it is the **same architecture** used in the previous training.
    4. The "Image size to model" is the image size input to the model. And the Slide window size, is the window size for slide-inference.
    5. If you click "Full Inference", it will perform reasoning on the entire image. And if click "Slide Inference", it will perform reasoning on each image window by the window size using slide-window mode. "Slide Inference" is suitable for segmenting large images with small objects.
    6. **New features**: Now you can click the box "Inference from folder", and then select the image folder and save folder to save the masks output from the DL model. And you can click "Full Inference"\"Slide Inference". The emcfsys will automaticly load the images from the local folder, and save the mask. Then you can open the mask in napari, and convert it to mask, You will see the mask.
-      ![alt text](../source/convert_label.png)
+      ![alt text](image/source/convert_label.png)
       like this one
-      ![alt text](../source/convert_label_example.png)
+      ![alt text](image/source/convert_label_example.png)
 
 ---
 
@@ -122,27 +122,27 @@ EMCellFiner is the training-free funcion. So, the EMCellFiner model can be **use
 
 To make it more convenient to use the model, we designed two inference functions.
 
-- One approach is to perform inference on a single image or a small stack of images. See **Single Image Inference**![alt text](../source/image-14.png)
-- Another approach is to perform inference on a large batch of images in a folder. See **Batch Inference**![alt text](../source/image-15.png)
+- One approach is to perform inference on a single image or a small stack of images. See **Single Image Inference**![alt text](image/source/image-14.png)
+- Another approach is to perform inference on a large batch of images in a folder. See **Batch Inference**![alt text](image/source/image-15.png)
 
 1. **Single Image Inference**
    In this function, Just load the image and click Run Inference.
    The EMCellFiner model will be automatically downloaded from the cloud. If download failed, you can download the model from [EMCellFincer download Link](https://github.com/yzy0102/emcfsys/releases/latest/download/EMCellFiner.pth) and fill the Model(.pth), the model will be loaded from local.
 
-   ![alt text](../source/image-16.png)
+   ![alt text](image/source/image-16.png)
    Witness the miracle of super-resolution algorithms!
    Before:
-   ![alt text](../source/image-17.png)
+   ![alt text](image/source/image-17.png)
 
    After SR!
-   ![alt text](../source/image-18.png)
+   ![alt text](image/source/image-18.png)
    Before:
-   ![alt text](../source/image-20.png)
+   ![alt text](image/source/image-20.png)
    After SR!
-   ![alt text](../source/image-19.png)
+   ![alt text](image/source/image-19.png)
 2. **Batch Inference**
    In this function, select local folder where images are saved as single tif/png/jpeg.., and select another local folder to save the Super-Resolution image.
-   ![alt text](../source/image-21.png)
+   ![alt text](image/source/image-21.png)
    Just click "Run Batch Inference". And SR image will be saved to "Save Folder" one by one.
 
 ---
@@ -150,7 +150,7 @@ To make it more convenient to use the model, we designed two inference functions
 ## 6. Dataset converter!
 
 In this function, you can convert the lableme json files to **Semantic segmentation task** dataset.
-![alt text](../source/image-22.png)
+![alt text](image/source/image-22.png)
 
 1. First, you can label the EM image using labelme software, and it will output json files.
 2. Use this function, and select the label folder.
@@ -177,7 +177,7 @@ In this function, you can convert the lableme json files to **Semantic segmentat
 
 ## 7. Example Notebook and Sample Code 📁
 
-- Run `notebooks/tutorial.ipynb` (or `test2.ipynb`) to execute the examples interactively.
+- Run [`mmLab_backend_demo.ipynb`](../mmLab_backend_demo.ipynb) to execute the examples interactively.
 - Check the scripts under `examples/` (such as `image_resize_example.py`) for ready-to-run script examples.
 
 ---

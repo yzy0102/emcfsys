@@ -22,7 +22,7 @@
 * **Segmentation Heads**: Includes **U-Net**, **PSPNet**, **DeepLabv3+**, and **UperNet**.
 * **Finetune Models**: We support to finetune the EMCellFound/Timm-model to make specialize segmentation pipline.
 * **Inference 2D/3D images**: We support to load the Checkpoint and inference image in 2D and 3D.
-* **Tailored Training Strategies**: Detailed specifications of our training configurations can be found in [Functions notebook](notebooks\Functions.md). Key components include:
+* **Tailored Training Strategies**: Detailed specifications of our training configurations can be found in the [English user guide](docs/EMCFsys_UserGuide_English.md). Key components include:
   * **Data Augmentation**: Robust `Dataset` class with multiple transform strategies.
   * **Loss Functions**: Integrated **CrossEntropy** and **Dice Loss** (Focal Loss coming soon).
   * **Metrics**: Real-time evaluation using **IoU**, **Accuracy**, and **F1-Score**.
@@ -108,7 +108,7 @@ We provide model fine‑tuning implementations in both source‑code and Jupyter
 
 ## 📖 Tutorial
 
-All tutorials and feature descriptions can be found in the [tutorial documentation](./notebooks/EMCFsys_UserGuide_English.md) (click me!).
+All tutorials and feature descriptions can be found in the [tutorial documentation](./docs/EMCFsys_UserGuide_English.md) (click me!).
 
 ## License
 

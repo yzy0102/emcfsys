@@ -11,9 +11,9 @@
 或者直接参考[ReadMe.md](../README.md)进行环境配置、napari安装和emcfsys插件安装
 
 安装成功后，打开napari的Plugins进行安装emcfsys插件（如在中国境内，请连接VPN进行下载）
-![alt text](../source/image-1.png)
+![alt text](image/source/image-1.png)
 And you can find emcfsys plugin.
-![alt text](../source/image.png)
+![alt text](image/source/image.png)
 
 插件安装完成后，打开 napari 菜单栏中的 `Plugins`，在 `EMCFsys` 分组中可以看到各项功能。插件当前按模块命名，便于在较多功能中快速定位。
 
@@ -168,7 +168,7 @@ Model Manager 是持久化模型 registry，不要求所有模型位于同一个
 
 ## 5. Semantic Segmentation | Training
 
-![1786113597122](https://file+.vscode-resource.vscode-cdn.net/d%3A/napari_EMCF/EMCFsys/emcfsys/notebooks/image/EMCFsys_UserGuide_English/1786113597122.png)
+![1786113597122](image/EMCFsys_UserGuide_English/1786113597122.png)
 
 语义分割为每个像素预测类别 ID，适合背景、细胞器或组织区域等类别互不重叠的任务。
 
@@ -598,7 +598,7 @@ Notebook 示例中的 `NUM_CLASSES` 应根据 mask 的最大类别 ID 加 1 计�
 
 ## 19. 版本和实现参考
 
-插件菜单注册以 [`src/emcfsys/napari.yaml`](../src/emcfsys/napari.yaml) 为准。训练、推理、数据验证和转换的实现位于 [`src/emcfsys/_widget.py`](../src/emcfsys/_widget.py) 以及 [`src/emcfsys/utils`](../src/emcfsys/utils)。Hugging Face 数据集训练示例见 [`demo_notebook.ipynb`](../demo_notebook.ipynb)。
+插件菜单注册以 [`src/emcfsys/napari.yaml`](../src/emcfsys/napari.yaml) 为准。训练、推理、数据验证和转换的实现位于 [`src/emcfsys/_widget.py`](../src/emcfsys/_widget.py) 以及 [`src/emcfsys/utils`](../src/emcfsys/utils)。Hugging Face 数据集训练示例见 [`mmLab_backend_demo.ipynb`](../mmLab_backend_demo.ipynb)。
 
 当 GUI 标签与本文档不一致时，以当前插件界面和保存的 `config.json` 为准；配置文件是复现实验参数的最终记录。
 
