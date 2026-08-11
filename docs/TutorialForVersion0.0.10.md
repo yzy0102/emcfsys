@@ -9,7 +9,7 @@ Guide (English) :  [User_Guide_English](EMCFsys_UserGuide_English.md)
 
 Guide (Chinese): [User_Guide_Chinese](EMCFsys_UserGuide_Chinese.md)
 
-We currently support both the Napari GUI and code‑based Jupyter Notebook workflows (see usage examples in [mmLab_backend_demo.ipynb](../mmLab_backend_demo.ipynb)).
+We currently support both the Napari GUI and code‑based Jupyter Notebook workflows (see usage examples in [demo_notebook.ipynb](../demo_notebook.ipynb)).
 
 
 # If you are using an older version of EMCFSys, please refer to the user documentation below.
@@ -177,7 +177,7 @@ In this function, you can convert the lableme json files to **Semantic segmentat
 
 ## 7. Example Notebook and Sample Code 📁
 
-- Run [`mmLab_backend_demo.ipynb`](../mmLab_backend_demo.ipynb) to execute the examples interactively.
+- Run [`demo_notebook.ipynb`](../demo_notebook.ipynb) to execute the examples interactively.
 - Check the scripts under `examples/` (such as `image_resize_example.py`) for ready-to-run script examples.
 
 ---

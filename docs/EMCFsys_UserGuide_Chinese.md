@@ -43,7 +43,7 @@ And you can find emcfsys plugin.
 
 ![1786027624248](image/EMCFsys_UserGuide/1786027624248.png)
 
-基于mmlab-backend的测试和使用Demo请查看[mmLab_backend_demo.ipynb](../mmLab_backend_demo.ipynb).
+基于mmlab-backend的测试和使用Demo请查看[demo_notebook.ipynb](../demo_notebook.ipynb).
 
 ### 2.2 图像和标签的形状
 
@@ -598,7 +598,7 @@ Notebook 示例中的 `NUM_CLASSES` 应根据 mask 的最大类别 ID 加 1 计�
 
 ## 19. 版本和实现参考
 
-插件菜单注册以 [`src/emcfsys/napari.yaml`](../src/emcfsys/napari.yaml) 为准。训练、推理、数据验证和转换的实现位于 [`src/emcfsys/_widget.py`](../src/emcfsys/_widget.py) 以及 [`src/emcfsys/utils`](../src/emcfsys/utils)。Hugging Face 数据集训练示例见 [`mmLab_backend_demo.ipynb`](../mmLab_backend_demo.ipynb)。
+插件菜单注册以 [`src/emcfsys/napari.yaml`](../src/emcfsys/napari.yaml) 为准。训练、推理、数据验证和转换的实现位于 [`src/emcfsys/_widget.py`](../src/emcfsys/_widget.py) 以及 [`src/emcfsys/utils`](../src/emcfsys/utils)。Hugging Face 数据集训练示例见 [`demo_notebook.ipynb`](../demo_notebook.ipynb)。
 
 当 GUI 标签与本文档不一致时，以当前插件界面和保存的 `config.json` 为准；配置文件是复现实验参数的最终记录。
 

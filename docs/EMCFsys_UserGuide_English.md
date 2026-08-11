@@ -48,7 +48,7 @@ Like:
 
 ![Default model loading](image/EMCFsys_UserGuide/1786027624248.png)
 
-For testing and usage‑example code, see [mmLab_backend_demo.ipynb](../mmLab_backend_demo.ipynb).
+For testing and usage‑example code, see [demo_notebook.ipynb](../demo_notebook.ipynb).
 
 Datasets for the demo can download into in the project's `datasets_temp/` directory.
 
@@ -607,7 +607,7 @@ Confirm that the configuration belongs to the same task and model. Check that al
 
 ## 19. Version and Implementation References
 
-Plugin menu registration is defined in [`src/emcfsys/napari.yaml`](../src/emcfsys/napari.yaml). Training, inference, dataset validation, and conversion are implemented in [`src/emcfsys/_widget.py`](../src/emcfsys/_widget.py) and [`src/emcfsys/utils`](../src/emcfsys/utils). The Hugging Face dataset training example is in [`mmLab_backend_demo.ipynb`](../mmLab_backend_demo.ipynb).
+Plugin menu registration is defined in [`src/emcfsys/napari.yaml`](../src/emcfsys/napari.yaml). Training, inference, dataset validation, and conversion are implemented in [`src/emcfsys/_widget.py`](../src/emcfsys/_widget.py) and [`src/emcfsys/utils`](../src/emcfsys/utils). The Hugging Face dataset training example is in [`demo_notebook.ipynb`](../demo_notebook.ipynb).
 
 If a GUI label differs from this document, follow the current plugin interface and the saved `config.json`; the configuration file is the authoritative record for experiment parameters.
 
