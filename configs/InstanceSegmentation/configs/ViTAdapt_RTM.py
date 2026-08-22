@@ -257,10 +257,10 @@ test_cfg = dict(type='TestLoop')
 test_dataloader = dict(
     batch_size=5,
     dataset=dict(
-        ann_file='/root/yzy/CellFound/dataset/Lee//test.json',
+        ann_file='test.json',
         backend_args=None,
         data_prefix=dict(img='image/'),
-        data_root='/root/yzy/CellFound/dataset/Lee//',
+        data_root='',
         metainfo=dict(classes=('Mito', ), palette=[
             (
                 220,
@@ -355,10 +355,10 @@ train_dataloader = dict(
     batch_sampler=None,
     batch_size=16,
     dataset=dict(
-        ann_file='/root/yzy/CellFound/dataset/Lee//train.json',
+        ann_file='train.json',
         backend_args=None,
         data_prefix=dict(img='image/'),
-        data_root='/root/yzy/CellFound/dataset/Lee/',
+        data_root='',
         filter_cfg=dict(filter_empty_gt=True, min_size=32),
         metainfo=dict(classes=('Mito', ), palette=[
             (
@@ -602,10 +602,10 @@ val_cfg = dict(type='ValLoop')
 val_dataloader = dict(
     batch_size=5,
     dataset=dict(
-        ann_file='/root/yzy/CellFound/dataset/Lee/val.json',
+        ann_file='val.json',
         backend_args=None,
         data_prefix=dict(img='image/'),
-        data_root='//root/yzy/CellFound/dataset/Lee//',
+        data_root='',
         metainfo=dict(classes=('Mito', ), palette=[
             (
                 220,
@@ -648,7 +648,7 @@ val_dataloader = dict(
     persistent_workers=True,
     sampler=dict(shuffle=False, type='DefaultSampler'))
 val_evaluator = dict(
-    ann_file='/root/yzy/CellFound/dataset/Lee//val.json',
+    ann_file='val.json',
     backend_args=None,
     format_only=False,
     metric=[

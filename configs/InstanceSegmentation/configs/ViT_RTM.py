@@ -28,6 +28,14 @@ custom_hooks = [
                 with_bbox=True,
                 with_mask=True),
             dict(
+                allow_negative_crop=True,
+                crop_size=(
+                    1024,
+                    1024,
+                ),
+                recompute_bbox=True,
+                type='RandomCrop'),
+            dict(
                 keep_ratio=True,
                 ratio_range=(
                     0.1,
