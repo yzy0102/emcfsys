@@ -16,7 +16,7 @@ class MitocemDataset(BaseDetDataset):
 
     METAINFO = {
         'classes':
-        ('mitochondria',),
+        ('Mitochondria',),
         # palette is a list of color tuples, which is used for visualization.
         'palette':
         [(220, 20, 60),]

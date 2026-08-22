@@ -109,7 +109,7 @@ log_level = 'INFO'
 log_processor = dict(by_epoch=True, type='LogProcessor', window_size=50)
 
 metainfo = dict(
-    classes=('Mito', ), palette=[
+    classes=('Mitochondria', ), palette=[
         (
             220,
             20,
@@ -227,7 +227,7 @@ test_dataloader = dict(
         backend_args=None,
         data_prefix=dict(img='image/'),
         data_root='',
-        metainfo=dict(classes=('Mito', ), palette=[
+        metainfo=dict(classes=('Mitochondria', ), palette=[
             (
                 220,
                 20,
@@ -326,7 +326,7 @@ train_dataloader = dict(
         data_prefix=dict(img='image/'),
         data_root='',
         filter_cfg=dict(filter_empty_gt=True, min_size=32),
-        metainfo=dict(classes=('Mito', ), palette=[
+        metainfo=dict(classes=('Mitochondria', ), palette=[
             (
                 220,
                 20,
@@ -410,61 +410,28 @@ train_pipeline = [
         type='LoadAnnotations',
         with_bbox=True,
         with_mask=True),
-    dict(img_scale=(
-        512,
-        512,
-    ), pad_val=114.0, type='CachedMosaic'),
     dict(
         keep_ratio=True,
-        ratio_range=(
-            0.1,
-            2.0,
-        ),
-        scale=(
-            1280,
-            1280,
-        ),
+        ratio_range=(0.5, 1.5), 
+        scale=(1024, 1024), 
         type='RandomResize'),
     dict(
-        allow_negative_crop=True,
-        crop_size=(
-            512,
-            512,
-        ),
+        allow_negative_crop=False, 
+        crop_size=(512, 512),
         recompute_bbox=True,
         type='RandomCrop'),
-    dict(type='YOLOXHSVRandomAug'),
-    dict(prob=0.5, type='RandomFlip'),
-    dict(pad_val=dict(img=(
-        114,
-        114,
-        114,
-    )), size=(
-        512,
-        512,
-    ), type='Pad'),
+    dict(prob=0.5, direction='horizontal', type='RandomFlip'),
+    dict(prob=0.5, direction='vertical', type='RandomFlip'),
+    dict(prob=0.5, type='RandomRotate90'),
     dict(
-        img_scale=(
-            512,
-            512,
-        ),
-        max_cached_images=20,
-        pad_val=(
-            114,
-            114,
-            114,
-        ),
-        ratio_range=(
-            1.0,
-            1.0,
-        ),
-        type='CachedMixUp'),
-    dict(min_gt_bbox_wh=(
-        1,
-        1,
-    ), type='FilterAnnotations'),
+        pad_val=dict(img=(114, 114, 114)),
+        size=(512, 512),
+        type='Pad'),
+    dict(min_gt_bbox_wh=(2, 2), type='FilterAnnotations'),
     dict(type='PackDetInputs'),
 ]
+
+# stage2
 train_pipeline_stage2 = [
     dict(backend_args=None, type='LoadImageFromFile'),
     dict(
@@ -474,37 +441,23 @@ train_pipeline_stage2 = [
         with_mask=True),
     dict(
         keep_ratio=True,
-        ratio_range=(
-            0.1,
-            2.0,
-        ),
-        scale=(
-            512,
-            512,
-        ),
+        ratio_range=(0.8, 1.2),  # finetune阶段进一步收缩缩放，减少形变
+        scale=(512, 512),
         type='RandomResize'),
     dict(
-        allow_negative_crop=True,
-        crop_size=(
-            512,
-            512,
-        ),
+        allow_negative_crop=False,
+        crop_size=(512, 512),
         recompute_bbox=True,
         type='RandomCrop'),
-    dict(min_gt_bbox_wh=(
-        1,
-        1,
-    ), type='FilterAnnotations'),
-    dict(type='YOLOXHSVRandomAug'),
-    dict(prob=0.5, type='RandomFlip'),
-    dict(pad_val=dict(img=(
-        114,
-        114,
-        114,
-    )), size=(
-        512,
-        512,
-    ), type='Pad'),
+    dict(min_gt_bbox_wh=(2, 2), type='FilterAnnotations'),
+    # finetune依旧保留翻转+90旋转
+    dict(prob=0.5, direction='horizontal', type='RandomFlip'),
+    dict(prob=0.5, direction='vertical', type='RandomFlip'),
+    dict(prob=0.5, type='RandomRotate90'),
+    dict(
+        pad_val=dict(img=(114, 114, 114)),
+        size=(512, 512),
+        type='Pad'),
     dict(type='PackDetInputs'),
 ]
 tta_model = dict(
@@ -572,7 +525,7 @@ val_dataloader = dict(
         backend_args=None,
         data_prefix=dict(img='image/'),
         data_root='/root/yzy/CellFound/dataset/Lee//',
-        metainfo=dict(classes=('Mito', ), palette=[
+        metainfo=dict(classes=('Mitochondria', ), palette=[
             (
                 220,
                 20,
