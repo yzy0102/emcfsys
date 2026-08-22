@@ -29,7 +29,7 @@ data_preprocessor = dict(
         53.0,
     ],
     type='SegDataPreProcessor')
-data_root = '{{fileDirname}}/../../datasets/PlantSemanticSegTask'
+data_root = '{{fileDirname}}/../../'
 dataset_type = 'PlantCellDataset'
 default_hooks = dict(
     checkpoint=dict(
