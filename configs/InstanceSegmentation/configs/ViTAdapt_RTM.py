@@ -9,7 +9,7 @@ custom_imports = dict(
 
 auto_scale_lr = dict(base_batch_size=16, enable=False)
 backend_args = None
-base_lr = 0.004
+base_lr = 0.001
 max_epochs = 400
 custom_hooks = [
     dict(
@@ -242,10 +242,16 @@ model = dict(
         pos_weight=-1),
     type='RTMDet')
 optim_wrapper = dict(
-    optimizer=dict(lr=0.0002, type='AdamW', weight_decay=0.05),
+    clip_grad=dict(max_norm=1.0),
+    optimizer=dict(lr=0.001, type='AdamW', weight_decay=0.01),
     paramwise_cfg=dict(
-        bias_decay_mult=0, bypass_duplicate=True, norm_decay_mult=0),
+        bias_decay_mult=0.0,
+        bypass_duplicate=True,
+        custom_keys=dict(
+            backbone=dict(lr_mult=0.01)),
+        norm_decay_mult=0.0),
     type='OptimWrapper')
+
 param_scheduler = [
     dict(
         begin=0, by_epoch=True, end=max_epochs//4, start_factor=1e-05,
