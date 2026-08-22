@@ -3,7 +3,6 @@ custom_imports = dict(
         'configs.register_models.runtime',
         'configs.InstanceSegmentation.mmdet_register_models.ViT_backbone',
         'configs.InstanceSegmentation.mmdet_register_models.ViT_Adapter_backbone',
-        'configs.InstanceSegmentation.mmdet_datasets.labelme_dataset',
     ],
     allow_failed_imports=False,
 )
@@ -68,7 +67,7 @@ custom_hooks = [
         ],
         type='PipelineSwitchHook'),
 ]
-data_root = '/root/yzy/CellFound/dataset/Lee//'
+
 dataset_type = 'CocoDataset'
 default_hooks = dict(
     checkpoint=dict(interval=2, max_keep_ckpts=3, save_best = "auto", type='CheckpointHook'),
@@ -211,10 +210,10 @@ test_cfg = dict(type='TestLoop')
 test_dataloader = dict(
     batch_size=5,
     dataset=dict(
-        ann_file='/root/yzy/CellFound/dataset/Lee//test.json',
+        ann_file='test.json',
         backend_args=None,
         data_prefix=dict(img='image/'),
-        data_root='/root/yzy/CellFound/dataset/Lee//',
+        data_root='',
         metainfo=dict(classes=('Mito', ), palette=[
             (
                 220,
@@ -257,7 +256,7 @@ test_dataloader = dict(
     persistent_workers=True,
     sampler=dict(shuffle=False, type='DefaultSampler'))
 test_evaluator = dict(
-    ann_file='/root/yzy/CellFound/dataset/Lee//test.json',
+    ann_file='test.json',
     backend_args=None,
     format_only=False,
     metric=[
@@ -312,7 +311,7 @@ train_dataloader = dict(
         ann_file='train.json',
         backend_args=None,
         data_prefix=dict(img='image/'),
-        data_root='/root/yzy/CellFound/dataset/Lee//',
+        data_root='',
         filter_cfg=dict(filter_empty_gt=True, min_size=32),
         metainfo=dict(classes=('Mito', ), palette=[
             (
@@ -602,7 +601,7 @@ val_dataloader = dict(
     persistent_workers=True,
     sampler=dict(shuffle=False, type='DefaultSampler'))
 val_evaluator = dict(
-    ann_file='/root/yzy/CellFound/dataset/Lee//val.json',
+    ann_file='val.json',
     backend_args=None,
     format_only=False,
     metric=[
@@ -626,25 +625,23 @@ visualizer = dict(
     ])
 work_dir = './tutorial_exps'
 
-# EMCFsys LabelMe dataset override. Each image has a matching JSON file in
-# ``label``; no COCO conversion is required for training or validation.
+# EMCFsys COCO dataset override. The dataset root contains image/ and the
+# train.json, val.json, and test.json annotation files.
 data_root = '{{fileDirname}}/../../../datasets_temp/MitoInstanceSegDataset'
-dataset_type = 'MitoLabelMeDataset'
+dataset_type = 'CocoDataset'
 launcher = 'none'
-for _loader in (train_dataloader, val_dataloader, test_dataloader):
+for _split_name, _loader in (('train', train_dataloader),
+                             ('val', val_dataloader),
+                             ('test', test_dataloader)):
     _dataset = _loader['dataset']
     _dataset['type'] = dataset_type
-    _dataset['ann_file'] = None
+    _dataset['ann_file'] = f'{_split_name}.json'
     _dataset['data_root'] = data_root
-    _dataset['data_prefix'] = dict(img='image')
-    _dataset['metainfo'] = dict(classes=('Mitochondria',), palette=[(220, 20, 60)])
-    _loader['batch_size'] = 1
+    _dataset['data_prefix'] = dict(img='image/')
+    _dataset['metainfo'] = dict(
+        classes=('Mitochondria',), palette=[(220, 20, 60)])
     _loader['num_workers'] = 0
     _loader['persistent_workers'] = False
-for _evaluator in (val_evaluator, test_evaluator):
-    _evaluator['ann_file'] = None
-for _loader in (val_dataloader, test_dataloader):
-    for _transform in _loader['dataset']['pipeline']:
-        if _transform['type'] == 'LoadAnnotations':
-            _transform.update(with_bbox=True, with_mask=True, poly2mask=False)
+val_evaluator['ann_file'] = f'{data_root}/val.json'
+test_evaluator['ann_file'] = f'{data_root}/test.json'
 work_dir = '{{fileDirname}}/../../../save_logs/ViT_RTM'

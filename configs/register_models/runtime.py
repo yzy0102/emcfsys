@@ -58,6 +58,12 @@ def set_data_root(cfg, data_root):
         dataset = loader.get("dataset")
         if dataset is not None:
             _set_dataset_root(dataset, root)
+
+    for evaluator_name, split_name in (("val_evaluator", "val"),
+                                       ("test_evaluator", "test")):
+        evaluator = cfg.get(evaluator_name)
+        if evaluator is not None and evaluator.get("ann_file"):
+            evaluator["ann_file"] = str(Path(root) / f"{split_name}.json")
     return cfg
 
 

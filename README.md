@@ -4,7 +4,7 @@
 
 ---
 
-## ✨ Key Features
+# ✨ Key Features
 
 ### 1. Key Features for emcfsys
 
@@ -12,6 +12,7 @@
 * **Code-Free Train and Inference**: Train the segmentation model using Pre-trained Backbones and inference in the GUI without Any Code.
 * **Code-Free and Training-Free Image restoration/super-resolution pipline**: Training-Free pipline for EM image restoration/super-resolution.
 * Code-Free GUI for Napari, and Code-based example tutorial in [demo_notebook.ipynb](demo_notebook.ipynb). This notebook is built upon mmengine, mmseg, and mmdet to facilitate code‑driven training workflows.
+* **Fixed bugs caused by missing configs for mmlab‑backend.**
 
 ### 2. Segmentation pipline using Foundation model
 
