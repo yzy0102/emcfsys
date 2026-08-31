@@ -3,6 +3,7 @@ custom_imports = dict(
         'configs.register_models.runtime',
         'configs.InstanceSegmentation.mmdet_register_models.ViT_backbone',
         'configs.InstanceSegmentation.mmdet_register_models.ViT_Adapter_backbone',
+        'configs.InstanceSegmentation.mmdet_metrics',
     ],
     allow_failed_imports=False,
 )
@@ -138,6 +139,18 @@ model = dict(
         pretrained=False,
         qkv_bias=True,
         type='Multi_ViT'),
+    neck=dict(
+        act_cfg=dict(inplace=True, type='SiLU'),
+        expand_ratio=0.5,
+        in_channels=[
+            768,
+            768,
+            768,
+        ],
+        norm_cfg=dict(type='SyncBN'),
+        num_csp_blocks=3,
+        out_channels=256,
+        type='CSPNeXtPAFPN'),
     bbox_head=dict(
         act_cfg=dict(inplace=True, type='SiLU'),
         anchor_generator=dict(
@@ -177,18 +190,7 @@ model = dict(
             53.,
         ],
         type='DetDataPreprocessor'),
-    neck=dict(
-        act_cfg=dict(inplace=True, type='SiLU'),
-        expand_ratio=0.5,
-        in_channels=[
-            768,
-            768,
-            768,
-        ],
-        norm_cfg=dict(type='SyncBN'),
-        num_csp_blocks=3,
-        out_channels=256,
-        type='CSPNeXtPAFPN'),
+
     test_cfg=dict(
         mask_thr_binary=0.5,
         max_per_img=100,
@@ -317,22 +319,24 @@ train_cfg = dict(
     max_epochs=max_epochs,
     type='EpochBasedTrainLoop',
     val_interval=2)
+
+train_cfg = dict(max_epochs=400, type='EpochBasedTrainLoop', val_interval=20)
 train_dataloader = dict(
-    batch_sampler=None,
-    batch_size=16,
+    batch_size=8,
     dataset=dict(
-        ann_file='train.json',
-        backend_args=None,
-        data_prefix=dict(img='image/'),
-        data_root='',
-        filter_cfg=dict(filter_empty_gt=True, min_size=32),
-        metainfo=dict(classes=('Mitochondria', ), palette=[
-            (
-                220,
-                20,
-                60,
-            ),
-        ]),
+        ann_file=
+        'train.json',
+        data_prefix=dict(img=''),
+        data_root="",
+        filter_cfg=dict(filter_empty_gt=True, min_size=1),
+        metainfo=dict(
+            classes=('Mitochondria', ), palette=[
+                (
+                    46,
+                    139,
+                    87,
+                ),
+            ]),
         pipeline=[
             dict(backend_args=None, type='LoadImageFromFile'),
             dict(
@@ -340,19 +344,15 @@ train_dataloader = dict(
                 type='LoadAnnotations',
                 with_bbox=True,
                 with_mask=True),
-            dict(img_scale=(
-                512,
-                512,
-            ), pad_val=114.0, type='CachedMosaic'),
             dict(
                 keep_ratio=True,
                 ratio_range=(
-                    0.1,
-                    2.0,
+                    0.8,
+                    1.2,
                 ),
                 scale=(
-                    1280,
-                    1280,
+                    1285,
+                    1285,
                 ),
                 type='RandomResize'),
             dict(
@@ -363,6 +363,10 @@ train_dataloader = dict(
                 ),
                 recompute_bbox=True,
                 type='RandomCrop'),
+            dict(min_gt_bbox_wh=(
+                1,
+                1,
+            ), type='FilterAnnotations'),
             dict(type='YOLOXHSVRandomAug'),
             dict(prob=0.5, type='RandomFlip'),
             dict(
@@ -376,33 +380,11 @@ train_dataloader = dict(
                     512,
                 ),
                 type='Pad'),
-            dict(
-                img_scale=(
-                    512,
-                    512,
-                ),
-                max_cached_images=20,
-                pad_val=(
-                    114,
-                    114,
-                    114,
-                ),
-                ratio_range=(
-                    1.0,
-                    1.0,
-                ),
-                type='CachedMixUp'),
-            dict(min_gt_bbox_wh=(
-                1,
-                1,
-            ), type='FilterAnnotations'),
             dict(type='PackDetInputs'),
         ],
-        type='CocoDataset'),
-    num_workers=10,
-    persistent_workers=True,
-    pin_memory=True,
-    sampler=dict(shuffle=True, type='DefaultSampler'))
+        type='CocoDataset'))
+
+
 train_pipeline = [
     dict(backend_args=None, type='LoadImageFromFile'),
     dict(
@@ -524,7 +506,7 @@ val_dataloader = dict(
         ann_file='val.json',
         backend_args=None,
         data_prefix=dict(img='image/'),
-        data_root='/root/yzy/CellFound/dataset/Lee//',
+        data_root='',
         metainfo=dict(classes=('Mitochondria', ), palette=[
             (
                 220,
@@ -611,3 +593,4 @@ for _split_name, _loader in (('train', train_dataloader),
 val_evaluator['ann_file'] = f'{data_root}/val.json'
 test_evaluator['ann_file'] = f'{data_root}/test.json'
 work_dir = '{{fileDirname}}/../../../save_logs/ViT_RTM'
+

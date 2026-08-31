@@ -1,16 +1,90 @@
+_data_root = ''
+_train_ann = 'train.json'
 custom_imports = dict(
     imports=[
         'configs.register_models.runtime',
         'configs.InstanceSegmentation.mmdet_register_models.ViT_backbone',
         'configs.InstanceSegmentation.mmdet_register_models.ViT_Adapter_backbone',
+        'configs.InstanceSegmentation.mmdet_metrics',
     ],
     allow_failed_imports=False,
 )
 
-auto_scale_lr = dict(base_batch_size=16, enable=False)
+_train_pipeline = [
+    dict(backend_args=None, type='LoadImageFromFile'),
+    dict(
+        poly2mask=False,
+        type='LoadAnnotations',
+        with_bbox=True,
+        with_mask=True),
+    dict(
+        keep_ratio=True,
+        ratio_range=(
+            0.8,
+            1.2,
+        ),
+        scale=(
+            1285,
+            1285,
+        ),
+        type='RandomResize'),
+    dict(
+        allow_negative_crop=True,
+        crop_size=(
+            512,
+            512,
+        ),
+        recompute_bbox=True,
+        type='RandomCrop'),
+    dict(min_gt_bbox_wh=(
+        1,
+        1,
+    ), type='FilterAnnotations'),
+    dict(type='YOLOXHSVRandomAug'),
+    dict(prob=0.5, type='RandomFlip'),
+    dict(pad_val=dict(img=(
+        114,
+        114,
+        114,
+    )), size=(
+        512,
+        512,
+    ), type='Pad'),
+    dict(type='PackDetInputs'),
+]
+_val_ann = 'val.json'
+_val_pipeline = [
+    dict(backend_args=None, type='LoadImageFromFile'),
+    dict(keep_ratio=True, scale=(
+        512,
+        512,
+    ), type='Resize'),
+    dict(pad_val=dict(img=(
+        114,
+        114,
+        114,
+    )), size=(
+        512,
+        512,
+    ), type='Pad'),
+    dict(
+        poly2mask=False,
+        type='LoadAnnotations',
+        with_bbox=True,
+        with_mask=True),
+    dict(
+        meta_keys=(
+            'img_id',
+            'img_path',
+            'ori_shape',
+            'img_shape',
+            'scale_factor',
+        ),
+        type='PackDetInputs'),
+]
+auto_scale_lr = dict(base_batch_size=1, enable=False)
 backend_args = None
-base_lr = 0.001
-max_epochs = 400
+base_lr = 0.004
 custom_hooks = [
     dict(
         ema_type='ExpMomentumEMA',
@@ -18,60 +92,17 @@ custom_hooks = [
         priority=49,
         type='EMAHook',
         update_buffers=True),
-    dict(
-        switch_epoch=280,
-        switch_pipeline=[
-            dict(backend_args=None, type='LoadImageFromFile'),
-            dict(
-                poly2mask=False,
-                type='LoadAnnotations',
-                with_bbox=True,
-                with_mask=True),
-            dict(
-                keep_ratio=True,
-                ratio_range=(
-                    0.1,
-                    2.0,
-                ),
-                scale=(
-                    512,
-                    512,
-                ),
-                type='RandomResize'),
-            dict(
-                allow_negative_crop=True,
-                crop_size=(
-                    512,
-                    512,
-                ),
-                recompute_bbox=True,
-                type='RandomCrop'),
-            dict(min_gt_bbox_wh=(
-                1,
-                1,
-            ), type='FilterAnnotations'),
-            dict(type='YOLOXHSVRandomAug'),
-            dict(prob=0.5, type='RandomFlip'),
-            dict(
-                pad_val=dict(img=(
-                    114,
-                    114,
-                    114,
-                )),
-                size=(
-                    512,
-                    512,
-                ),
-                type='Pad'),
-            dict(type='PackDetInputs'),
-        ],
-        type='PipelineSwitchHook'),
 ]
-data_root = '/root/yzy/CellFound/dataset/Lee//'
+data_root = ''
 dataset_type = 'CocoDataset'
 default_hooks = dict(
-    checkpoint=dict(interval=2, max_keep_ckpts=3, save_best = "auto",type='CheckpointHook'),
-    logger=dict(interval=10, type='LoggerHook'),
+    checkpoint=dict(
+        interval=5,
+        max_keep_ckpts=2,
+        rule='greater',
+        save_best='coco/bbox_mAP',
+        type='CheckpointHook'),
+    logger=dict(interval=40, type='LoggerHook'),
     param_scheduler=dict(type='ParamSchedulerHook'),
     sampler_seed=dict(type='DistSamplerSeedHook'),
     timer=dict(type='IterTimerHook'),
@@ -80,7 +111,7 @@ default_scope = 'mmdet'
 env_cfg = dict(
     cudnn_benchmark=False,
     dist_cfg=dict(backend='nccl'),
-    mp_cfg=dict(mp_start_method='fork', opencv_num_threads=0))
+    mp_cfg=dict(mp_start_method='spawn', opencv_num_threads=0))
 img_scales = [
     (
         512,
@@ -96,98 +127,42 @@ img_scales = [
     ),
 ]
 interval = 2
-load_from = None
+iou_threshold = 0.5
+
 log_level = 'INFO'
 log_processor = dict(by_epoch=True, type='LogProcessor', window_size=50)
+max_epochs = 100
+max_per_img = 400
 metainfo = dict(
-    classes=('Mito', ), palette=[
+    classes=('Mitochondria', ), palette=[
         (
-            220,
-            20,
-            60,
+            46,
+            139,
+            87,
         ),
     ])
 model = dict(
     backbone=dict(
-        img_size = 512,
-        patch_size=16, 
-        in_chans=3, 
-        embed_dim=768,
-        cffn_ratio=0.25,
-        conv_inplane=64,
-        deform_num_heads=6,
-        deform_ratio=1.0,
-        depth=12,
-        drop_path_rate=0.1,
-        # embed_dim=192,
-        interaction_indexes=[
-            [
-                0,
-                2,
-            ],
-            [
-                3,
-                5,
-            ],
-            [
-                6,
-                8,
-            ],
-            [
-                9,
-                11,
-            ],
-        ],
-        layer_scale=False,
-        mlp_ratio=4,
-        n_points=4,
-        num_heads=3,
-        out_indices=[
-            1,
+        attn_drop_rate=0.0,
+        drop_path_rate=0.0,
+        drop_rate=0.0,
+        frozenbackbone=False,
+        img_size=(
+            512,
+            512,
+        ),
+        in_channels=3,
+        model_name='vit_base_patch16_224',
+        out_indices=(
             2,
-            3,
-        ],
-        type='ViTAdapter',
-        window_attn=[
-            True,
-            True,
-            False,
-            True,
-            True,
-            False,
-            True,
-            True,
-            False,
-            True,
-            True,
-            False,
-        ],
-        window_size=[
-            14,
-            14,
-            None,
-            14,
-            14,
-            None,
-            14,
-            14,
-            None,
-            14,
-            14,
-            None,
-        ]),
-    neck=dict(
-        act_cfg=dict(inplace=True, type='SiLU'),
-        expand_ratio=0.5,
-        in_channels=[
-            768,
-            768,
-            768,
-        ],
-        norm_cfg=dict(type='SyncBN'),
-        num_csp_blocks=3,
-        out_channels=256,
-        type='CSPNeXtPAFPN'),
+            5,
+            8,
+            11,
+        ),
+        patch_size=16,
+        pretrained=False,
+        qkv_bias=True,
+        type='Multi_ViT'),
     bbox_head=dict(
         act_cfg=dict(inplace=True, type='SiLU'),
         anchor_generator=dict(
@@ -217,23 +192,34 @@ model = dict(
         batch_augments=None,
         bgr_to_rgb=False,
         mean=[
-            123.,
-            123.,
-            123.,
+            123.0,
+            123.0,
+            123.0,
         ],
         std=[
-            53.,
-            53.,
-            53.,
+            53.0,
+            53.0,
+            53.0,
         ],
         type='DetDataPreprocessor'),
-
+    neck=dict(
+        act_cfg=dict(inplace=True, type='SiLU'),
+        expand_ratio=0.5,
+        in_channels=[
+            768,
+            768,
+            768,
+        ],
+        norm_cfg=dict(type='SyncBN'),
+        num_csp_blocks=3,
+        out_channels=256,
+        type='CSPNeXtPAFPN'),
     test_cfg=dict(
         mask_thr_binary=0.5,
-        max_per_img=100,
+        max_per_img=150,
         min_bbox_size=0,
         nms=dict(iou_threshold=0.6, type='soft_nms'),
-        nms_pre=1000,
+        nms_pre=500,
         score_thr=0.05),
     train_cfg=dict(
         allowed_border=-1,
@@ -242,36 +228,29 @@ model = dict(
         pos_weight=-1),
     type='RTMDet')
 optim_wrapper = dict(
-    clip_grad=dict(max_norm=1.0),
-    optimizer=dict(lr=0.001, type='AdamW', weight_decay=0.01),
+    optimizer=dict(lr=5e-05, type='AdamW', weight_decay=0.05),
     paramwise_cfg=dict(
-        bias_decay_mult=0.0,
-        bypass_duplicate=True,
-        custom_keys=dict(
-            backbone=dict(lr_mult=0.01)),
-        norm_decay_mult=0.0),
+        bias_decay_mult=0, bypass_duplicate=True, norm_decay_mult=0),
     type='OptimWrapper')
-
 param_scheduler = [
-    dict(
-        begin=0, by_epoch=True, end=max_epochs//4, start_factor=1e-05,
-        type='LinearLR'),
+    dict(begin=0, by_epoch=True, end=10, start_factor=0.1, type='LinearLR'),
 ]
 resume = False
-stage2_num_epochs = 20
+stage2_num_epochs = 80
 test_cfg = dict(type='TestLoop')
 test_dataloader = dict(
-    batch_size=5,
+    batch_size=1,
     dataset=dict(
-        ann_file='test.json',
-        backend_args=None,
-        data_prefix=dict(img='image/'),
-        data_root='',
-        metainfo=dict(classes=('Mito', ), palette=[
+        ann_file=
+        'val.json',
+        data_prefix=dict(img=''),
+        data_root=
+        '',
+        metainfo=dict(classes=('Mitochondria', ), palette=[
             (
-                220,
-                20,
-                60,
+                46,
+                139,
+                87,
             ),
         ]),
         pipeline=[
@@ -291,7 +270,11 @@ test_dataloader = dict(
                     512,
                 ),
                 type='Pad'),
-            dict(type='LoadAnnotations', with_bbox=True),
+            dict(
+                poly2mask=False,
+                type='LoadAnnotations',
+                with_bbox=True,
+                with_mask=True),
             dict(
                 meta_keys=(
                     'img_id',
@@ -302,26 +285,10 @@ test_dataloader = dict(
                 ),
                 type='PackDetInputs'),
         ],
-        test_mode=True,
         type='CocoDataset'),
-    drop_last=False,
-    num_workers=10,
-    persistent_workers=True,
-    sampler=dict(shuffle=False, type='DefaultSampler'))
-test_evaluator = dict(
-    ann_file='//root/yzy/CellFound/dataset/Lee//test.json',
-    backend_args=None,
-    format_only=False,
-    metric=[
-        'bbox',
-        'segm',
-    ],
-    proposal_nums=(
-        100,
-        1,
-        10,
-    ),
-    type='CocoMetric')
+    num_workers=0,
+    persistent_workers=False)
+test_evaluator = dict(score_thr=0.05, type='BinaryInsSegMetric')
 test_pipeline = [
     dict(backend_args=None, type='LoadImageFromFile'),
     dict(keep_ratio=True, scale=(
@@ -347,102 +314,76 @@ test_pipeline = [
         ),
         type='PackDetInputs'),
 ]
-train_cfg = dict(
-    dynamic_intervals=[
-        (
-            280,
-            1,
-        ),
-    ],
-    max_epochs=max_epochs,
-    type='EpochBasedTrainLoop',
-    val_interval=2)
+train_cfg = dict(max_epochs=100, type='EpochBasedTrainLoop', val_interval=5)
 train_dataloader = dict(
-    batch_sampler=None,
-    batch_size=16,
+    batch_size=1,
     dataset=dict(
-        ann_file='train.json',
-        backend_args=None,
-        data_prefix=dict(img='image/'),
-        data_root='',
-        filter_cfg=dict(filter_empty_gt=True, min_size=32),
-        metainfo=dict(classes=('Mito', ), palette=[
-            (
-                220,
-                20,
-                60,
-            ),
-        ]),
-        pipeline=[
-            dict(backend_args=None, type='LoadImageFromFile'),
-            dict(
-                poly2mask=False,
-                type='LoadAnnotations',
-                with_bbox=True,
-                with_mask=True),
-            dict(img_scale=(
-                512,
-                512,
-            ), pad_val=114.0, type='CachedMosaic'),
-            dict(
-                keep_ratio=True,
-                ratio_range=(
-                    0.1,
-                    2.0,
-                ),
-                scale=(
-                    1280,
-                    1280,
-                ),
-                type='RandomResize'),
-            dict(
-                allow_negative_crop=True,
-                crop_size=(
-                    512,
-                    512,
-                ),
-                recompute_bbox=True,
-                type='RandomCrop'),
-            dict(type='YOLOXHSVRandomAug'),
-            dict(prob=0.5, type='RandomFlip'),
-            dict(
-                pad_val=dict(img=(
-                    114,
-                    114,
-                    114,
-                )),
-                size=(
-                    512,
-                    512,
-                ),
-                type='Pad'),
-            dict(
-                img_scale=(
-                    512,
-                    512,
-                ),
-                max_cached_images=20,
-                pad_val=(
-                    114,
-                    114,
-                    114,
-                ),
-                ratio_range=(
-                    1.0,
-                    1.0,
-                ),
-                type='CachedMixUp'),
-            dict(min_gt_bbox_wh=(
-                1,
-                1,
-            ), type='FilterAnnotations'),
-            dict(type='PackDetInputs'),
-        ],
-        type='CocoDataset'),
-    num_workers=10,
-    persistent_workers=True,
-    pin_memory=True,
-    sampler=dict(shuffle=True, type='DefaultSampler'))
+        dataset=dict(
+            ann_file=
+            '',
+            data_prefix=dict(img=''),
+            data_root=
+            '',
+            filter_cfg=dict(filter_empty_gt=True, min_size=1),
+            metainfo=dict(
+                classes=('Mitochondria', ), palette=[
+                    (
+                        46,
+                        139,
+                        87,
+                    ),
+                ]),
+            pipeline=[
+                dict(backend_args=None, type='LoadImageFromFile'),
+                dict(
+                    poly2mask=False,
+                    type='LoadAnnotations',
+                    with_bbox=True,
+                    with_mask=True),
+                dict(
+                    keep_ratio=True,
+                    ratio_range=(
+                        0.8,
+                        1.2,
+                    ),
+                    scale=(
+                        1285,
+                        1285,
+                    ),
+                    type='RandomResize'),
+                dict(
+                    allow_negative_crop=True,
+                    crop_size=(
+                        512,
+                        512,
+                    ),
+                    recompute_bbox=True,
+                    type='RandomCrop'),
+                dict(min_gt_bbox_wh=(
+                    1,
+                    1,
+                ), type='FilterAnnotations'),
+                dict(type='YOLOXHSVRandomAug'),
+                dict(prob=0.5, type='RandomFlip'),
+                dict(
+                    pad_val=dict(img=(
+                        114,
+                        114,
+                        114,
+                    )),
+                    size=(
+                        512,
+                        512,
+                    ),
+                    type='Pad'),
+                dict(type='PackDetInputs'),
+            ],
+            type='CocoDataset'),
+        times=8,
+        type='RepeatDataset'),
+    num_workers=0,
+    persistent_workers=False,
+    pin_memory=False)
 train_pipeline = [
     dict(backend_args=None, type='LoadImageFromFile'),
     dict(
@@ -599,17 +540,18 @@ tta_pipeline = [
 ]
 val_cfg = dict(type='ValLoop')
 val_dataloader = dict(
-    batch_size=5,
+    batch_size=1,
     dataset=dict(
-        ann_file='val.json',
-        backend_args=None,
-        data_prefix=dict(img='image/'),
-        data_root='',
-        metainfo=dict(classes=('Mito', ), palette=[
+        ann_file=
+        '',
+        data_prefix=dict(img=''),
+        data_root=
+        '',
+        metainfo=dict(classes=('Mitochondria', ), palette=[
             (
-                220,
-                20,
-                60,
+                46,
+                139,
+                87,
             ),
         ]),
         pipeline=[
@@ -629,7 +571,11 @@ val_dataloader = dict(
                     512,
                 ),
                 type='Pad'),
-            dict(type='LoadAnnotations', with_bbox=True),
+            dict(
+                poly2mask=False,
+                type='LoadAnnotations',
+                with_bbox=True,
+                with_mask=True),
             dict(
                 meta_keys=(
                     'img_id',
@@ -640,12 +586,9 @@ val_dataloader = dict(
                 ),
                 type='PackDetInputs'),
         ],
-        test_mode=True,
         type='CocoDataset'),
-    drop_last=False,
-    num_workers=10,
-    persistent_workers=True,
-    sampler=dict(shuffle=False, type='DefaultSampler'))
+    num_workers=0,
+    persistent_workers=False)
 val_evaluator = dict(
     ann_file='val.json',
     backend_args=None,
@@ -669,25 +612,38 @@ visualizer = dict(
     vis_backends=[
         dict(type='LocalVisBackend'),
     ])
-work_dir = './tutorial_exps'
+work_dir = '{{fileDirname}}/../../../save_logs/ViT_RTM_mito'
 
-# EMCFsys COCO dataset override. The dataset root contains image/ and the
-# train.json, val.json, and test.json annotation files.
-data_root = '{{fileDirname}}/../../../datasets_temp/MitoInstanceSegDataset'
-dataset_type = 'CocoDataset'
-launcher = 'none'
-for _split_name, _loader in (('train', train_dataloader),
-                             ('val', val_dataloader),
-                             ('test', test_dataloader)):
+# EMCFsys dataset override. The dataset contains image/ and the three COCO
+# annotation files directly under datasets_temp/MitoInstanceSegDataset.
+_data_root = '{{fileDirname}}/../../../datasets_temp/LeeMitoInsSeg'
+_train_ann = 'train.json'
+_val_ann = 'val.json'
+data_root = _data_root
+load_from = None
+resume = False
+
+for _loader_name, _ann_name in (
+        ('val_dataloader', _val_ann), ('test_dataloader', 'test.json')):
+    _loader = globals()[_loader_name]
     _dataset = _loader['dataset']
-    _dataset['type'] = dataset_type
-    _dataset['ann_file'] = f'{_split_name}.json'
-    _dataset['data_root'] = data_root
+    _dataset['type'] = 'CocoDataset'
+    _dataset['data_root'] = _data_root
+    _dataset['ann_file'] = _ann_name
     _dataset['data_prefix'] = dict(img='image/')
-    _dataset['metainfo'] = dict(
-        classes=('Mitochondria',), palette=[(220, 20, 60)])
+    _dataset['metainfo'] = metainfo
     _loader['num_workers'] = 0
     _loader['persistent_workers'] = False
-val_evaluator['ann_file'] = f'{data_root}/val.json'
-test_evaluator['ann_file'] = f'{data_root}/test.json'
-work_dir = '{{fileDirname}}/../../../save_logs/ViTAdapt_RTM'
+
+_train_dataset = train_dataloader['dataset']['dataset']
+_train_dataset['type'] = 'CocoDataset'
+_train_dataset['data_root'] = _data_root
+_train_dataset['ann_file'] = _train_ann
+_train_dataset['data_prefix'] = dict(img='image/')
+_train_dataset['metainfo'] = metainfo
+train_dataloader['num_workers'] = 0
+train_dataloader['persistent_workers'] = False
+train_dataloader['pin_memory'] = False
+
+# val_evaluator = dict(score_thr=0.05, type='BinaryInsSegMetric')
+test_evaluator = dict(score_thr=0.05, type='BinaryInsSegMetric')

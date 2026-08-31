@@ -67,11 +67,36 @@ def set_data_root(cfg, data_root):
     return cfg
 
 
+def set_max_epochs(cfg, max_epochs):
+    """Synchronize the public epoch value with the train loop and scheduler."""
+    epochs = int(max_epochs)
+    if epochs < 1:
+        raise ValueError("max_epochs must be greater than zero")
+
+    cfg.max_epochs = epochs
+    train_cfg = cfg.get("train_cfg")
+    if train_cfg is not None:
+        train_cfg["max_epochs"] = epochs
+
+    for scheduler in cfg.get("param_scheduler", []):
+        if scheduler.get("by_epoch", False):
+            scheduler["end"] = max(1, epochs // 4)
+    return cfg
+
+
 def _set_dataset_root(dataset_cfg, root):
     """Update a dataset config, including wrapped dataset configurations."""
     if not isinstance(dataset_cfg, dict):
         return
-    dataset_cfg["data_root"] = root
+    # Dataset wrappers such as RepeatDataset do not accept data_root in their
+    # constructor. Apply the path to the wrapped dataset instead.
+    if dataset_cfg.get("type") not in {
+        "RepeatDataset",
+        "ConcatDataset",
+        "ClassBalancedDataset",
+        "MultiImageMixDataset",
+    }:
+        dataset_cfg["data_root"] = root
     nested = dataset_cfg.get("dataset")
     if nested is not None:
         _set_dataset_root(nested, root)

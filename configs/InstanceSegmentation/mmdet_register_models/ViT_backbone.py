@@ -116,23 +116,17 @@ class Multi_ViT(BaseModule):
             **kwargs,
         )
 
-        self.norm1 = nn.BatchNorm2d(embed_dim)
+        # self.norm1 = nn.BatchNorm2d(embed_dim)
         self.norm2 = nn.BatchNorm2d(embed_dim)
         self.norm3 = nn.BatchNorm2d(embed_dim)
         self.norm4 = nn.BatchNorm2d(embed_dim)
 
-        self.up1 = nn.Sequential(*[
-            nn.ConvTranspose2d(embed_dim, embed_dim, 2, 2),
-            nn.GroupNorm(32, embed_dim),
-            nn.GELU(),
-            nn.ConvTranspose2d(embed_dim, embed_dim, 2, 2)
-        ])
-        self.up2 = nn.ConvTranspose2d(embed_dim, embed_dim, 2, 2)
+        # self.up1 = nn.Upsample(scale_factor=4, mode="bilinear", align_corners=False)
+        self.up2 = nn.Upsample(scale_factor=2, mode="bilinear", align_corners=False)
         self.up3 = nn.Identity()
         self.up4 = nn.MaxPool2d(kernel_size=2, stride=2)
 
 
-        self.up1.apply(self._init_weights)
         self.up2.apply(self._init_weights)
         self.up3.apply(self._init_weights)
         self.up4.apply(self._init_weights)
