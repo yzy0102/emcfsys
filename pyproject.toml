@@ -17,14 +17,12 @@ classifiers = [
     "Programming Language :: Python",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3 :: Only",
-    "Programming Language :: Python :: 3.9",
-    "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
     "Topic :: Scientific/Engineering :: Image Processing",
 ]
-requires-python = ">=3.9"
+requires-python = ">=3.11"
 # napari can be included in dependencies if napari imports are required.
 # However, you should not include napari[all], napari[qt],
 # or any other Qt bindings directly (e.g. PyQt5, PySide2).
@@ -35,12 +33,12 @@ dependencies = [
     "huggingface-hub",
     "imgviz==1.7.6",
     "labelme==5.9.1",
-    "numpy",
+    "numpy==2.2.6",
     "magicgui",
     "matplotlib",
     "napari",
     "ninja",
-    "opencv-python",
+    "opencv-python==4.12.0.88",
     "pandas",
     "Pillow",
     "pycocotools",
@@ -53,6 +51,7 @@ dependencies = [
     "timm==1.0.22",
     "tqdm",
     "transformers",
+    "ftfy==6.3.1",
 ]
 
 [project.optional-dependencies]

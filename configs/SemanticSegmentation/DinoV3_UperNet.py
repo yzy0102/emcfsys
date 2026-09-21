@@ -5,7 +5,6 @@ crop_size = (
 custom_imports = dict(
     imports=[
         'configs.register_models.runtime',
-        'configs.register_models.dinov3',
         'configs.register_models.plant_cell_dataset',
     ],
     allow_failed_imports=False,

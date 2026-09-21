@@ -76,6 +76,12 @@ def test_cloud_download_reports_progress_and_writes_project_cache(tmp_path, monk
     assert messages[-1].startswith("Model download complete:")
 
 
+def test_download_progress_prints_when_no_callback(capsys):
+    model_cache._emit_download_progress("Downloading model: 25.0%")
+
+    assert capsys.readouterr().out == "Downloading model: 25.0%\n"
+
+
 def test_cached_download_does_not_emit_progress_or_open_network(tmp_path, monkeypatch):
     cache_dir = tmp_path / "models"
     cache_dir.mkdir()
@@ -187,6 +193,88 @@ def test_mae_weight_loader_uses_the_project_model_cache(monkeypatch):
     assert result["weight"].item() == 1
     assert calls["url"] == "https://example.invalid/mae.pth"
     assert calls["kwargs"]["map_location"] == "cpu"
+
+
+def test_mae_pretrained_loader_prioritizes_explicit_local_file(tmp_path, monkeypatch):
+    local_path = tmp_path / "mae.pth"
+    local_path.touch()
+    local_state_dict = {"source": "local"}
+
+    class DummyModel:
+        def load_state_dict(self, state_dict, strict):
+            self.state_dict = state_dict
+            self.strict = strict
+            return [], []
+
+    monkeypatch.setattr(
+        mae_model,
+        "load_pretrained_from_local",
+        lambda path: local_state_dict,
+    )
+    monkeypatch.setattr(
+        mae_model,
+        "load_pretrained_from_hub",
+        lambda url: pytest.fail("A valid local checkpoint must not use GitHub."),
+    )
+    monkeypatch.setattr(
+        mae_model,
+        "interpolate_pos_encoding_state_dict",
+        lambda state_dict, new_img_size, patch_size: state_dict,
+    )
+    model = DummyModel()
+
+    result = mae_model.load_pretrained(
+        model,
+        img_size=224,
+        pretrained=True,
+        local_url=local_path,
+    )
+
+    assert result is model
+    assert model.state_dict is local_state_dict
+    assert model.strict is False
+
+
+def test_mae_pretrained_loader_falls_back_to_github_when_local_file_is_missing(
+    tmp_path, monkeypatch
+):
+    cloud_state_dict = {"source": "github"}
+    calls = []
+
+    class DummyModel:
+        def load_state_dict(self, state_dict, strict):
+            self.state_dict = state_dict
+            self.strict = strict
+            return [], []
+
+    monkeypatch.setattr(
+        mae_model,
+        "load_pretrained_from_local",
+        lambda path: pytest.fail("A missing local checkpoint must not be loaded."),
+    )
+    monkeypatch.setattr(
+        mae_model,
+        "load_pretrained_from_hub",
+        lambda url: calls.append(url) or cloud_state_dict,
+    )
+    monkeypatch.setattr(
+        mae_model,
+        "interpolate_pos_encoding_state_dict",
+        lambda state_dict, new_img_size, patch_size: state_dict,
+    )
+    model = DummyModel()
+
+    result = mae_model.load_pretrained(
+        model,
+        img_size=224,
+        pretrained=True,
+        local_url=tmp_path / "missing.pth",
+    )
+
+    assert result is model
+    assert model.state_dict is cloud_state_dict
+    assert model.strict is False
+    assert calls == [mae_model.MAE_EMCELLFOUND_VIT_BASE_URL]
 
 
 def test_emcellfiner_weight_loader_uses_the_project_model_cache(monkeypatch):

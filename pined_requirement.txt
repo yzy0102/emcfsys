@@ -1,0 +1,81 @@
+# EMCFsys pinned Windows runtime environment
+#
+# This file records the package versions used for the released napari plugin
+# and the MMLab-backend examples in demo_notebook.ipynb.
+#
+# Reference platform
+#   OS: Windows 11、 Windows 10、 Linux Ubuntu 22.04
+#   Python: 3.11.10
+#   GPU: NVIDIA GeForce RTX 3090
+#   CUDA runtime used by PyTorch: 11.8
+#
+# Recommended clean installation
+#   conda create -n EMCF_napari python=3.11.10 -y
+#   conda activate EMCF_napari
+#   python -m pip install ninja==1.13.0
+#   python -m pip install --no-build-isolation -r pined_requirement.txt
+#   python -m pip install -e .
+#
+# NVIDIA drivers and the CUDA toolkit are system dependencies and are not
+# installed by pip. The PyTorch wheels below include the CUDA 11.8 runtime.
+
+# OpenMMLab backend
+# see in demo_notebook.ipynb for the usage of the OpenMMLab backend
+# Please follow the instructions in the OpenMMLab documentation to install the OpenMMLab backend and its dependencies.
+
+# openmim==0.3.9
+# mmcv==2.2.0
+# mmengine==0.10.7
+# mmsegmentation==1.2.2
+# mmdetection==3.3.0
+# mmdet==3.3.0
+# addict==2.4.0
+# model-index==0.1.11
+# prettytable==3.17.0
+# terminaltables==3.1.10
+# yapf==0.43.0
+# ninja==1.13.0
+
+
+# Foundation-model and deep-learning utilities
+timm==1.0.22
+transformers==5.12.1
+tokenizers==0.22.2
+safetensors==0.6.2
+huggingface-hub==1.21.0
+einops==0.8.1
+ftfy==6.3.1
+thop==0.1.1.post2209072238
+
+# Numerical, image-processing, and evaluation packages
+numpy==2.2.6
+scipy==1.16.3
+scikit-image==0.25.2
+scikit-learn==1.9.0
+opencv-python==4.12.0.88
+pandas==2.3.3
+pillow==12.0.0
+matplotlib==3.10.7
+seaborn==0.13.2
+albumentations==2.0.8
+albucore==0.0.24
+imageio==2.37.2
+tifffile==2025.10.16
+pycocotools==2.0.11
+shapely==2.1.2
+lmdb==1.7.5
+tqdm==4.65.2
+PyYAML==6.0.3
+
+# Annotation and dataset-conversion packages
+labelme==5.9.1
+imgviz==1.7.6
+
+# Image evaluation
+pytorch_fid==0.3.0
+frc==0.1.1
+sahi==0.12.6
+fire==0.7.1
+
+# Napari GUI
+# napari[all]

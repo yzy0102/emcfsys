@@ -1,25 +1,24 @@
+from pathlib import Path
+
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 from timm.models.vision_transformer import VisionTransformer, _cfg
 from timm.models.registry import register_model
-import torch.nn.functional as F
-from emcfsys.model_cache import (
-    load_state_dict_from_project_url,
-    project_model_cache_dir,
-    resolve_pretrained_weight_path,
-)
-# 🔥 你自己的 GitHub Release 权重链接
+
+from emcfsys.model_cache import load_state_dict_from_project_url
+#  GitHub Release 权重链接
 
 MAE_EMCELLFOUND_VIT_BASE_WEIGHTS = "MAE_EMCellFoundVit_base_224_inEMCF.pth"
 MAE_EMCELLFOUND_VIT_BASE_URL = (
     "https://github.com/yzy0102/emcfsys/releases/latest/download/"
-    "MAE_EMCellFoundVit_base_224_inEMCF.pth"
+    f"{MAE_EMCELLFOUND_VIT_BASE_WEIGHTS}"
 )
 
 
 def load_pretrained_from_hub(url):
-    """使用 torch.hub 下载并缓存模型文件"""
-    print(f"[EMCellFound Model] Downloading pretrained model via torch.hub:\n  {url}")
+    """从项目缓存加载权重；缓存不存在时从 URL 下载。"""
+    print(f"[EMCellFound Model] Loading from project cache or GitHub:\n  {url}")
 
     cached_file = load_state_dict_from_project_url(
         url,
@@ -28,6 +27,15 @@ def load_pretrained_from_hub(url):
         check_hash=False  # 如果你上传文件时提供 HASH，可改为 True
     )
     return cached_file
+
+def load_pretrained_from_local(local_path):
+    """从本地路径加载模型文件"""
+    print(
+        "[EMCellFound Model] Loading pretrained model from local path:\n"
+        f"  {local_path}"
+    )
+    state_dict = torch.load(local_path, map_location="cpu")
+    return state_dict
 
 
 def interpolate_pos_encoding_state_dict(state_dict, new_img_size,patch_size=16):
@@ -184,52 +192,43 @@ def load_pretrained(model,
     
     pretrained_url = MAE_EMCELLFOUND_VIT_BASE_URL
     
-    # if pretrained set true, first load the pretrained weights from the url
-    # if local_url is not None, First load the weights from the local path
-    # ---- 加载预训练权重（含自动插值） ----
-    weight_path = resolve_pretrained_weight_path(
-        MAE_EMCELLFOUND_VIT_BASE_WEIGHTS,
-        local_url,
-    ) if (pretrained or local_url) else None
-    if weight_path is not None:
-        if weight_path.parent == project_model_cache_dir():
-            state_dict = load_pretrained_from_hub(pretrained_url)
-        else:
-            state_dict = torch.load(weight_path, map_location="cpu")
-        # 自动位置编码插值
-        if using_log:
-            state_dict = interpolate_pos_encoding_log_state_dict(state_dict, new_img_size=img_size, patch_size=16)
-        else:
-            state_dict = interpolate_pos_encoding_state_dict(state_dict, new_img_size=img_size, patch_size=16)
-            
-        missing, unexpected = model.load_state_dict(state_dict, strict=False)
-        print("[EMCellFound] missing keys:", missing)
-        print("[EMCellFound] unexpected keys:", unexpected)
-        
+    if not (pretrained or local_url):
+        return model
 
-        source = "project model cache" if weight_path.parent == project_model_cache_dir() else "local path"
-        print(f"[EMCellFound] Loading pretrained weights from {source}: {weight_path}")
-        
-    elif pretrained:
+    state_dict = None
+    if local_url:
+        local_path = Path(local_url).expanduser()
+        if local_path.is_file():
+            state_dict = load_pretrained_from_local(local_path)
+        else:
+            print(
+                "[EMCellFound Model] Local pretrained model not found; "
+                f"falling back to GitHub:\n  {local_path}"
+            )
+
+    if state_dict is None:
         try:
-            print(f"[EMCellFound] Loading pretrained weights from: {pretrained_url}")
             state_dict = load_pretrained_from_hub(pretrained_url)
-            
-            # 自动位置编码插值
-            if using_log:
-                state_dict = interpolate_pos_encoding_log_state_dict(state_dict, new_img_size=img_size, patch_size=16)
-            else:
-                state_dict = interpolate_pos_encoding_state_dict(state_dict, new_img_size=img_size, patch_size=16)
-                
-            missing, unexpected = model.load_state_dict(state_dict, strict=False)
-
-            print("Load pretrained weights from: {pretrained_url}")
         except Exception as e:
             print(f"[EMCellFound] Failed to load pretrained weights: {e}")
             raise RuntimeError(
                 "Failed to download or load EMCellFound pretrained weights. "
                 "Check the network connection or provide a valid local checkpoint."
             ) from e
+
+    # 自动位置编码插值
+    if using_log:
+        state_dict = interpolate_pos_encoding_log_state_dict(
+            state_dict, new_img_size=img_size, patch_size=patch_size
+        )
+    else:
+        state_dict = interpolate_pos_encoding_state_dict(
+            state_dict, new_img_size=img_size, patch_size=patch_size
+        )
+
+    missing, unexpected = model.load_state_dict(state_dict, strict=False)
+    print("[EMCellFound] missing keys:", missing)
+    print("[EMCellFound] unexpected keys:", unexpected)
     return model
 
 

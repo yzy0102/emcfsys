@@ -223,6 +223,14 @@ pypi_token.txt
 
 
 /models
-/datasets_temp
-
 /result_sr.png
+
+/emcfsys-0.4.3
+
+/test
+
+requirements.txt
+
+/demo/logs/
+/demo/datasets_temp/
+/datasets_temp/

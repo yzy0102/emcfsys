@@ -5,7 +5,7 @@ crop_size = (
 custom_imports = dict(
     imports=[
         'configs.register_models.runtime',
-        'configs.register_models.timm_backbone',
+
         'configs.register_models.unet_decode_head',
         'configs.register_models.plant_cell_dataset',
     ],
@@ -98,7 +98,7 @@ model = dict(
         patch_size=16,
         pretrained=False,
         qkv_bias=True,
-        type='EMCFTIMMBackbone'),
+        type='TIMMBackbone'),
     data_preprocessor=dict(
         bgr_to_rgb=True,
         mean=[

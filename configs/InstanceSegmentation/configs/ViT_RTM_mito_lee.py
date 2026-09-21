@@ -241,9 +241,8 @@ test_cfg = dict(type='TestLoop')
 test_dataloader = dict(
     batch_size=1,
     dataset=dict(
-        ann_file=
-        'val.json',
-        data_prefix=dict(img=''),
+        ann_file='test.json',
+        data_prefix=dict(img='image/'),
         data_root=
         '',
         metainfo=dict(classes=('Mitochondria', ), palette=[
@@ -320,8 +319,8 @@ train_dataloader = dict(
     dataset=dict(
         dataset=dict(
             ann_file=
-            '',
-            data_prefix=dict(img=''),
+            'train.json',
+            data_prefix=dict(img='image/'),
             data_root=
             '',
             filter_cfg=dict(filter_empty_gt=True, min_size=1),
@@ -542,9 +541,8 @@ val_cfg = dict(type='ValLoop')
 val_dataloader = dict(
     batch_size=1,
     dataset=dict(
-        ann_file=
-        '',
-        data_prefix=dict(img=''),
+        ann_file='val.json',
+        data_prefix=dict(img='image/'),
         data_root=
         '',
         metainfo=dict(classes=('Mitochondria', ), palette=[
@@ -616,7 +614,7 @@ work_dir = '{{fileDirname}}/../../../save_logs/ViT_RTM_mito'
 
 # EMCFsys dataset override. The dataset contains image/ and the three COCO
 # annotation files directly under datasets_temp/MitoInstanceSegDataset.
-_data_root = '{{fileDirname}}/../../../datasets_temp/LeeMitoInsSeg'
+_data_root = '{{fileDirname}}/../../../datasets_temp/Mito_instanceSeg_Lee'
 _train_ann = 'train.json'
 _val_ann = 'val.json'
 data_root = _data_root

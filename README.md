@@ -42,59 +42,109 @@
 
 ---
 
-## 📖Installation
+## 📖 Installation
 
-To leverage the full potential of the EMCellFiner and EMCellFound foundation models, an **NVIDIA GPU**(We suggest > RTX3090) is highly recommended.
+An NVIDIA GPU is strongly recommended for EMCellFiner inference and EMCellFound fine-tuning. The validated Windows environment uses Python 3.11.10 and PyTorch 2.5.1 with CUDA 11.8. The portable Linux package snapshot is derived from a working environment that used PyTorch 2.4.1 with CUDA 12.1.
 
-#### 1. Environment Preparation
+### 1. Choose the installation type
 
-We recommend using Conda/miniconda to create an isolated environment.
-We suggest using python>=3.11 (We have successfully test the pipline in python version 3.8\3.9\3.10\3.11)
+- **napari GUI only:** install PyTorch, napari, and the released `emcfsys` package. This is sufficient for the graphical restoration, training, and inference workflows.
+- **MMLab demo and paper workflows:** clone this repository and use the pinned environment files. This installation includes MMCV, MMEngine, MMSegmentation, and MMDetection for the examples in [demo_notebook.ipynb](demo_notebook.ipynb).
 
-```
-# Create a new environment named 'emcfsys' with Python> 3.11
-conda create -n emcfsys python=3.11 -y
-# Activate the environment
-conda activate emcfsys
-```
+Windows and Linux use separate pinned environment snapshots because their tested PyTorch, CUDA, and MMCV builds differ. The other main operating-system differences are the compiler, environment-variable syntax, and Linux GUI libraries.
 
-#### 2. Install PyTorch with GPU Support
+| Requirement               | Windows                                                       | Linux                                                                    |
+| ------------------------- | ------------------------------------------------------------- | ------------------------------------------------------------------------ |
+| C/C++ compiler            | Visual Studio Build Tools with Desktop development with C++   | GCC/G++ through`build-essential`                                       |
+| CUDA Toolkit for MMCV ops | CUDA Toolkit 11.8 and`CUDA_HOME` when MMCV must be compiled | CUDA Toolkit 12.1,`nvcc`, and `CUDA_HOME` when MMCV must be compiled |
+| napari GUI                | Native Windows desktop                                        | X11 or Wayland graphical session and OpenGL libraries                    |
+| Pinned requirements       | `pined_requirement.txt`                                     | `pined_requirement_linux.txt`                                          |
+| Path style                | `path\to\file`                                              | `path/to/file`                                                         |
 
-emcfsys requires PyTorch > 1.3. For optimal performance, we recommend PyTorch 2.0+. Choose the command matching your CUDA version:
+The Windows file records the validated Windows package stack. The Linux file replaces local editable source checkouts with compatible PyPI releases to make installation portable. MMCV binary compatibility still depends on the CUDA Toolkit, compiler, NVIDIA driver, and GPU architecture of the host system.
 
-```
-# For Linux and Window:
-pip install torch==2.5.1 torchvision==0.20.1 torchaudio==2.5.1 --index-url https://download.pytorch.org/whl/cu118
-```
+### 2. Create the Conda environment
 
-Or follow link to select the torch version [https://pytorch.org/get-started/previous-versions/](https://pytorch.org/get-started/previous-versions/)
+Use the same Python version on both operating systems:
 
-#### 3. Install napari and emcfsys
-
-3.1 You can follow the napari GUI installation document:[https://github.com/napari/napari](https://github.com/napari/napari)
-Or use the follow pipline
-
-```
-pip install "napari[pyqt6, optional]"
+```bash
+conda create -n EMCF_napari python=3.11.10 -y
+conda activate EMCF_napari
 ```
 
-Then you can install `emcfsys` via [pip]:
+### 3. Install the napari GUI only
 
+The following commands apply to both Windows and Linux:
+
+Just choose pytorch and cuda version suited for your computer:
+
+pytorch from 1.13.0 to 2.7.0 and cuda from 11.3 to12.8 is ok.
+
+We recommend pytorch==2.4.1/2.5.1 , cuda ==11.8/12.1
+
+```Shell
+
+python -m pip install torch==2.5.1+cu118 torchvision==0.20.1+cu118 torchaudio==2.5.1+cu118 --index-url https://download.pytorch.org/whl/cu118
+
+# In China, speed uo to install
+python -m pip install torch==2.5.1+cu118 torchvision==0.20.1+cu118 torchaudio==2.5.1+cu118 --index-url https://mirror.nju.edu.cn/pytorch/whl/cu118
+
+
+python -m pip install napari
+python -m pip install emcfsys
+
+python -m pip install frc -i https://pypi.org/simple
 ```
-pip install emcfsys
+
+The napari plugin can then be started with:
+
+```bash
+napari
 ```
 
-You can also install emcfsys in the napari-plugin-store
+Linux users need a graphical X11 or Wayland session to open napari. On a headless Linux server, use the code-based workflows without launching the GUI, or configure an appropriate remote display.
 
-At last, install necessary components: (**Very important, don't forget to install these packages**)
+### 4. Install the pinned MMLab environment on Windows and Linux
 
+Run the following commands in PowerShell from the cloned repository root:
+
+```powershell
+
+python -m pip install ninja==1.13.0 psutil==7.1.3 wheel==0.45.1
+
+
+python -m pip install --no-build-isolation -r pined_requirement.txt
 ```
-pip install labelme==5.9.1 numpy timm==1.0.22 opencv-python einops shapely==2.1.2 albumentations ninja Pillow seaborn safetensors huggingface-hub transformers imgviz==1.7.6
+
+### 5. Verify the MMLab installation
+
+Run this check on either operating system:
+
+```bash
+python -c "import torch, mmcv, mmengine, mmseg, mmdet; from mmcv.ops import MultiScaleDeformableAttention; print(torch.__version__, mmcv.__version__, mmengine.__version__, mmseg.__version__, mmdet.__version__)"
 ```
 
-### 4. Code‑Based Fine‑Tuning with MMLab Backend
+The expected Windows core versions are:
 
-We provide model fine‑tuning implementations in both source‑code and Jupyter Notebook formats. This part can run independently of the GUI, but it requires additional installation of the MMLab‑series packages. Please refer to [demo_notebook.ipynb](demo_notebook.ipynb).
+```text
+PyTorch 2.5.1+cu118
+MMCV 2.0.0rc4
+MMEngine 0.10.7
+MMSegmentation 1.2.2
+MMDetection 3.3.0
+```
+
+The expected Linux core versions are:
+
+```text
+PyTorch 2.4.1+cu121
+MMCV 2.1.0
+MMEngine 0.10.7
+MMSegmentation 1.2.2
+MMDetection 3.3.0
+```
+
+After this check succeeds, open [demo_notebook.ipynb](demo_notebook.ipynb) to run the classification, semantic-segmentation, instance-segmentation, and image-restoration examples. Use repository-relative paths or `pathlib.Path` when adapting notebook paths between Windows and Linux.
 
 ---
 

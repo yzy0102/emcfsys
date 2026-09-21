@@ -7,7 +7,7 @@ custom_imports = dict(
     imports=[
         'mmdet.models',
         'configs.register_models.runtime',
-        'configs.register_models.timm_backbone',
+
         'configs.register_models.plant_cell_dataset',
     ],
     allow_failed_imports=False,
@@ -83,7 +83,7 @@ model = dict(
         patch_size=16,
         pretrained=False,
         qkv_bias=True,
-        type='EMCFTIMMBackbone'),
+        type='TIMMBackbone'),
     data_preprocessor=dict(
         bgr_to_rgb=True,
         mean=[

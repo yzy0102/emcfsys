@@ -64,6 +64,8 @@ def _emit_download_progress(message: str) -> None:
     callback = _download_progress_callback.get()
     if callback is not None:
         callback(message)
+    else:
+        print(message, flush=True)
 
 
 def _has_complete_zip_directory(path: Path) -> bool:
