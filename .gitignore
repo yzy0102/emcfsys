@@ -234,3 +234,5 @@ requirements.txt
 /demo/logs/
 /demo/datasets_temp/
 /datasets_temp/
+
+/logs

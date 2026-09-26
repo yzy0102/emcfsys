@@ -6,8 +6,8 @@
 # Reference platform
 #   OS: Windows 11、 Windows 10、 Linux Ubuntu 22.04
 #   Python: 3.11.10
-#   GPU: NVIDIA GeForce RTX 3090
-#   CUDA runtime used by PyTorch: 11.8
+#   GPU: NVIDIA GeForce RTX 3090, CUDA runtime used by PyTorch: 11.8
+#   
 #
 # Recommended clean installation
 #   conda create -n EMCF_napari python=3.11.10 -y
@@ -15,9 +15,6 @@
 #   python -m pip install ninja==1.13.0
 #   python -m pip install --no-build-isolation -r pined_requirement.txt
 #   python -m pip install -e .
-#
-# NVIDIA drivers and the CUDA toolkit are system dependencies and are not
-# installed by pip. The PyTorch wheels below include the CUDA 11.8 runtime.
 
 # OpenMMLab backend
 # see in demo_notebook.ipynb for the usage of the OpenMMLab backend

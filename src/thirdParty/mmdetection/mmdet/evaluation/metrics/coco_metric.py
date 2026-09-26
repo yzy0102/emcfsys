@@ -64,6 +64,10 @@ class CocoMetric(BaseMetric):
         sort_categories (bool): Whether sort categories in annotations. Only
             used for `Objects365V1Dataset`. Defaults to False.
         use_mp_eval (bool): Whether to use mul-processing evaluation
+        use_dense_max_dets (bool): Whether the first AP summary should use
+            ``proposal_nums[0]`` instead of pycocotools' hard-coded value of
+            100. The remaining AP summaries use ``proposal_nums[2]`` and AR
+            uses all three configured limits. Defaults to False.
     """
     default_prefix: Optional[str] = 'coco'
 
@@ -81,7 +85,8 @@ class CocoMetric(BaseMetric):
                  collect_device: str = 'cpu',
                  prefix: Optional[str] = None,
                  sort_categories: bool = False,
-                 use_mp_eval: bool = False) -> None:
+                 use_mp_eval: bool = False,
+                 use_dense_max_dets: bool = False) -> None:
         super().__init__(collect_device=collect_device, prefix=prefix)
         # coco evaluation metrics
         self.metrics = metric if isinstance(metric, list) else [metric]
@@ -99,6 +104,10 @@ class CocoMetric(BaseMetric):
 
         # proposal_nums used to compute recall or precision.
         self.proposal_nums = list(proposal_nums)
+        self.use_dense_max_dets = use_dense_max_dets
+        if self.use_dense_max_dets and len(self.proposal_nums) != 3:
+            raise ValueError('use_dense_max_dets requires exactly three '
+                             'proposal_nums values')
 
         # iou_thrs used to compute recall or precision.
         if iou_thrs is None:
@@ -145,6 +154,79 @@ class CocoMetric(BaseMetric):
         # handle dataset lazy init
         self.cat_ids = None
         self.img_ids = None
+
+    def _summarize_dense(self, coco_eval, logger: MMLogger) -> None:
+        """Summarize COCO results with configurable dense-instance limits.
+
+        pycocotools fixes the first AP row to maxDets=100 even after
+        ``params.maxDets`` is changed. Dense microscopy images commonly have
+        hundreds of instances, so use the configured low/middle/high limits
+        consistently and keep COCO's standard 12-value stats layout.
+        """
+        if not coco_eval.eval:
+            raise RuntimeError('Please run accumulate() before summarize().')
+        if coco_eval.params.iouType not in ('bbox', 'segm'):
+            raise NotImplementedError(
+                'Dense maxDets summary only supports bbox and segm')
+
+        def summarize(ap=1, iou_thr=None, area_rng='all', max_dets=None):
+            params = coco_eval.params
+            if max_dets is None:
+                max_dets = params.maxDets[0]
+            title = 'Average Precision' if ap == 1 else 'Average Recall'
+            metric_type = '(AP)' if ap == 1 else '(AR)'
+            iou_text = (f'{params.iouThrs[0]:0.2f}:'
+                        f'{params.iouThrs[-1]:0.2f}' if iou_thr is None else
+                        f'{iou_thr:0.2f}')
+            area_indices = [
+                index for index, label in enumerate(params.areaRngLbl)
+                if label == area_rng
+            ]
+            max_det_indices = [
+                index for index, value in enumerate(params.maxDets)
+                if value == max_dets
+            ]
+            if ap == 1:
+                values = coco_eval.eval['precision']
+                if iou_thr is not None:
+                    values = values[np.where(iou_thr == params.iouThrs)[0]]
+                values = values[:, :, :, area_indices, :]
+                values = values[:, :, :, :, max_det_indices]
+            else:
+                values = coco_eval.eval['recall']
+                if iou_thr is not None:
+                    values = values[np.where(iou_thr == params.iouThrs)[0]]
+                values = values[:, :, area_indices, :]
+                values = values[:, :, :, max_det_indices]
+            valid = values[values > -1]
+            score = float(np.mean(valid)) if valid.size else -1.0
+            logger.info(
+                f' {title:<18} {metric_type} @[ IoU={iou_text:<9} | '
+                f'area={area_rng:>6s} | maxDets={max_dets:>4d} ] = '
+                f'{score:0.3f}')
+            return score
+
+        low, middle, high = coco_eval.params.maxDets
+        stats = np.zeros(12, dtype=float)
+        stats[0] = summarize(1, max_dets=low)
+        stats[1] = summarize(1, iou_thr=0.50, max_dets=high)
+        stats[2] = summarize(1, iou_thr=0.75, max_dets=high)
+        stats[3] = summarize(1, area_rng='small', max_dets=high)
+        stats[4] = summarize(1, area_rng='medium', max_dets=high)
+        stats[5] = summarize(1, area_rng='large', max_dets=high)
+        stats[6] = summarize(0, max_dets=low)
+        stats[7] = summarize(0, max_dets=middle)
+        stats[8] = summarize(0, max_dets=high)
+        stats[9] = summarize(0, area_rng='small', max_dets=high)
+        stats[10] = summarize(0, area_rng='medium', max_dets=high)
+        stats[11] = summarize(0, area_rng='large', max_dets=high)
+        coco_eval.stats = stats
+
+    def _summarize(self, coco_eval, logger: MMLogger) -> None:
+        if self.use_dense_max_dets:
+            self._summarize_dense(coco_eval, logger)
+        else:
+            coco_eval.summarize()
 
     def fast_eval_recall(self,
                          results: List[dict],
@@ -502,7 +584,7 @@ class CocoMetric(BaseMetric):
                 coco_eval.params.useCats = 0
                 coco_eval.evaluate()
                 coco_eval.accumulate()
-                coco_eval.summarize()
+                self._summarize(coco_eval, logger)
                 if metric_items is None:
                     metric_items = [
                         'AR@100', 'AR@300', 'AR@1000', 'AR_s@1000',
@@ -516,7 +598,7 @@ class CocoMetric(BaseMetric):
             else:
                 coco_eval.evaluate()
                 coco_eval.accumulate()
-                coco_eval.summarize()
+                self._summarize(coco_eval, logger)
                 if self.classwise:  # Compute per-category AP
                     # Compute per-category AP
                     # from https://github.com/facebookresearch/detectron2/
