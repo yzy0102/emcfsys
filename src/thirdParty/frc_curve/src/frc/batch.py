@@ -38,7 +38,7 @@ DEFAULT_SQUARE_MODE = "trim"
 # report also includes 0.5 because it is useful for side-by-side comparisons.
 THRESHOLD_SPECS = (
     ("0.5", 0.5, "constant"),
-    # ("0.143", 1.0 / 7.0, "one_seventh"),
+    ("0.143", 1.0 / 7.0, "one_seventh"),
 )
 COMMON_FREQ_POINTS = 501
 COMMON_FREQ_MAX = 1.0
