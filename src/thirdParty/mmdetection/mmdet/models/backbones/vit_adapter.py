@@ -6,7 +6,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from mmdet.models.backbones.ops.modules import MSDeformAttn
+from mmcv.ops import MultiScaleDeformableAttention
 from timm.models.layers import DropPath, trunc_normal_
 from torch.nn.init import normal_
 from mmdet.registry import MODELS
@@ -14,6 +14,41 @@ from mmdet.registry import MODELS
 # from adapter_modules import SpatialPriorModule, InteractionBlock, deform_inputs
 
 _logger = logging.getLogger(__name__)
+
+
+class MSDeformAttn(nn.Module):
+    """Compatibility wrapper around MMCV's optimized deformable attention."""
+
+    def __init__(self, d_model, n_levels, n_heads, n_points, ratio=1.0):
+        super().__init__()
+        self.attention = MultiScaleDeformableAttention(
+            embed_dims=d_model,
+            num_levels=n_levels,
+            num_heads=n_heads,
+            num_points=n_points,
+            batch_first=True,
+        )
+
+    def forward(
+        self,
+        query,
+        reference_points,
+        input_flatten,
+        input_spatial_shapes,
+        input_level_start_index,
+        input_padding_mask=None,
+    ):
+        return self.attention(
+            query=query,
+            value=input_flatten,
+            key_padding_mask=input_padding_mask,
+            reference_points=reference_points,
+            spatial_shapes=input_spatial_shapes,
+            level_start_index=input_level_start_index,
+        )
+
+    def _reset_parameters(self):
+        self.attention.init_weights()
 
 import logging
 from functools import partial
@@ -832,4 +867,3 @@ class ViTAdapter(TIMMVisionTransformer):
             return [ f2, f3, f4]
         else:
             return [f1, f2, f3, f4]
-
