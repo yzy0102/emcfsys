@@ -74,5 +74,8 @@ frc==0.1.1
 sahi==0.12.6
 fire==0.7.1
 
+# hash
+pywavelets==1.9.0
+
 # Napari GUI
 # napari[all]
