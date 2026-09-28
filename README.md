@@ -144,8 +144,6 @@ pip install -e .
 pip install frc -i https://pypi.org/simple
 ```
 
-
-
 #### 2.3 Install the MMLab environment on Windows and Linux (Optional)
 
 If users want to run the demo code or train models using this code backend, they need to install the MMLab environment first.
@@ -177,6 +175,9 @@ pip install -e . --no-build-isolation
 cd ..
 cd mmsegmentation
 pip install -e . --no-build-isolation
+
+# pip install jupyter
+pip install jupyter
 ```
 
 #### Verify the MMLab installation
@@ -208,6 +209,17 @@ MMDetection 3.3.0
 ```
 
 After this check succeeds, open [demo_notebook.ipynb](demo_notebook.ipynb) to run the classification, semantic-segmentation, instance-segmentation, and image-restoration examples. Use repository-relative paths or `pathlib.Path` when adapting notebook paths between Windows and Linux.
+
+More demos are listed in /demo/
+
+see:
+
+1. [SR.ipynb](/demo/SR.ipynb)
+2. [OrganelleClassify.ipynb](/demo/OrganelleClassify.ipynb)
+3. [PlantOrganelleSeg.ipynb](/demo/PlantOrganelleSeg.ipynb)
+4. [Instance_Mito_seg.ipynb](/demo/Instance_Mito_seg.ipynb)
+5. [Liver_3D_Reconstruction.ipynb](/demo/Liver_3D_Reconstruction.ipynb)
+6. [SR_to_Seg_to_3D.ipynb](/demo/SR_to_Seg_to_3D.ipynb),
 
 ---
 
