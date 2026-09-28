@@ -42,28 +42,22 @@
 
 ---
 
-## 📖 Installation
+## 📖 Installation for demo code
 
 An NVIDIA GPU is strongly recommended for EMCellFiner inference and EMCellFound fine-tuning. The validated Windows environment uses Python 3.11.10 and PyTorch 2.5.1 with CUDA 11.8. The portable Linux package snapshot is derived from a working environment that used PyTorch 2.4.1 with CUDA 12.1.
 
-### 1. Choose the installation type
+Choose the installation type:
 
-- **napari GUI only:** install PyTorch, napari, and the released `emcfsys` package. This is sufficient for the graphical restoration, training, and inference workflows.
-- **MMLab demo and paper workflows:** clone this repository and use the pinned environment files. This installation includes MMCV, MMEngine, MMSegmentation, and MMDetection for the examples in [demo_notebook.ipynb](demo_notebook.ipynb).
+---
 
-Windows and Linux use separate pinned environment snapshots because their tested PyTorch, CUDA, and MMCV builds differ. The other main operating-system differences are the compiler, environment-variable syntax, and Linux GUI libraries.
+1. installation for **napari GUI only**
+2. installation for **MMLab demo and paper workflows**
 
-| Requirement               | Windows                                                       | Linux                                                                    |
-| ------------------------- | ------------------------------------------------------------- | ------------------------------------------------------------------------ |
-| C/C++ compiler            | Visual Studio Build Tools with Desktop development with C++   | GCC/G++ through`build-essential`                                       |
-| CUDA Toolkit for MMCV ops | CUDA Toolkit 11.8 and`CUDA_HOME` when MMCV must be compiled | CUDA Toolkit 12.1,`nvcc`, and `CUDA_HOME` when MMCV must be compiled |
-| napari GUI                | Native Windows desktop                                        | X11 or Wayland graphical session and OpenGL libraries                    |
-| Pinned requirements       | `pined_requirement.txt`                                     | `pined_requirement_linux.txt`                                          |
-| Path style                | `path\to\file`                                              | `path/to/file`                                                         |
+---
 
-The Windows file records the validated Windows package stack. The Linux file replaces local editable source checkouts with compatible PyPI releases to make installation portable. MMCV binary compatibility still depends on the CUDA Toolkit, compiler, NVIDIA driver, and GPU architecture of the host system.
+### 1. installation for **napari GUI only:**
 
-### 2. Create the Conda environment
+install PyTorch, napari, and the released `emcfsys` package. This is sufficient for the graphical restoration, training, and inference workflows.
 
 Use the same Python version on both operating systems:
 
@@ -71,8 +65,6 @@ Use the same Python version on both operating systems:
 conda create -n EMCF_napari python=3.11.10 -y
 conda activate EMCF_napari
 ```
-
-### 3. Install the napari GUI only
 
 The following commands apply to both Windows and Linux:
 
@@ -83,17 +75,65 @@ pytorch from 1.13.0 to 2.7.0 and cuda from 11.3 to12.8 is ok.
 We recommend pytorch==2.4.1/2.5.1 , cuda ==11.8/12.1
 
 ```Shell
+# 1. install pytorch==2.5.1 cuda118
+pip install torch==2.5.1+cu118 torchvision==0.20.1+cu118 torchaudio==2.5.1+cu118 --index-url https://download.pytorch.org/whl/cu118
+# In China, speed uo to install pytorch from mirror station
+# pip install torch==2.5.1+cu118 torchvision==0.20.1+cu118 torchaudio==2.5.1+cu118 --index-url https://mirror.nju.edu.cn/pytorch/whl/cu118
 
-python -m pip install torch==2.5.1+cu118 torchvision==0.20.1+cu118 torchaudio==2.5.1+cu118 --index-url https://download.pytorch.org/whl/cu118
+# 2. install napari GUI
+pip install napari
 
-# In China, speed uo to install
-python -m pip install torch==2.5.1+cu118 torchvision==0.20.1+cu118 torchaudio==2.5.1+cu118 --index-url https://mirror.nju.edu.cn/pytorch/whl/cu118
+# 3. install napari locally
+pip install emcfsys
+```
 
+Then users can open napari in cmd, and use napari and emcfsys
 
-python -m pip install napari
-python -m pip install emcfsys
+---
 
-python -m pip install frc -i https://pypi.org/simple
+### 2. installation for **MMLab demo and paper workflows:**
+
+Clone this repository and use the pinned environment files. This installation includes MMCV, MMEngine, MMSegmentation, and MMDetection for the examples in [demo_notebook.ipynb](demo_notebook.ipynb).
+
+The Windows file records the validated Windows package stack. The Linux file replaces local editable source checkouts with compatible PyPI releases to make installation portable. MMCV binary compatibility still depends on the CUDA Toolkit, compiler, NVIDIA driver, and GPU architecture of the host system.
+
+#### 2.1. Create the Conda environment
+
+Use the same Python version on both operating systems:
+
+```bash
+conda create -n EMCF_napari python=3.11.10 -y
+conda activate EMCF_napari
+```
+
+#### 2.2. Install the napari GUI only
+
+The following commands apply to both Windows and Linux:
+
+Just choose pytorch and cuda version suited for your computer:
+
+pytorch from 1.13.0 to 2.7.0 and cuda from 11.3 to12.8 is ok.
+
+We recommend pytorch==2.4.1/2.5.1 , cuda ==11.8/12.1
+
+```Shell
+# 1. If running the code locally, clone the repository:
+git clone https://github.com/yzy0102/emcfsys.git
+
+# 2. install pytorch==2.5.1 cuda118
+pip install torch==2.5.1+cu118 torchvision==0.20.1+cu118 torchaudio==2.5.1+cu118 --index-url https://download.pytorch.org/whl/cu118
+# In China, speed uo to install pytorch from mirror station
+# python -m pip install torch==2.5.1+cu118 torchvision==0.20.1+cu118 torchaudio==2.5.1+cu118 --index-url https://mirror.nju.edu.cn/pytorch/whl/cu118
+
+# 3. install napari GUI
+pip install napari
+
+# 4. install napari locally
+cd emcfsys
+pip install -e .
+
+# 5. install frc package
+pip install frc -i https://pypi.org/simple
 ```
 
 The napari plugin can then be started with:
@@ -104,7 +144,9 @@ napari
 
 Linux users need a graphical X11 or Wayland session to open napari. On a headless Linux server, use the code-based workflows without launching the GUI, or configure an appropriate remote display.
 
-### 4. Install the pinned MMLab environment on Windows and Linux
+#### 2.3 Install the MMLab environment on Windows and Linux (Optional)
+
+If users want to run the demo code or train models using this code backend, they need to install the MMLab environment first.
 
 Run the following commands in PowerShell from the cloned repository root:
 
@@ -116,7 +158,26 @@ python -m pip install ninja==1.13.0 psutil==7.1.3 wheel==0.45.1
 python -m pip install --no-build-isolation -r pined_requirement.txt
 ```
 
-### 5. Verify the MMLab installation
+```powershell
+pip install -U openmim
+mim install mmengine
+mim install mmcv==2.2.0 --no-build-isolation
+
+# temply ignore the openxlab ERROR about setuptools 81.0.0
+pip install setuptools==81.0
+
+# pip install the mmdetection backend locally
+cd src/thirdParty/mmdetection
+pip install -e . --no-build-isolation
+
+# pip install the mmsegmentation backend locally
+# cd src/thirdParty/mmsegmentation
+cd ..
+cd mmsegmentation
+pip install -e . --no-build-isolation
+```
+
+#### Verify the MMLab installation
 
 Run this check on either operating system:
 
