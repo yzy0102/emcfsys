@@ -89,6 +89,14 @@ pip install emcfsys
 
 Then users can open napari in cmd, and use napari and emcfsys
 
+The napari plugin can then be started with:
+
+```bash
+napari
+```
+
+Linux users need a graphical X11 or Wayland session to open napari. On a headless Linux server, use the code-based workflows without launching the GUI, or configure an appropriate remote display.
+
 ---
 
 ### 2. installation for **MMLab demo and paper workflows:**
@@ -123,7 +131,7 @@ git clone https://github.com/yzy0102/emcfsys.git
 # 2. install pytorch==2.5.1 cuda118
 pip install torch==2.5.1+cu118 torchvision==0.20.1+cu118 torchaudio==2.5.1+cu118 --index-url https://download.pytorch.org/whl/cu118
 # In China, speed uo to install pytorch from mirror station
-# python -m pip install torch==2.5.1+cu118 torchvision==0.20.1+cu118 torchaudio==2.5.1+cu118 --index-url https://mirror.nju.edu.cn/pytorch/whl/cu118
+# pip install torch==2.5.1+cu118 torchvision==0.20.1+cu118 torchaudio==2.5.1+cu118 --index-url https://mirror.nju.edu.cn/pytorch/whl/cu118
 
 # 3. install napari GUI
 pip install napari
@@ -136,13 +144,7 @@ pip install -e .
 pip install frc -i https://pypi.org/simple
 ```
 
-The napari plugin can then be started with:
 
-```bash
-napari
-```
-
-Linux users need a graphical X11 or Wayland session to open napari. On a headless Linux server, use the code-based workflows without launching the GUI, or configure an appropriate remote display.
 
 #### 2.3 Install the MMLab environment on Windows and Linux (Optional)
 
@@ -152,10 +154,10 @@ Run the following commands in PowerShell from the cloned repository root:
 
 ```powershell
 
-python -m pip install ninja==1.13.0 psutil==7.1.3 wheel==0.45.1
+pip install ninja==1.13.0 psutil==7.1.3 wheel==0.45.1
 
 
-python -m pip install --no-build-isolation -r pined_requirement.txt
+pip install --no-build-isolation -r pined_requirement.txt
 ```
 
 ```powershell

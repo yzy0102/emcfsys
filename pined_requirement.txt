@@ -70,7 +70,6 @@ imgviz==1.7.6
 
 # Image evaluation
 pytorch_fid==0.3.0
-frc==0.1.1
 sahi==0.12.6
 fire==0.7.1
 
