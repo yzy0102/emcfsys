@@ -139,9 +139,6 @@ pip install napari
 # 4. install napari locally
 cd emcfsys
 pip install -e .
-
-# 5. install frc package
-pip install frc -i https://pypi.org/simple
 ```
 
 #### 2.3 Install the MMLab environment on Windows and Linux (Optional)
@@ -175,6 +172,12 @@ pip install -e . --no-build-isolation
 cd ..
 cd mmsegmentation
 pip install -e . --no-build-isolation
+
+# install frc loaclly
+cd ..
+cd frc
+pip install -e .
+
 
 # pip install jupyter
 pip install jupyter
