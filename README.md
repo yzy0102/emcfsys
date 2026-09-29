@@ -87,7 +87,7 @@ pip install napari
 pip install emcfsys
 ```
 
-Then users can open napari in cmd, and use napari and emcfsys
+Then users can open napari in cmd, and use napari and e--depth=1mcfsys
 
 The napari plugin can then be started with:
 
@@ -126,7 +126,7 @@ We recommend pytorch==2.4.1/2.5.1 , cuda ==11.8/12.1
 
 ```Shell
 # 1. If running the code locally, clone the repository:
-git clone https://github.com/yzy0102/emcfsys.git
+git clone --depth=1 https://github.com/yzy0102/emcfsys.git
 
 # 2. install pytorch==2.5.1 cuda118
 pip install torch==2.5.1+cu118 torchvision==0.20.1+cu118 torchaudio==2.5.1+cu118 --index-url https://download.pytorch.org/whl/cu118
@@ -196,16 +196,6 @@ The expected Windows core versions are:
 ```text
 PyTorch 2.5.1+cu118
 MMCV 2.0.0rc4
-MMEngine 0.10.7
-MMSegmentation 1.2.2
-MMDetection 3.3.0
-```
-
-The expected Linux core versions are:
-
-```text
-PyTorch 2.4.1+cu121
-MMCV 2.1.0
 MMEngine 0.10.7
 MMSegmentation 1.2.2
 MMDetection 3.3.0
